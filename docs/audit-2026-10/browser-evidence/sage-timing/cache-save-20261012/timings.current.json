@@ -1,0 +1,1822 @@
+{
+  "startedAt": "2026-10-12T09:03:16.346Z",
+  "output": "/private/tmp/orb-sage-browser-cache-save-20261012",
+  "qualification": "idle synthetic local inference; not busy-ward acceptance",
+  "baselineRequested": true,
+  "normalMaintenance": "ordinary non-model maintenance remains enabled; overlap is retained in backend.log",
+  "targets": {
+    "interpretation": "strict submit-to-first-readable-visible-answer; successful completion required",
+    "milliseconds": {
+      "general": 3000,
+      "patient": 5000,
+      "department": 10000
+    },
+    "readableDefinition": "newest visible answer bubble; at least12characters and2letter-or-number words; sampled with requestAnimationFrame",
+    "coldStartPolicy": "initial observed residency diagnostic recorded separately; SLA applies to subsequent resident-model turns"
+  },
+  "python": "3.12.13 (main, Jul 23 2026, 14:33:47) [Clang 22.1.3 ]",
+  "hardware": {
+    "platform": "darwin",
+    "architecture": "arm64",
+    "cpu": "Apple M2 Max",
+    "logicalCpus": 12,
+    "memoryBytes": 68719476736
+  },
+  "bundleSha256": "c7a759ed29e706bb547eae838157a4de3919393fd8c88d521d13054d2a7577d2",
+  "harnessSha256": "679ba94194d723cb6a8a85277e307ac54a471edf521b5090e4605b366594d16d",
+  "backendSourceSha256": {
+    "routes/sage_routes.py": "93f9fba9b99f2e2e102c8bce289cd3c064d71ff481ae6844d4865e000988e7a9",
+    "services/sage_service.py": "2f77ff28bf3c30551e634f58866e90ffe15ac47b78d245c4aa107d3cf88ab1ed",
+    "services/llm_providers.py": "13b39ac2a3cd6216486967ddf219a1a16bf4cd144f16994ea9b06590c7436d02",
+    "services/clinical_knowledge.py": "c53a09ec88dd5ed0feee2cd7bfbbd417c8f0aac6cf6ecce61e7ac23e2f0275cc",
+    "services/local_transformers.py": "b5777652fb29de126e05eabf35312846fa1ebac108162b83d684993936ccbeca"
+  },
+  "modelService": {
+    "origin": "http://127.0.0.1:11436",
+    "tags": {
+      "models": [
+        {
+          "name": "qwen3.6:35b-a3b",
+          "model": "qwen3.6:35b-a3b",
+          "modified_at": "2026-09-28T21:41:29.006588323+05:30",
+          "size": 22621314381,
+          "digest": "096fdbd02fe620fc10cbeb6537e080f8041aece851e5d696aed024d4f70f2e47",
+          "details": {
+            "parent_model": "qwen3.6-source:35b-a3b-mtp-q4_K_M-20260824",
+            "format": "gguf",
+            "family": "qwen35moe",
+            "families": [
+              "qwen35moe"
+            ],
+            "parameter_size": "35.5B",
+            "quantization_level": "Q4_K_M",
+            "context_length": 262144,
+            "embedding_length": 2048
+          },
+          "capabilities": [
+            "completion",
+            "vision",
+            "tools",
+            "thinking"
+          ]
+        },
+        {
+          "name": "medgemma:1.5-4b",
+          "model": "medgemma:1.5-4b",
+          "modified_at": "2026-09-07T12:46:36.962891785+05:30",
+          "size": 3341148231,
+          "digest": "c50f9c29d740f96ec94893ae6fe01db1d5cacd42621c569418355ebadd509950",
+          "details": {
+            "parent_model": "",
+            "format": "gguf",
+            "family": "gemma3",
+            "families": [
+              "gemma3"
+            ],
+            "parameter_size": "3.88B",
+            "quantization_level": "Q4_K_M",
+            "context_length": 131072,
+            "embedding_length": 2560
+          },
+          "capabilities": [
+            "completion",
+            "vision"
+          ]
+        },
+        {
+          "name": "medgemma:27b",
+          "model": "medgemma:27b",
+          "modified_at": "2026-07-29T12:23:18.78795949+05:30",
+          "size": 17397224125,
+          "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+          "details": {
+            "parent_model": "",
+            "format": "gguf",
+            "family": "gemma3",
+            "families": [
+              "gemma3"
+            ],
+            "parameter_size": "27.4B",
+            "quantization_level": "Q4_K_M",
+            "context_length": 131072,
+            "embedding_length": 5376
+          },
+          "capabilities": [
+            "completion",
+            "vision"
+          ]
+        },
+        {
+          "name": "medgemma:4b",
+          "model": "medgemma:4b",
+          "modified_at": "2026-07-29T12:06:03.391691172+05:30",
+          "size": 3338942556,
+          "digest": "9fe4e9a6c9bda2d007bb595515550eafbc8e226622adff9257f3241eba334c4d",
+          "details": {
+            "parent_model": "",
+            "format": "gguf",
+            "family": "gemma3",
+            "families": [
+              "gemma3"
+            ],
+            "parameter_size": "4.3B",
+            "quantization_level": "Q4_K_M",
+            "context_length": 131072,
+            "embedding_length": 2560
+          },
+          "capabilities": [
+            "completion",
+            "vision"
+          ]
+        },
+        {
+          "name": "gemma3:1b",
+          "model": "gemma3:1b",
+          "modified_at": "2026-07-29T12:03:07.412150731+05:30",
+          "size": 815319791,
+          "digest": "8648f39daa8fbf5b18c7b4e6a8fb4990c692751d49917417b8842ca5758e7ffc",
+          "details": {
+            "parent_model": "",
+            "format": "gguf",
+            "family": "gemma3",
+            "families": [
+              "gemma3"
+            ],
+            "parameter_size": "999.89M",
+            "quantization_level": "Q4_K_M",
+            "context_length": 32768,
+            "embedding_length": 1152
+          },
+          "capabilities": [
+            "completion"
+          ]
+        }
+      ]
+    },
+    "version": {
+      "version": "0.35.1"
+    },
+    "residencyAtStart": {
+      "models": []
+    }
+  },
+  "retrieval": "explicit installed embedder/reranker snapshots; real corpus initialized in disposable DB; isolated worker",
+  "turns": [
+    {
+      "index": 0,
+      "category": "general",
+      "query": "What does oxygen saturation measure? Answer briefly.",
+      "startedAt": "2026-10-12T09:03:32.076Z",
+      "residencyBefore": {
+        "models": []
+      },
+      "residency": "not resident/cold runner",
+      "request": {
+        "query": "What does oxygen saturation measure? Answer briefly.",
+        "thinking": true,
+        "view_context": {
+          "tab": "sage"
+        },
+        "conversation_id": "c-mv50yozi-1210123e8b4e"
+      },
+      "httpStatus": 200,
+      "stream": {
+        "done": true,
+        "errors": [],
+        "content": " Oxygen saturation measures the percentage of hemoglobin in red blood cells that is saturated with oxygen. It reflects how well oxygen is being transported from the lungs to the body tissues. Low levels can indicate respiratory or circulatory problems.\n\n",
+        "metadata": {
+          "action_state": null,
+          "sources": [],
+          "citation_basis": "none",
+          "cited_count": 0,
+          "attributed_count": 0,
+          "attributed_sources": [],
+          "confidence": "low",
+          "confidence_basis": "citation_not_in_retrieval",
+          "escalation": "",
+          "display_mode": "detailed",
+          "query_scope": "GENERAL_MEDICAL",
+          "patient_context_used": false,
+          "patient_id": null,
+          "patient_name": null,
+          "patient_source": null,
+          "data_completeness": null,
+          "local_policy_found": false,
+          "provider": {
+            "thinking": true,
+            "thinking_requested": true,
+            "thinking_tier": "careful",
+            "thinking_model": "medgemma:27b",
+            "thinking_available": true,
+            "thinking_reason": "Thinking mode on, answered by the careful model.",
+            "safety_floor": false,
+            "safety_floor_rules": [],
+            "safety_floor_enabled": true,
+            "safety_floor_unsatisfied": false,
+            "lane": "local",
+            "provider": "ollama",
+            "model": "medgemma:27b",
+            "downgraded": false,
+            "preferred_model": "medgemma:27b",
+            "marker_asserted": false
+          },
+          "timing": {
+            "retrieval_ms": 5779,
+            "ttft_ms": 19707,
+            "first_content_ms": 19901,
+            "total_ms": 24187
+          }
+        },
+        "structured": {
+          "action_intent": "None.",
+          "concise_answer": "Oxygen saturation measures the percentage of hemoglobin in red blood cells that is saturated with oxygen. It reflects how well oxygen is being transported from the lungs to the body tissues. Low levels can indicate respiratory or circulatory problems.",
+          "display_mode": "",
+          "patient_facts_summary": "",
+          "local_policy_guidance": "",
+          "external_guidance": "",
+          "clinical_assessment": "",
+          "caveats": "",
+          "escalation": "",
+          "cited_sources": []
+        },
+        "stages": [
+          "retrieving",
+          "generating"
+        ],
+        "invalid": []
+      },
+      "wireComplete": true,
+      "browserTiming": {
+        "submittedAt": 1927.5999999642372,
+        "firstVisibleMs": 19982.100000023842,
+        "completedVisibleMs": 24214.900000035763,
+        "streamingSeen": true
+      },
+      "visibleAnswer": "Oxygen saturation measures the percentage of hemoglobin in red blood cells that is saturated with oxygen. It reflects how well oxygen is being transported from the lungs to the body tissues. Low levels can indicate respiratory or circulatory problems.",
+      "screenshot": "00-general.png",
+      "assessment": {
+        "success": true,
+        "failures": [],
+        "targetMs": 3000,
+        "targetMet": false,
+        "completionWithinSameTarget": false
+      },
+      "residencyAfter": {
+        "models": [
+          {
+            "name": "medgemma:27b",
+            "model": "medgemma:27b",
+            "size": 20353457847,
+            "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+            "details": {
+              "parent_model": "",
+              "format": "gguf",
+              "family": "gemma3",
+              "families": [
+                "gemma3"
+              ],
+              "parameter_size": "27.4B",
+              "quantization_level": "Q4_K_M"
+            },
+            "expires_at": "2026-10-12T15:33:56.320749+05:30",
+            "size_vram": 20353457847,
+            "context_length": 8192
+          }
+        ]
+      },
+      "phase": "initial residency diagnostic; excluded from warm SLA"
+    },
+    {
+      "index": 1,
+      "category": "general",
+      "query": "What does oxygen saturation measure? Answer briefly.",
+      "startedAt": "2026-10-12T09:03:56.538Z",
+      "residencyBefore": {
+        "models": [
+          {
+            "name": "medgemma:27b",
+            "model": "medgemma:27b",
+            "size": 20353457847,
+            "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+            "details": {
+              "parent_model": "",
+              "format": "gguf",
+              "family": "gemma3",
+              "families": [
+                "gemma3"
+              ],
+              "parameter_size": "27.4B",
+              "quantization_level": "Q4_K_M"
+            },
+            "expires_at": "2026-10-12T15:33:56.320749+05:30",
+            "size_vram": 20353457847,
+            "context_length": 8192
+          }
+        ]
+      },
+      "residency": "resident/warm runner",
+      "request": {
+        "query": "What does oxygen saturation measure? Answer briefly.",
+        "thinking": true,
+        "view_context": {
+          "tab": "sage"
+        },
+        "conversation_id": "c-mv50z7uy-fbcf69b33a53"
+      },
+      "httpStatus": 200,
+      "stream": {
+        "done": true,
+        "errors": [],
+        "content": " Oxygen saturation measures the percentage of hemoglobin in red blood cells that is saturated with oxygen. It reflects how well oxygen is being transported from the lungs to the body tissues. Low levels can indicate respiratory or circulatory problems.\n\n",
+        "metadata": {
+          "action_state": null,
+          "sources": [],
+          "citation_basis": "none",
+          "cited_count": 0,
+          "attributed_count": 0,
+          "attributed_sources": [],
+          "confidence": "low",
+          "confidence_basis": "citation_not_in_retrieval",
+          "escalation": "",
+          "display_mode": "detailed",
+          "query_scope": "GENERAL_MEDICAL",
+          "patient_context_used": false,
+          "patient_id": null,
+          "patient_name": null,
+          "patient_source": null,
+          "data_completeness": null,
+          "local_policy_found": false,
+          "provider": {
+            "thinking": true,
+            "thinking_requested": true,
+            "thinking_tier": "careful",
+            "thinking_model": "medgemma:27b",
+            "thinking_available": true,
+            "thinking_reason": "Thinking mode on, answered by the careful model.",
+            "safety_floor": false,
+            "safety_floor_rules": [],
+            "safety_floor_enabled": true,
+            "safety_floor_unsatisfied": false,
+            "lane": "local",
+            "provider": "ollama",
+            "model": "medgemma:27b",
+            "downgraded": false,
+            "preferred_model": "medgemma:27b",
+            "marker_asserted": false
+          },
+          "timing": {
+            "retrieval_ms": 1268,
+            "ttft_ms": 1363,
+            "first_content_ms": 1560,
+            "total_ms": 5956
+          }
+        },
+        "structured": {
+          "action_intent": "None.",
+          "concise_answer": "Oxygen saturation measures the percentage of hemoglobin in red blood cells that is saturated with oxygen. It reflects how well oxygen is being transported from the lungs to the body tissues. Low levels can indicate respiratory or circulatory problems.",
+          "display_mode": "",
+          "patient_facts_summary": "",
+          "local_policy_guidance": "",
+          "external_guidance": "",
+          "clinical_assessment": "",
+          "caveats": "",
+          "escalation": "",
+          "cited_sources": []
+        },
+        "stages": [
+          "retrieving",
+          "generating"
+        ],
+        "invalid": []
+      },
+      "wireComplete": true,
+      "browserTiming": {
+        "submittedAt": 26386.099999964237,
+        "firstVisibleMs": 1631.300000011921,
+        "completedVisibleMs": 5972.5,
+        "streamingSeen": true
+      },
+      "visibleAnswer": "Oxygen saturation measures the percentage of hemoglobin in red blood cells that is saturated with oxygen. It reflects how well oxygen is being transported from the lungs to the body tissues. Low levels can indicate respiratory or circulatory problems.",
+      "screenshot": "01-general.png",
+      "assessment": {
+        "success": true,
+        "failures": [],
+        "targetMs": 3000,
+        "targetMet": true,
+        "completionWithinSameTarget": false
+      },
+      "residencyAfter": {
+        "models": [
+          {
+            "name": "medgemma:27b",
+            "model": "medgemma:27b",
+            "size": 20353457847,
+            "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+            "details": {
+              "parent_model": "",
+              "format": "gguf",
+              "family": "gemma3",
+              "families": [
+                "gemma3"
+              ],
+              "parameter_size": "27.4B",
+              "quantization_level": "Q4_K_M"
+            },
+            "expires_at": "2026-10-12T15:34:02.538837+05:30",
+            "size_vram": 20353457847,
+            "context_length": 8192
+          }
+        ]
+      },
+      "repeat": 1,
+      "phase": "warm SLA"
+    },
+    {
+      "index": 2,
+      "category": "patient",
+      "query": "Summarize Ananya Kapoor's current chart and the recorded facts that need clinician review. Answer briefly.",
+      "startedAt": "2026-10-12T09:04:02.759Z",
+      "residencyBefore": {
+        "models": [
+          {
+            "name": "medgemma:27b",
+            "model": "medgemma:27b",
+            "size": 20353457847,
+            "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+            "details": {
+              "parent_model": "",
+              "format": "gguf",
+              "family": "gemma3",
+              "families": [
+                "gemma3"
+              ],
+              "parameter_size": "27.4B",
+              "quantization_level": "Q4_K_M"
+            },
+            "expires_at": "2026-10-12T15:34:02.538837+05:30",
+            "size_vram": 20353457847,
+            "context_length": 8192
+          }
+        ]
+      },
+      "residency": "resident/warm runner",
+      "request": {
+        "query": "Summarize Ananya Kapoor's current chart and the recorded facts that need clinician review. Answer briefly.",
+        "thinking": true,
+        "view_context": {
+          "tab": "sage"
+        },
+        "conversation_id": "c-mv50zcnu-9f965d8f4e55"
+      },
+      "httpStatus": 200,
+      "stream": {
+        "done": true,
+        "errors": [],
+        "content": " Ananya Kapoor is a 34y/F admitted for Diabetic Ketoacidosis (DKA), currently in GM-1. Her vitals are HR 118, BP 100/65, SpO2 97%, Temp 37.2°C, RR 28. She is receiving Insulin infusion at 0.1U/kg/hr IV and Normal Saline 1L/hr IV with added KCl 20mEq/L. Recent labs show leukocytosis (WBC 13.6k), anemia (Hgb 7.7g/dL), and normal platelets (220k). Her heart rate trend shows it is falling from 122 to 118. There are no scribe notes or recent imaging available.\n\n",
+        "metadata": {
+          "action_state": null,
+          "sources": [],
+          "citation_basis": "none",
+          "cited_count": 0,
+          "attributed_count": 0,
+          "attributed_sources": [],
+          "confidence": "low",
+          "confidence_basis": "no_evidence_retrieved",
+          "escalation": false,
+          "display_mode": "detailed",
+          "query_scope": "PATIENT_SPECIFIC",
+          "patient_context_used": true,
+          "patient_id": "PAT-2DA335E9",
+          "patient_name": "Ananya Kapoor",
+          "patient_source": "admitted",
+          "data_completeness": {
+            "has_vitals": true,
+            "has_meds": true,
+            "has_labs": true,
+            "has_imaging": false,
+            "has_notes": false,
+            "has_risk_score": false,
+            "missing": [
+              "No signed Scribe notes",
+              "No recent imaging"
+            ]
+          },
+          "local_policy_found": false,
+          "provider": {
+            "thinking": true,
+            "thinking_requested": true,
+            "thinking_tier": "careful",
+            "thinking_model": "medgemma:27b",
+            "thinking_available": true,
+            "thinking_reason": "Thinking mode on, answered by the careful model.",
+            "safety_floor": false,
+            "safety_floor_rules": [],
+            "safety_floor_enabled": true,
+            "safety_floor_unsatisfied": false,
+            "lane": "local",
+            "provider": "ollama",
+            "model": "medgemma:27b",
+            "downgraded": false,
+            "preferred_model": "medgemma:27b",
+            "marker_asserted": false
+          },
+          "timing": {
+            "retrieval_ms": 319,
+            "ttft_ms": 3120,
+            "first_content_ms": 3328,
+            "total_ms": 36259
+          }
+        },
+        "structured": {
+          "action_intent": "None.",
+          "concise_answer": "Ananya Kapoor is a 34y/F admitted for Diabetic Ketoacidosis (DKA), currently in GM-1. Her vitals are HR 118, BP 100/65, SpO2 97%, Temp 37.2°C, RR 28. She is receiving Insulin infusion at 0.1U/kg/hr IV and Normal Saline 1L/hr IV with added KCl 20mEq/L. Recent labs show leukocytosis (WBC 13.6k), anemia (Hgb 7.7g/dL), and normal platelets (220k). Her heart rate trend shows it is falling from 122 to 118. There are no scribe notes or recent imaging available.",
+          "display_mode": "concise",
+          "patient_facts_summary": "Ananya Kapoor, 34y/F, admitted for DKA on GM-1. Vitals: HR 118, BP 100/65, SpO2 97%, Temp 37.2°C, RR 28. Meds: Insulin infusion 0.1U/kg/hr IV, NS 1L/hr IV + KCl 20mEq/L. Labs: WBC 13.6k (high), Hgb 7.7g/dL (low), Plt 220k. HR trending down from 122.",
+          "local_policy_guidance": "None.",
+          "external_guidance": "None.",
+          "clinical_assessment": "The patient presents with DKA, currently being treated with insulin and fluids. Vital signs show tachycardia and tachypnea, potentially related to the metabolic acidosis or underlying stress response. Blood pressure is borderline low. Leukocytosis may indicate infection or inflammation associated with DKA. Anemia requires further investigation.",
+          "caveats": "No scribe notes or imaging are available, which limits a complete assessment. The trajectory is marked as \"stable (risk unknown)\".",
+          "escalation": "None.",
+          "cited_sources": []
+        },
+        "stages": [
+          "retrieving",
+          "generating"
+        ],
+        "invalid": []
+      },
+      "wireComplete": true,
+      "browserTiming": {
+        "submittedAt": 32610.5,
+        "firstVisibleMs": 3544.800000011921,
+        "completedVisibleMs": 36278.39999997616,
+        "streamingSeen": true
+      },
+      "visibleAnswer": "Ananya Kapoor is a 34y/F admitted for Diabetic Ketoacidosis (DKA), currently in GM-1. Her vitals are HR 118, BP 100/65, SpO2 97%, Temp 37.2°C, RR 28. She is receiving Insulin infusion at 0.1U/kg/hr IV and Normal Saline 1L/hr IV with added KCl 20mEq/L. Recent labs show leukocytosis (WBC 13.6k), anemia (Hgb 7.7g/dL), and normal platelets (220k). Her heart rate trend shows it is falling from 122 to 118. There are no scribe notes or recent imaging available.",
+      "screenshot": "02-patient.png",
+      "assessment": {
+        "success": true,
+        "failures": [],
+        "targetMs": 5000,
+        "targetMet": true,
+        "completionWithinSameTarget": false
+      },
+      "residencyAfter": {
+        "models": [
+          {
+            "name": "medgemma:27b",
+            "model": "medgemma:27b",
+            "size": 20353457847,
+            "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+            "details": {
+              "parent_model": "",
+              "format": "gguf",
+              "family": "gemma3",
+              "families": [
+                "gemma3"
+              ],
+              "parameter_size": "27.4B",
+              "quantization_level": "Q4_K_M"
+            },
+            "expires_at": "2026-10-12T15:34:39.065912+05:30",
+            "size_vram": 20353457847,
+            "context_length": 8192
+          }
+        ]
+      },
+      "repeat": 1,
+      "phase": "warm SLA"
+    },
+    {
+      "index": 3,
+      "category": "department",
+      "query": "Give a concise overview of my department's admitted patients and identify recorded concerns for clinician review.",
+      "startedAt": "2026-10-12T09:04:39.338Z",
+      "residencyBefore": {
+        "models": [
+          {
+            "name": "medgemma:27b",
+            "model": "medgemma:27b",
+            "size": 20353457847,
+            "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+            "details": {
+              "parent_model": "",
+              "format": "gguf",
+              "family": "gemma3",
+              "families": [
+                "gemma3"
+              ],
+              "parameter_size": "27.4B",
+              "quantization_level": "Q4_K_M"
+            },
+            "expires_at": "2026-10-12T15:34:39.065912+05:30",
+            "size_vram": 20353457847,
+            "context_length": 8192
+          }
+        ]
+      },
+      "residency": "resident/warm runner",
+      "request": {
+        "query": "Give a concise overview of my department's admitted patients and identify recorded concerns for clinician review.",
+        "thinking": true,
+        "view_context": {
+          "tab": "sage"
+        },
+        "conversation_id": "c-mv5104vy-3be7a0f290d4"
+      },
+      "httpStatus": 200,
+      "stream": {
+        "done": true,
+        "errors": [],
+        "content": "**Elevated Risk Patients:**\n\n*   **Suresh Reddy** in **GM-104**, diagnosed with Community Acquired Pneumonia (CAP) with early sepsis, has tachycardia (**HR: 112**) and hypotension (**BP: 85/52**), indicating high risk.\n*   **Priya Nair** in **GM-103**, diagnosed with Dengue fever with thrombocytopenia, presents with fever (**T: 39.2°C**) and borderline low blood pressure (**BP: 95/60**).\n*   **Rajesh Iyer** in **GM-102**, diagnosed with COPD exacerbation, has hypoxia (**SpO2: 88%**) despite supplemental oxygen likely being administered.\n*   **Ananya Kapoor** in **GM-101**, diagnosed with Diabetic ketoacidosis, has tachycardia (**HR: 118**) and tachypnea (**RR: 28**).\n\n**Stable Patients:**\n\n*   **Lakshmi Devi** in **GM-105**, diagnosed with UTI with delirium, is febrile (**T: 38.4°C**) but otherwise relatively stable hemodynamically and regarding respiratory status.",
+        "metadata": {
+          "action_state": null,
+          "sources": [],
+          "confidence": "high",
+          "confidence_basis": "deterministic_scope",
+          "citation_basis": "none",
+          "attributed_count": 0,
+          "attributed_sources": [],
+          "escalation": false,
+          "display_mode": "concise",
+          "query_scope": "BROAD",
+          "patient_context_used": false,
+          "patient_id": null,
+          "patient_name": null,
+          "patient_source": null,
+          "data_completeness": null,
+          "local_policy_found": false,
+          "provider": {
+            "thinking": true,
+            "thinking_requested": true,
+            "thinking_tier": "careful",
+            "thinking_model": "medgemma:27b",
+            "thinking_available": true,
+            "thinking_reason": "Thinking mode on, answered by the careful model.",
+            "safety_floor": false,
+            "safety_floor_rules": [],
+            "safety_floor_enabled": true,
+            "safety_floor_unsatisfied": false,
+            "lane": "local",
+            "provider": "ollama",
+            "model": "medgemma:27b",
+            "downgraded": false,
+            "preferred_model": "medgemma:27b",
+            "marker_asserted": false
+          },
+          "timing": {
+            "retrieval_ms": 3,
+            "ttft_ms": 5153,
+            "first_content_ms": 5153,
+            "total_ms": 22269
+          }
+        },
+        "structured": null,
+        "stages": [
+          "retrieving",
+          "generating"
+        ],
+        "invalid": []
+      },
+      "wireComplete": true,
+      "browserTiming": {
+        "submittedAt": 69190.09999996424,
+        "firstVisibleMs": 5377,
+        "completedVisibleMs": 22285.600000023842,
+        "streamingSeen": true
+      },
+      "visibleAnswer": "Elevated Risk Patients:\n\nSuresh Reddy in GM-104, diagnosed with Community Acquired Pneumonia (CAP) with early sepsis, has tachycardia (HR: 112) and hypotension (BP: 85/52), indicating high risk.\nPriya Nair in GM-103, diagnosed with Dengue fever with thrombocytopenia, presents with fever (T: 39.2°C) and borderline low blood pressure (BP: 95/60).\nRajesh Iyer in GM-102, diagnosed with COPD exacerbation, has hypoxia (SpO2: 88%) despite supplemental oxygen likely being administered.\nAnanya Kapoor in GM-101, diagnosed with Diabetic ketoacidosis, has tachycardia (HR: 118) and tachypnea (RR: 28).\n\nStable Patients:\n\nLakshmi Devi in GM-105, diagnosed with UTI with delirium, is febrile (T: 38.4°C) but otherwise relatively stable hemodynamically and regarding respiratory status.",
+      "screenshot": "03-department.png",
+      "assessment": {
+        "success": true,
+        "failures": [],
+        "targetMs": 10000,
+        "targetMet": true,
+        "completionWithinSameTarget": false
+      },
+      "residencyAfter": {
+        "models": [
+          {
+            "name": "medgemma:27b",
+            "model": "medgemma:27b",
+            "size": 20353457847,
+            "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+            "details": {
+              "parent_model": "",
+              "format": "gguf",
+              "family": "gemma3",
+              "families": [
+                "gemma3"
+              ],
+              "parameter_size": "27.4B",
+              "quantization_level": "Q4_K_M"
+            },
+            "expires_at": "2026-10-12T15:35:01.656791+05:30",
+            "size_vram": 20353457847,
+            "context_length": 8192
+          }
+        ]
+      },
+      "repeat": 1,
+      "phase": "warm SLA"
+    },
+    {
+      "index": 4,
+      "category": "general",
+      "query": "What does oxygen saturation measure? Answer briefly.",
+      "startedAt": "2026-10-12T09:05:01.861Z",
+      "residencyBefore": {
+        "models": [
+          {
+            "name": "medgemma:27b",
+            "model": "medgemma:27b",
+            "size": 20353457847,
+            "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+            "details": {
+              "parent_model": "",
+              "format": "gguf",
+              "family": "gemma3",
+              "families": [
+                "gemma3"
+              ],
+              "parameter_size": "27.4B",
+              "quantization_level": "Q4_K_M"
+            },
+            "expires_at": "2026-10-12T15:35:01.656791+05:30",
+            "size_vram": 20353457847,
+            "context_length": 8192
+          }
+        ]
+      },
+      "residency": "resident/warm runner",
+      "request": {
+        "query": "What does oxygen saturation measure? Answer briefly.",
+        "thinking": true,
+        "view_context": {
+          "tab": "sage"
+        },
+        "conversation_id": "c-mv510m9k-1a137458bb6c"
+      },
+      "httpStatus": 200,
+      "stream": {
+        "done": true,
+        "errors": [],
+        "content": " Oxygen saturation measures the percentage of hemoglobin in red blood cells that is saturated with oxygen. It reflects how well oxygen is being transported from the lungs to the body tissues. Low levels can indicate respiratory or circulatory problems.\n",
+        "metadata": {
+          "action_state": null,
+          "sources": [],
+          "citation_basis": "none",
+          "cited_count": 0,
+          "attributed_count": 0,
+          "attributed_sources": [],
+          "confidence": "low",
+          "confidence_basis": "citation_not_in_retrieval",
+          "escalation": "",
+          "display_mode": "detailed",
+          "query_scope": "GENERAL_MEDICAL",
+          "patient_context_used": false,
+          "patient_id": null,
+          "patient_name": null,
+          "patient_source": null,
+          "data_completeness": null,
+          "local_policy_found": false,
+          "provider": {
+            "thinking": true,
+            "thinking_requested": true,
+            "thinking_tier": "careful",
+            "thinking_model": "medgemma:27b",
+            "thinking_available": true,
+            "thinking_reason": "Thinking mode on, answered by the careful model.",
+            "safety_floor": false,
+            "safety_floor_rules": [],
+            "safety_floor_enabled": true,
+            "safety_floor_unsatisfied": false,
+            "lane": "local",
+            "provider": "ollama",
+            "model": "medgemma:27b",
+            "downgraded": false,
+            "preferred_model": "medgemma:27b",
+            "marker_asserted": false
+          },
+          "timing": {
+            "retrieval_ms": 297,
+            "ttft_ms": 466,
+            "first_content_ms": 650,
+            "total_ms": 5058
+          }
+        },
+        "structured": {
+          "action_intent": "None.",
+          "concise_answer": "Oxygen saturation measures the percentage of hemoglobin in red blood cells that is saturated with oxygen. It reflects how well oxygen is being transported from the lungs to the body tissues. Low levels can indicate respiratory or circulatory problems.",
+          "display_mode": "",
+          "patient_facts_summary": "",
+          "local_policy_guidance": "",
+          "external_guidance": "",
+          "clinical_assessment": "",
+          "caveats": "",
+          "escalation": "",
+          "cited_sources": []
+        },
+        "stages": [
+          "retrieving",
+          "generating"
+        ],
+        "invalid": []
+      },
+      "wireComplete": true,
+      "browserTiming": {
+        "submittedAt": 91719.69999998808,
+        "firstVisibleMs": 723,
+        "completedVisibleMs": 5072.699999988079,
+        "streamingSeen": true
+      },
+      "visibleAnswer": "Oxygen saturation measures the percentage of hemoglobin in red blood cells that is saturated with oxygen. It reflects how well oxygen is being transported from the lungs to the body tissues. Low levels can indicate respiratory or circulatory problems.",
+      "screenshot": "04-general.png",
+      "assessment": {
+        "success": true,
+        "failures": [],
+        "targetMs": 3000,
+        "targetMet": true,
+        "completionWithinSameTarget": false
+      },
+      "residencyAfter": {
+        "models": [
+          {
+            "name": "medgemma:27b",
+            "model": "medgemma:27b",
+            "size": 20353457847,
+            "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+            "details": {
+              "parent_model": "",
+              "format": "gguf",
+              "family": "gemma3",
+              "families": [
+                "gemma3"
+              ],
+              "parameter_size": "27.4B",
+              "quantization_level": "Q4_K_M"
+            },
+            "expires_at": "2026-10-12T15:35:06.975081+05:30",
+            "size_vram": 20353457847,
+            "context_length": 8192
+          }
+        ]
+      },
+      "repeat": 2,
+      "phase": "warm SLA"
+    },
+    {
+      "index": 5,
+      "category": "patient",
+      "query": "Summarize Ananya Kapoor's current chart and the recorded facts that need clinician review. Answer briefly.",
+      "startedAt": "2026-10-12T09:05:07.196Z",
+      "residencyBefore": {
+        "models": [
+          {
+            "name": "medgemma:27b",
+            "model": "medgemma:27b",
+            "size": 20353457847,
+            "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+            "details": {
+              "parent_model": "",
+              "format": "gguf",
+              "family": "gemma3",
+              "families": [
+                "gemma3"
+              ],
+              "parameter_size": "27.4B",
+              "quantization_level": "Q4_K_M"
+            },
+            "expires_at": "2026-10-12T15:35:06.975081+05:30",
+            "size_vram": 20353457847,
+            "context_length": 8192
+          }
+        ]
+      },
+      "residency": "resident/warm runner",
+      "request": {
+        "query": "Summarize Ananya Kapoor's current chart and the recorded facts that need clinician review. Answer briefly.",
+        "thinking": true,
+        "view_context": {
+          "tab": "sage"
+        },
+        "conversation_id": "c-mv510qdo-2b543ddd1f1a"
+      },
+      "httpStatus": 200,
+      "stream": {
+        "done": true,
+        "errors": [],
+        "content": " Ananya Kapoor is a 34y/F in GM-101 with Diabetic Ketoacidosis. Her vitals are HR 118, BP 100/65, SpO2 97%, Temp 37.2°C, RR 28. She is on an insulin infusion at 0.1U/kg/hr and receiving Normal Saline 1L/hr IV, plus KCl 20mEq/L in fluids. Recent labs show leukocytosis (WBC 13.6), anemia (Hgb 7.7), and normal platelets (220). Her heart rate trajectory shows it falling from 122 to 118. There are no scribe notes or recent images available.\n\n",
+        "metadata": {
+          "action_state": null,
+          "sources": [],
+          "citation_basis": "none",
+          "cited_count": 0,
+          "attributed_count": 0,
+          "attributed_sources": [],
+          "confidence": "low",
+          "confidence_basis": "citation_not_in_retrieval",
+          "escalation": true,
+          "display_mode": "detailed",
+          "query_scope": "PATIENT_SPECIFIC",
+          "patient_context_used": true,
+          "patient_id": "PAT-2DA335E9",
+          "patient_name": "Ananya Kapoor",
+          "patient_source": "admitted",
+          "data_completeness": {
+            "has_vitals": true,
+            "has_meds": true,
+            "has_labs": true,
+            "has_imaging": false,
+            "has_notes": false,
+            "has_risk_score": false,
+            "missing": [
+              "No signed Scribe notes",
+              "No recent imaging"
+            ]
+          },
+          "local_policy_found": false,
+          "provider": {
+            "thinking": true,
+            "thinking_requested": true,
+            "thinking_tier": "careful",
+            "thinking_model": "medgemma:27b",
+            "thinking_available": true,
+            "thinking_reason": "Thinking mode on, answered by the careful model.",
+            "safety_floor": false,
+            "safety_floor_rules": [],
+            "safety_floor_enabled": true,
+            "safety_floor_unsatisfied": false,
+            "lane": "local",
+            "provider": "ollama",
+            "model": "medgemma:27b",
+            "downgraded": false,
+            "preferred_model": "medgemma:27b",
+            "marker_asserted": false
+          },
+          "timing": {
+            "retrieval_ms": 309,
+            "ttft_ms": 3141,
+            "first_content_ms": 3338,
+            "total_ms": 47245
+          }
+        },
+        "structured": {
+          "action_intent": "None.",
+          "concise_answer": "Ananya Kapoor is a 34y/F in GM-101 with Diabetic Ketoacidosis. Her vitals are HR 118, BP 100/65, SpO2 97%, Temp 37.2°C, RR 28. She is on an insulin infusion at 0.1U/kg/hr and receiving Normal Saline 1L/hr IV, plus KCl 20mEq/L in fluids. Recent labs show leukocytosis (WBC 13.6), anemia (Hgb 7.7), and normal platelets (220). Her heart rate trajectory shows it falling from 122 to 118. There are no scribe notes or recent images available.",
+          "display_mode": "(concise)",
+          "patient_facts_summary": "Ananya Kapoor, 34y/F, admitted for DKA. Current status: Vitals stable but tachycardic (HR 118) and tachypneic (RR 28); BP borderline low (100/65). Receiving standard DKA treatment (insulin infusion, IVF, K+ replacement). Labs notable for high WBC (13.6) and low Hgb (7.7). Heart rate trending down.",
+          "local_policy_guidance": "None.",
+          "external_guidance": "Standard DKA management involves fluid resuscitation (typically isotonic saline initially), insulin therapy (continuous infusion aiming for glucose normalization and resolution of ketosis), electrolyte monitoring and replacement (especially potassium), and addressing the underlying cause. Monitoring includes frequent blood glucose checks, venous blood gas analysis (or serum ketones/beta-hydroxybutyrate), electrolytes, renal function, and complete blood count. Anemia is common in DKA; leukocytosis can occur due to stress response or infection. The heart rate trajectory suggests initial tachycardia may be resolving with treatment.",
+          "clinical_assessment": "The patient's presentation aligns with DKA requiring active management. Tachycardia and tachypnea are expected findings, potentially related to dehydration, acidosis, and metabolic stress. The falling heart rate trend is positive. Leukocytosis could represent a physiological stress response but should prompt vigilance for concurrent infection, especially given the anemia which might obscure signs like fever early on. The borderline BP warrants careful fluid management. Close monitoring of glucose, electrolytes (particularly K+ as insulin drives it intracellularly), acid-base status, and renal function is crucial.",
+          "caveats": "This assessment relies solely on the provided data snapshot. A full clinical picture requires history, physical examination, ongoing monitoring, and potentially further investigations not listed (e.g., arterial blood gas, urine ketones, anion gap calculation, infectious workup if clinically indicated).",
+          "escalation": "If the patient deteriorates despite standard therapy (e.g., persistent hypotension, worsening respiratory distress, severe electrolyte abnormalities, altered mental status), escalation to higher levels of care (ICU) would be necessary. Consider sepsis evaluation if leukocytosis persists or other signs develop.",
+          "cited_sources": []
+        },
+        "stages": [
+          "retrieving",
+          "generating"
+        ],
+        "invalid": []
+      },
+      "wireComplete": true,
+      "browserTiming": {
+        "submittedAt": 97044.09999996424,
+        "firstVisibleMs": 3531.900000035763,
+        "completedVisibleMs": 47260.30000001192,
+        "streamingSeen": true
+      },
+      "visibleAnswer": "Ananya Kapoor is a 34y/F in GM-101 with Diabetic Ketoacidosis. Her vitals are HR 118, BP 100/65, SpO2 97%, Temp 37.2°C, RR 28. She is on an insulin infusion at 0.1U/kg/hr and receiving Normal Saline 1L/hr IV, plus KCl 20mEq/L in fluids. Recent labs show leukocytosis (WBC 13.6), anemia (Hgb 7.7), and normal platelets (220). Her heart rate trajectory shows it falling from 122 to 118. There are no scribe notes or recent images available.",
+      "screenshot": "05-patient.png",
+      "assessment": {
+        "success": true,
+        "failures": [],
+        "targetMs": 5000,
+        "targetMet": true,
+        "completionWithinSameTarget": false
+      },
+      "residencyAfter": {
+        "models": [
+          {
+            "name": "medgemma:27b",
+            "model": "medgemma:27b",
+            "size": 20353457847,
+            "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+            "details": {
+              "parent_model": "",
+              "format": "gguf",
+              "family": "gemma3",
+              "families": [
+                "gemma3"
+              ],
+              "parameter_size": "27.4B",
+              "quantization_level": "Q4_K_M"
+            },
+            "expires_at": "2026-10-12T15:35:54.485739+05:30",
+            "size_vram": 20353457847,
+            "context_length": 8192
+          }
+        ]
+      },
+      "repeat": 2,
+      "phase": "warm SLA"
+    },
+    {
+      "index": 6,
+      "category": "department",
+      "query": "Give a concise overview of my department's admitted patients and identify recorded concerns for clinician review.",
+      "startedAt": "2026-10-12T09:05:54.756Z",
+      "residencyBefore": {
+        "models": [
+          {
+            "name": "medgemma:27b",
+            "model": "medgemma:27b",
+            "size": 20353457847,
+            "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+            "details": {
+              "parent_model": "",
+              "format": "gguf",
+              "family": "gemma3",
+              "families": [
+                "gemma3"
+              ],
+              "parameter_size": "27.4B",
+              "quantization_level": "Q4_K_M"
+            },
+            "expires_at": "2026-10-12T15:35:54.485739+05:30",
+            "size_vram": 20353457847,
+            "context_length": 8192
+          }
+        ]
+      },
+      "residency": "resident/warm runner",
+      "request": {
+        "query": "Give a concise overview of my department's admitted patients and identify recorded concerns for clinician review.",
+        "thinking": true,
+        "view_context": {
+          "tab": "sage"
+        },
+        "conversation_id": "c-mv511r2v-55a22155b1f0"
+      },
+      "httpStatus": 200,
+      "stream": {
+        "done": true,
+        "errors": [],
+        "content": "**Elevated Risk Patients:**\n\n*   **Suresh Reddy** in **GM-104** has community-acquired pneumonia with early sepsis, concerning tachycardia (**HR: 112**) and hypotension (**BP: 85/52**).\n*   **Priya Nair** in **GM-103** has dengue fever with thrombocytopenia, notable for fever (**T: 39.2°C**) and borderline low blood pressure (**BP: 95/60**).\n*   **Rajesh Iyer** in **GM-102** has COPD exacerbation, showing hypoxia (**SpO2: 88%**) despite supplemental oxygen likely being administered.\n*   **Ananya Kapoor** in **GM-101** has diabetic ketoacidosis, presenting with tachycardia (**HR: 118**) and tachypnea (**RR: 28**).\n\n**Stable Patients:**\n\n*   **Lakshmi Devi** in **GM-105** is admitted for UTI with delirium; vitals are relatively stable (HR: 96, BP: 130/78, SpO2: 94%, T: 38.4°C, RR: 18), though she has a low-grade fever.",
+        "metadata": {
+          "action_state": null,
+          "sources": [],
+          "confidence": "high",
+          "confidence_basis": "deterministic_scope",
+          "citation_basis": "none",
+          "attributed_count": 0,
+          "attributed_sources": [],
+          "escalation": false,
+          "display_mode": "concise",
+          "query_scope": "BROAD",
+          "patient_context_used": false,
+          "patient_id": null,
+          "patient_name": null,
+          "patient_source": null,
+          "data_completeness": null,
+          "local_policy_found": false,
+          "provider": {
+            "thinking": true,
+            "thinking_requested": true,
+            "thinking_tier": "careful",
+            "thinking_model": "medgemma:27b",
+            "thinking_available": true,
+            "thinking_reason": "Thinking mode on, answered by the careful model.",
+            "safety_floor": false,
+            "safety_floor_rules": [],
+            "safety_floor_enabled": true,
+            "safety_floor_unsatisfied": false,
+            "lane": "local",
+            "provider": "ollama",
+            "model": "medgemma:27b",
+            "downgraded": false,
+            "preferred_model": "medgemma:27b",
+            "marker_asserted": false
+          },
+          "timing": {
+            "retrieval_ms": 3,
+            "ttft_ms": 214,
+            "first_content_ms": 214,
+            "total_ms": 17915
+          }
+        },
+        "structured": null,
+        "stages": [
+          "retrieving",
+          "generating"
+        ],
+        "invalid": []
+      },
+      "wireComplete": true,
+      "browserTiming": {
+        "submittedAt": 144606.80000001192,
+        "firstVisibleMs": 431.7999999523163,
+        "completedVisibleMs": 17931.299999952316,
+        "streamingSeen": true
+      },
+      "visibleAnswer": "Elevated Risk Patients:\n\nSuresh Reddy in GM-104 has community-acquired pneumonia with early sepsis, concerning tachycardia (HR: 112) and hypotension (BP: 85/52).\nPriya Nair in GM-103 has dengue fever with thrombocytopenia, notable for fever (T: 39.2°C) and borderline low blood pressure (BP: 95/60).\nRajesh Iyer in GM-102 has COPD exacerbation, showing hypoxia (SpO2: 88%) despite supplemental oxygen likely being administered.\nAnanya Kapoor in GM-101 has diabetic ketoacidosis, presenting with tachycardia (HR: 118) and tachypnea (RR: 28).\n\nStable Patients:\n\nLakshmi Devi in GM-105 is admitted for UTI with delirium; vitals are relatively stable (HR: 96, BP: 130/78, SpO2: 94%, T: 38.4°C, RR: 18), though she has a low-grade fever.",
+      "screenshot": "06-department.png",
+      "assessment": {
+        "success": true,
+        "failures": [],
+        "targetMs": 10000,
+        "targetMet": true,
+        "completionWithinSameTarget": false
+      },
+      "residencyAfter": {
+        "models": [
+          {
+            "name": "medgemma:27b",
+            "model": "medgemma:27b",
+            "size": 20353457847,
+            "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+            "details": {
+              "parent_model": "",
+              "format": "gguf",
+              "family": "gemma3",
+              "families": [
+                "gemma3"
+              ],
+              "parameter_size": "27.4B",
+              "quantization_level": "Q4_K_M"
+            },
+            "expires_at": "2026-10-12T15:36:12.719919+05:30",
+            "size_vram": 20353457847,
+            "context_length": 8192
+          }
+        ]
+      },
+      "repeat": 2,
+      "phase": "warm SLA"
+    },
+    {
+      "index": 7,
+      "category": "general",
+      "query": "What does oxygen saturation measure? Answer briefly.",
+      "startedAt": "2026-10-12T09:06:12.939Z",
+      "residencyBefore": {
+        "models": [
+          {
+            "name": "medgemma:27b",
+            "model": "medgemma:27b",
+            "size": 20353457847,
+            "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+            "details": {
+              "parent_model": "",
+              "format": "gguf",
+              "family": "gemma3",
+              "families": [
+                "gemma3"
+              ],
+              "parameter_size": "27.4B",
+              "quantization_level": "Q4_K_M"
+            },
+            "expires_at": "2026-10-12T15:36:12.719919+05:30",
+            "size_vram": 20353457847,
+            "context_length": 8192
+          }
+        ]
+      },
+      "residency": "resident/warm runner",
+      "request": {
+        "query": "What does oxygen saturation measure? Answer briefly.",
+        "thinking": true,
+        "view_context": {
+          "tab": "sage"
+        },
+        "conversation_id": "c-mv51253z-0aaa64ac1a8b"
+      },
+      "httpStatus": 200,
+      "stream": {
+        "done": true,
+        "errors": [],
+        "content": " Oxygen saturation measures the percentage of hemoglobin in red blood cells that is saturated with oxygen. It indicates how well oxygen is being carried from the lungs to the tissues. Low levels can indicate hypoxemia.\n",
+        "metadata": {
+          "action_state": null,
+          "sources": [],
+          "citation_basis": "none",
+          "cited_count": 0,
+          "attributed_count": 0,
+          "attributed_sources": [],
+          "confidence": "low",
+          "confidence_basis": "citation_not_in_retrieval",
+          "escalation": "",
+          "display_mode": "detailed",
+          "query_scope": "GENERAL_MEDICAL",
+          "patient_context_used": false,
+          "patient_id": null,
+          "patient_name": null,
+          "patient_source": null,
+          "data_completeness": null,
+          "local_policy_found": false,
+          "provider": {
+            "thinking": true,
+            "thinking_requested": true,
+            "thinking_tier": "careful",
+            "thinking_model": "medgemma:27b",
+            "thinking_available": true,
+            "thinking_reason": "Thinking mode on, answered by the careful model.",
+            "safety_floor": false,
+            "safety_floor_rules": [],
+            "safety_floor_enabled": true,
+            "safety_floor_unsatisfied": false,
+            "lane": "local",
+            "provider": "ollama",
+            "model": "medgemma:27b",
+            "downgraded": false,
+            "preferred_model": "medgemma:27b",
+            "marker_asserted": false
+          },
+          "timing": {
+            "retrieval_ms": 451,
+            "ttft_ms": 709,
+            "first_content_ms": 894,
+            "total_ms": 4985
+          }
+        },
+        "structured": {
+          "action_intent": "None.",
+          "concise_answer": "Oxygen saturation measures the percentage of hemoglobin in red blood cells that is saturated with oxygen. It indicates how well oxygen is being carried from the lungs to the tissues. Low levels can indicate hypoxemia.",
+          "display_mode": "",
+          "patient_facts_summary": "",
+          "local_policy_guidance": "",
+          "external_guidance": "",
+          "clinical_assessment": "",
+          "caveats": "",
+          "escalation": "",
+          "cited_sources": []
+        },
+        "stages": [
+          "retrieving",
+          "generating"
+        ],
+        "invalid": []
+      },
+      "wireComplete": true,
+      "browserTiming": {
+        "submittedAt": 162790.09999996424,
+        "firstVisibleMs": 969.1000000238419,
+        "completedVisibleMs": 4995.600000023842,
+        "streamingSeen": true
+      },
+      "visibleAnswer": "Oxygen saturation measures the percentage of hemoglobin in red blood cells that is saturated with oxygen. It indicates how well oxygen is being carried from the lungs to the tissues. Low levels can indicate hypoxemia.",
+      "screenshot": "07-general.png",
+      "assessment": {
+        "success": true,
+        "failures": [],
+        "targetMs": 3000,
+        "targetMet": true,
+        "completionWithinSameTarget": false
+      },
+      "residencyAfter": {
+        "models": [
+          {
+            "name": "medgemma:27b",
+            "model": "medgemma:27b",
+            "size": 20353457847,
+            "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+            "details": {
+              "parent_model": "",
+              "format": "gguf",
+              "family": "gemma3",
+              "families": [
+                "gemma3"
+              ],
+              "parameter_size": "27.4B",
+              "quantization_level": "Q4_K_M"
+            },
+            "expires_at": "2026-10-12T15:36:17.972706+05:30",
+            "size_vram": 20353457847,
+            "context_length": 8192
+          }
+        ]
+      },
+      "repeat": 3,
+      "phase": "warm SLA"
+    },
+    {
+      "index": 8,
+      "category": "patient",
+      "query": "Summarize Ananya Kapoor's current chart and the recorded facts that need clinician review. Answer briefly.",
+      "startedAt": "2026-10-12T09:06:18.172Z",
+      "residencyBefore": {
+        "models": [
+          {
+            "name": "medgemma:27b",
+            "model": "medgemma:27b",
+            "size": 20353457847,
+            "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+            "details": {
+              "parent_model": "",
+              "format": "gguf",
+              "family": "gemma3",
+              "families": [
+                "gemma3"
+              ],
+              "parameter_size": "27.4B",
+              "quantization_level": "Q4_K_M"
+            },
+            "expires_at": "2026-10-12T15:36:17.972706+05:30",
+            "size_vram": 20353457847,
+            "context_length": 8192
+          }
+        ]
+      },
+      "residency": "resident/warm runner",
+      "request": {
+        "query": "Summarize Ananya Kapoor's current chart and the recorded facts that need clinician review. Answer briefly.",
+        "thinking": true,
+        "view_context": {
+          "tab": "sage"
+        },
+        "conversation_id": "c-mv512958-be95cfc6843d"
+      },
+      "httpStatus": 200,
+      "stream": {
+        "done": true,
+        "errors": [],
+        "content": " Ananya Kapoor is a 34-year-old female admitted for diabetic ketoacidosis in GM-101. Her vitals show tachycardia (**HR: 118**), borderline low blood pressure (**BP: 100/65**), normal oxygen saturation (**SpO2: 97%**), normal temperature (**Temp: 37.2°C**) and tachypnea (**RR: 28**). She has an ongoing insulin infusion at **0.1U/kg/hr IV**, receiving **Normal Saline 1L/hr IV Continuous** with added KCl. Recent labs reveal leukocytosis (**WBC: 13.6 10³/µL**) and anemia (**Hemoglobin: 7.7 g/dL**); platelets are within range. The patient appears stable based on heart rate trend but requires monitoring due to DKA diagnosis, anaemia and elevated WBC count. There are no recent notes or imaging available.\n\n",
+        "metadata": {
+          "action_state": null,
+          "sources": [],
+          "citation_basis": "none",
+          "cited_count": 0,
+          "attributed_count": 0,
+          "attributed_sources": [],
+          "confidence": "low",
+          "confidence_basis": "citation_not_in_retrieval",
+          "escalation": true,
+          "display_mode": "detailed",
+          "query_scope": "PATIENT_SPECIFIC",
+          "patient_context_used": true,
+          "patient_id": "PAT-2DA335E9",
+          "patient_name": "Ananya Kapoor",
+          "patient_source": "admitted",
+          "data_completeness": {
+            "has_vitals": true,
+            "has_meds": true,
+            "has_labs": true,
+            "has_imaging": false,
+            "has_notes": false,
+            "has_risk_score": false,
+            "missing": [
+              "No signed Scribe notes",
+              "No recent imaging"
+            ]
+          },
+          "local_policy_found": false,
+          "provider": {
+            "thinking": true,
+            "thinking_requested": true,
+            "thinking_tier": "careful",
+            "thinking_model": "medgemma:27b",
+            "thinking_available": true,
+            "thinking_reason": "Thinking mode on, answered by the careful model.",
+            "safety_floor": false,
+            "safety_floor_rules": [],
+            "safety_floor_enabled": true,
+            "safety_floor_unsatisfied": false,
+            "lane": "local",
+            "provider": "ollama",
+            "model": "medgemma:27b",
+            "downgraded": false,
+            "preferred_model": "medgemma:27b",
+            "marker_asserted": false
+          },
+          "timing": {
+            "retrieval_ms": 279,
+            "ttft_ms": 3026,
+            "first_content_ms": 3219,
+            "total_ms": 39791
+          }
+        },
+        "structured": {
+          "action_intent": "None.",
+          "concise_answer": "Ananya Kapoor is a 34-year-old female admitted for diabetic ketoacidosis in GM-101. Her vitals show tachycardia (**HR: 118**), borderline low blood pressure (**BP: 100/65**), normal oxygen saturation (**SpO2: 97%**), normal temperature (**Temp: 37.2°C**) and tachypnea (**RR: 28**). She has an ongoing insulin infusion at **0.1U/kg/hr IV**, receiving **Normal Saline 1L/hr IV Continuous** with added KCl. Recent labs reveal leukocytosis (**WBC: 13.6 10³/µL**) and anemia (**Hemoglobin: 7.7 g/dL**); platelets are within range. The patient appears stable based on heart rate trend but requires monitoring due to DKA diagnosis, anaemia and elevated WBC count. There are no recent notes or imaging available.",
+          "display_mode": "concise",
+          "patient_facts_summary": "Ananya Kapoor, 34y F, admitted for Diabetic Ketoacidosis (DKA) on GM-101. Vitals: HR 118, BP 100/65, SpO2 97%, Temp 37.2°C, RR 28. Current treatment includes Insulin infusion 0.1U/kg/hr IV, Normal Saline 1L/hr IV + KCl. Labs show high WBC (13.6), low Hb (7.7). Stable trajectory noted.",
+          "local_policy_guidance": "None.",
+          "external_guidance": "None.",
+          "clinical_assessment": "Patient presents with tachycardia, borderline hypotension, tachypnea consistent with DKA. Leukocytosis may indicate infection or stress response; anemia needs further investigation. Current management seems appropriate for DKA, but close monitoring of vitals, electrolytes, glucose, and anion gap is crucial. Anemia warrants evaluation for cause and potential transfusion if symptomatic or severe.",
+          "caveats": "No recent notes or imaging available limits assessment. Patient's overall clinical status beyond vital signs and basic labs is unknown.",
+          "escalation": "Consider escalation if patient deteriorates clinically, develops significant electrolyte abnormalities, fails to respond to initial DKA therapy, or shows signs of sepsis related to leukocytosis.",
+          "cited_sources": []
+        },
+        "stages": [
+          "retrieving",
+          "generating"
+        ],
+        "invalid": []
+      },
+      "wireComplete": true,
+      "browserTiming": {
+        "submittedAt": 168017.80000001192,
+        "firstVisibleMs": 3416,
+        "completedVisibleMs": 39808.19999998808,
+        "streamingSeen": true
+      },
+      "visibleAnswer": "Ananya Kapoor is a 34-year-old female admitted for diabetic ketoacidosis in GM-101. Her vitals show tachycardia (HR: 118), borderline low blood pressure (BP: 100/65), normal oxygen saturation (SpO2: 97%), normal temperature (Temp: 37.2°C) and tachypnea (RR: 28). She has an ongoing insulin infusion at 0.1U/kg/hr IV, receiving Normal Saline 1L/hr IV Continuous with added KCl. Recent labs reveal leukocytosis (WBC: 13.6 10³/µL) and anemia (Hemoglobin: 7.7 g/dL); platelets are within range. The patient appears stable based on heart rate trend but requires monitoring due to DKA diagnosis, anaemia and elevated WBC count. There are no recent notes or imaging available.",
+      "screenshot": "08-patient.png",
+      "assessment": {
+        "success": true,
+        "failures": [],
+        "targetMs": 5000,
+        "targetMet": true,
+        "completionWithinSameTarget": false
+      },
+      "residencyAfter": {
+        "models": [
+          {
+            "name": "medgemma:27b",
+            "model": "medgemma:27b",
+            "size": 20353457847,
+            "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+            "details": {
+              "parent_model": "",
+              "format": "gguf",
+              "family": "gemma3",
+              "families": [
+                "gemma3"
+              ],
+              "parameter_size": "27.4B",
+              "quantization_level": "Q4_K_M"
+            },
+            "expires_at": "2026-10-12T15:36:58.006543+05:30",
+            "size_vram": 20353457847,
+            "context_length": 8192
+          }
+        ]
+      },
+      "repeat": 3,
+      "phase": "warm SLA"
+    },
+    {
+      "index": 9,
+      "category": "department",
+      "query": "Give a concise overview of my department's admitted patients and identify recorded concerns for clinician review.",
+      "startedAt": "2026-10-12T09:06:58.296Z",
+      "residencyBefore": {
+        "models": [
+          {
+            "name": "medgemma:27b",
+            "model": "medgemma:27b",
+            "size": 20353457847,
+            "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+            "details": {
+              "parent_model": "",
+              "format": "gguf",
+              "family": "gemma3",
+              "families": [
+                "gemma3"
+              ],
+              "parameter_size": "27.4B",
+              "quantization_level": "Q4_K_M"
+            },
+            "expires_at": "2026-10-12T15:36:58.006543+05:30",
+            "size_vram": 20353457847,
+            "context_length": 8192
+          }
+        ]
+      },
+      "residency": "resident/warm runner",
+      "request": {
+        "query": "Give a concise overview of my department's admitted patients and identify recorded concerns for clinician review.",
+        "thinking": true,
+        "view_context": {
+          "tab": "sage"
+        },
+        "conversation_id": "c-mv51343x-eab850985474"
+      },
+      "httpStatus": 200,
+      "stream": {
+        "done": true,
+        "errors": [],
+        "content": "**Elevated Risk Patients:**\n\n*   **Suresh Reddy**, **GM-104**: Admitted for Community Acquired Pneumonia (CAP) with early sepsis, has tachycardia (**HR: 112**), hypotension (**BP: 85/52**), tachypnea (**RR: 28**), fever (**T: 39.8°C**), and borderline oxygen saturation (**SpO2: 91%**).\n*   **Priya Nair**, **GM-103**: Admitted for Dengue fever with thrombocytopenia, presents with tachycardia (**HR: 108**), hypotension (**BP: 95/60**), fever (**T: 39.2°C**) and borderline oxygen saturation (**SpO2: 96%**).\n*   **Rajesh Iyer**, **GM-102**: Admitted for COPD exacerbation, shows tachycardia (**HR: 102**), hypertension (**BP: 145/88**), hypoxemia (**SpO2: 88%**), elevated temperature (**T: 37.8°C**) and tachypnea (**RR: 26**).\n*   **Ananya Kapoor**, **GM-101**: Admitted for Diabetic ketoacidosis, exhibits tachycardia (**HR: 118**), hypotension (**BP: 100/65**), tachypnea (**RR: 28**).\n\n**Stable Patients:**\n\n*   **Lakshmi Devi**, **GM-105**: Admitted for UTI with delirium, has a temperature of **38.4°C**. Vitals are otherwise within relatively stable limits (HR: 96, BP: 130/78, SpO2: 94%, RR: 18).",
+        "metadata": {
+          "action_state": null,
+          "sources": [],
+          "confidence": "high",
+          "confidence_basis": "deterministic_scope",
+          "citation_basis": "none",
+          "attributed_count": 0,
+          "attributed_sources": [],
+          "escalation": false,
+          "display_mode": "concise",
+          "query_scope": "BROAD",
+          "patient_context_used": false,
+          "patient_id": null,
+          "patient_name": null,
+          "patient_source": null,
+          "data_completeness": null,
+          "local_policy_found": false,
+          "provider": {
+            "thinking": true,
+            "thinking_requested": true,
+            "thinking_tier": "careful",
+            "thinking_model": "medgemma:27b",
+            "thinking_available": true,
+            "thinking_reason": "Thinking mode on, answered by the careful model.",
+            "safety_floor": false,
+            "safety_floor_rules": [],
+            "safety_floor_enabled": true,
+            "safety_floor_unsatisfied": false,
+            "lane": "local",
+            "provider": "ollama",
+            "model": "medgemma:27b",
+            "downgraded": false,
+            "preferred_model": "medgemma:27b",
+            "marker_asserted": false
+          },
+          "timing": {
+            "retrieval_ms": 3,
+            "ttft_ms": 186,
+            "first_content_ms": 186,
+            "total_ms": 25606
+          }
+        },
+        "structured": null,
+        "stages": [
+          "retrieving",
+          "generating"
+        ],
+        "invalid": []
+      },
+      "wireComplete": true,
+      "browserTiming": {
+        "submittedAt": 208148.19999998808,
+        "firstVisibleMs": 429.39999997615814,
+        "completedVisibleMs": 25623,
+        "streamingSeen": true
+      },
+      "visibleAnswer": "Elevated Risk Patients:\n\nSuresh Reddy, GM-104: Admitted for Community Acquired Pneumonia (CAP) with early sepsis, has tachycardia (HR: 112), hypotension (BP: 85/52), tachypnea (RR: 28), fever (T: 39.8°C), and borderline oxygen saturation (SpO2: 91%).\nPriya Nair, GM-103: Admitted for Dengue fever with thrombocytopenia, presents with tachycardia (HR: 108), hypotension (BP: 95/60), fever (T: 39.2°C) and borderline oxygen saturation (SpO2: 96%).\nRajesh Iyer, GM-102: Admitted for COPD exacerbation, shows tachycardia (HR: 102), hypertension (BP: 145/88), hypoxemia (SpO2: 88%), elevated temperature (T: 37.8°C) and tachypnea (RR: 26).\nAnanya Kapoor, GM-101: Admitted for Diabetic ketoacidosis, exhibits tachycardia (HR: 118), hypotension (BP: 100/65), tachypnea (RR: 28).\n\nStable Patients:\n\nLakshmi Devi, GM-105: Admitted for UTI with delirium, has a temperature of 38.4°C. Vitals are otherwise within relatively stable limits (HR: 96, BP: 130/78, SpO2: 94%, RR: 18).",
+      "screenshot": "09-department.png",
+      "assessment": {
+        "success": true,
+        "failures": [],
+        "targetMs": 10000,
+        "targetMet": true,
+        "completionWithinSameTarget": false
+      },
+      "residencyAfter": {
+        "models": [
+          {
+            "name": "medgemma:27b",
+            "model": "medgemma:27b",
+            "size": 20353457847,
+            "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+            "details": {
+              "parent_model": "",
+              "format": "gguf",
+              "family": "gemma3",
+              "families": [
+                "gemma3"
+              ],
+              "parameter_size": "27.4B",
+              "quantization_level": "Q4_K_M"
+            },
+            "expires_at": "2026-10-12T15:37:23.95306+05:30",
+            "size_vram": 20353457847,
+            "context_length": 8192
+          }
+        ]
+      },
+      "repeat": 3,
+      "phase": "warm SLA"
+    }
+  ],
+  "blockedExternalRequests": [],
+  "pageErrors": [],
+  "consoleErrors": [],
+  "backend": {
+    "url": "http://127.0.0.1:11436",
+    "model": {
+      "name": "medgemma:27b",
+      "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+      "size": 17397224125,
+      "details": {
+        "parent_model": "",
+        "format": "gguf",
+        "family": "gemma3",
+        "families": [
+          "gemma3"
+        ],
+        "parameter_size": "27.4B",
+        "quantization_level": "Q4_K_M",
+        "context_length": 131072,
+        "embedding_length": 5376
+      }
+    },
+    "background_model_jobs": false,
+    "thinking": true,
+    "safety_floor": true,
+    "model_fallback": false,
+    "scope": "idle synthetic qualification",
+    "chart_prewarm": true,
+    "embedding_snapshot": "/Users/samuelmorningstar/.cache/huggingface/hub/models--BAAI--bge-m3/snapshots/5617a9f61b028005a4858fdac845db406aefb181",
+    "reranker_snapshot": "/Users/samuelmorningstar/.cache/huggingface/hub/models--BAAI--bge-reranker-v2-m3/snapshots/953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e",
+    "retrieval": "installed snapshots with a new synthetic corpus"
+  },
+  "knowledgeCorpus": {
+    "sources": 19,
+    "vectors": 19,
+    "fingerprint": "e85261d5dc762d793b10470056b9cfcec365d679d3bda7a3ba0c208d8ef7ded2"
+  },
+  "base": "http://127.0.0.1:18120",
+  "browserVersion": "149.0.7827.55",
+  "actor": {
+    "id": "DOC001",
+    "role": "doctor",
+    "department": "General Medicine"
+  },
+  "syntheticPatient": {
+    "id": "PAT-2DA335E9",
+    "name": "Ananya Kapoor",
+    "department": "General Medicine"
+  },
+  "aiPosture": {
+    "local_model": "medgemma:27b",
+    "local_asr_available": false
+  },
+  "chartPrewarm": {
+    "index": "chart-prewarm",
+    "category": "patient",
+    "query": "Summarize Ananya Kapoor's current chart and the recorded facts that need clinician review. Answer briefly.",
+    "startedAt": "2026-10-12T09:07:48.356Z",
+    "residencyBefore": {
+      "models": [
+        {
+          "name": "medgemma:27b",
+          "model": "medgemma:27b",
+          "size": 20353457847,
+          "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+          "details": {
+            "parent_model": "",
+            "format": "gguf",
+            "family": "gemma3",
+            "families": [
+              "gemma3"
+            ],
+            "parameter_size": "27.4B",
+            "quantization_level": "Q4_K_M"
+          },
+          "expires_at": "2026-10-12T15:37:48.277256+05:30",
+          "size_vram": 20353457847,
+          "context_length": 8192
+        }
+      ]
+    },
+    "residency": "resident/warm runner",
+    "request": {
+      "query": "Summarize Ananya Kapoor's current chart and the recorded facts that need clinician review. Answer briefly.",
+      "patient_id": "PAT-2DA335E9",
+      "thinking": true,
+      "view_context": {
+        "tab": "sage",
+        "patient_id": "PAT-2DA335E9",
+        "patient_name": "Ananya Kapoor"
+      },
+      "conversation_id": "c-mv5146qc-deccbcbb0b1d"
+    },
+    "httpStatus": 200,
+    "stream": {
+      "done": true,
+      "errors": [],
+      "content": " Ananya Kapoor is a 34y/F admitted for Diabetic Ketoacidosis (DKA). She is currently in GM-1, bed GM-101. Her vitals are HR 118, BP 100/65, SpO2 97%, Temp 37.2°C, RR 28. She has an insulin infusion running at 0.1U/kg/hr and receiving Normal Saline 1L/hr IV with added KCl 20mEq/L. Recent labs show leukocytosis (WBC 13.6), anemia (Hgb 7.7), and normal platelets (220). Her trajectory shows her heart rate is falling. There are no scribe notes or recent images available.\n\n",
+      "metadata": {
+        "action_state": null,
+        "sources": [],
+        "citation_basis": "none",
+        "cited_count": 0,
+        "attributed_count": 0,
+        "attributed_sources": [],
+        "confidence": "low",
+        "confidence_basis": "no_evidence_retrieved",
+        "escalation": true,
+        "display_mode": "detailed",
+        "query_scope": "PATIENT_SPECIFIC",
+        "patient_context_used": true,
+        "patient_id": "PAT-2DA335E9",
+        "patient_name": "Ananya Kapoor",
+        "patient_source": "admitted",
+        "data_completeness": {
+          "has_vitals": true,
+          "has_meds": true,
+          "has_labs": true,
+          "has_imaging": false,
+          "has_notes": false,
+          "has_risk_score": false,
+          "missing": [
+            "No signed Scribe notes",
+            "No recent imaging"
+          ]
+        },
+        "local_policy_found": false,
+        "provider": {
+          "thinking": true,
+          "thinking_requested": true,
+          "thinking_tier": "careful",
+          "thinking_model": "medgemma:27b",
+          "thinking_available": true,
+          "thinking_reason": "Thinking mode on, answered by the careful model.",
+          "safety_floor": false,
+          "safety_floor_rules": [],
+          "safety_floor_enabled": true,
+          "safety_floor_unsatisfied": false,
+          "lane": "local",
+          "provider": "ollama",
+          "model": "medgemma:27b",
+          "downgraded": false,
+          "preferred_model": "medgemma:27b",
+          "marker_asserted": false
+        },
+        "timing": {
+          "retrieval_ms": 987,
+          "ttft_ms": 1632,
+          "first_content_ms": 1830,
+          "total_ms": 33957
+        }
+      },
+      "structured": {
+        "action_intent": "None.",
+        "concise_answer": "Ananya Kapoor is a 34y/F admitted for Diabetic Ketoacidosis (DKA). She is currently in GM-1, bed GM-101. Her vitals are HR 118, BP 100/65, SpO2 97%, Temp 37.2°C, RR 28. She has an insulin infusion running at 0.1U/kg/hr and receiving Normal Saline 1L/hr IV with added KCl 20mEq/L. Recent labs show leukocytosis (WBC 13.6), anemia (Hgb 7.7), and normal platelets (220). Her trajectory shows her heart rate is falling. There are no scribe notes or recent images available.",
+        "display_mode": "concise",
+        "patient_facts_summary": "Ananya Kapoor, 34y/F, GM-1, GM-101, DKA. Vitals: HR 118, BP 100/65, SpO2 97%, T 37.2°C, RR 28. Meds: Insulin infusion 0.1U/kg/hr IV, NS 1L/hr IV + KCl 20mEq/L. Labs: WBC 13.6 (high), Hgb 7.7 (low), Plt 220. Trajectory: HR falling.",
+        "local_policy_guidance": "None.",
+        "external_guidance": "None.",
+        "clinical_assessment": "Patient presents with DKA, currently receiving standard treatment (insulin infusion, fluids). Vitals show tachycardia and tachypnea, potentially related to DKA itself or underlying stress/infection given leukocytosis. Anemia requires further investigation. The heart rate is trending down, which is a positive sign in DKA management but needs continued monitoring.",
+        "caveats": "No scribe notes or imaging available for review. Missing data may impact assessment.",
+        "escalation": "None at this time based on provided information, but clinical judgment is needed regarding the anemia and leukocytosis.",
+        "cited_sources": []
+      },
+      "stages": [
+        "retrieving",
+        "generating"
+      ],
+      "invalid": []
+    },
+    "wireComplete": true,
+    "browserTiming": {
+      "submittedAt": 258203,
+      "firstVisibleMs": 2039.300000011921,
+      "completedVisibleMs": 33976.5,
+      "streamingSeen": true
+    },
+    "visibleAnswer": "Ananya Kapoor is a 34y/F admitted for Diabetic Ketoacidosis (DKA). She is currently in GM-1, bed GM-101. Her vitals are HR 118, BP 100/65, SpO2 97%, Temp 37.2°C, RR 28. She has an insulin infusion running at 0.1U/kg/hr and receiving Normal Saline 1L/hr IV with added KCl 20mEq/L. Recent labs show leukocytosis (WBC 13.6), anemia (Hgb 7.7), and normal platelets (220). Her trajectory shows her heart rate is falling. There are no scribe notes or recent images available.",
+    "screenshot": "chart-prewarm-patient.png",
+    "assessment": {
+      "success": true,
+      "failures": [],
+      "targetMs": 5000,
+      "targetMet": true,
+      "completionWithinSameTarget": false
+    },
+    "residencyAfter": {
+      "models": [
+        {
+          "name": "medgemma:27b",
+          "model": "medgemma:27b",
+          "size": 20353457847,
+          "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+          "details": {
+            "parent_model": "",
+            "format": "gguf",
+            "family": "gemma3",
+            "families": [
+              "gemma3"
+            ],
+            "parameter_size": "27.4B",
+            "quantization_level": "Q4_K_M"
+          },
+          "expires_at": "2026-10-12T15:38:22.358959+05:30",
+          "size_vram": 20353457847,
+          "context_length": 8192
+        }
+      ]
+    },
+    "phase": "additional real chart-open prefix prewarm; baseline observations remain separate",
+    "chart": {
+      "patientId": "PAT-2DA335E9",
+      "prefetchResponse": {
+        "status": "warmed",
+        "patient_id": "PAT-2DA335E9"
+      },
+      "prefetchDurationMs": 23255.19999998808,
+      "openToSubmitMs": 23369.30000001192,
+      "openToFirstReadableMs": 25408.600000023842,
+      "prefixWarmEvidence": {
+        "patientId": "PAT-2DA335E9",
+        "model": "medgemma:27b",
+        "durationMs": 470,
+        "promptTokens": 960,
+        "promptEvaluationMs": 272
+      },
+      "prefixConfirmed": true,
+      "screenshot": "prewarmed-patient-chart.png"
+    }
+  }
+}

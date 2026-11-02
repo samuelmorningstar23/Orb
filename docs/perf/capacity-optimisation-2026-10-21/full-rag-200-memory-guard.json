@@ -1,0 +1,221 @@
+{
+  "scope": "system_wide_full_RAG_fake_LLM_only",
+  "samples": [
+    {
+      "elapsed_s": 2.008156541036442,
+      "total_bytes": 68719476736,
+      "free_percentage": 75,
+      "estimated_available_bytes": 51539607552,
+      "vm_stat": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                     6113.\nPages active:                                1560783.\nPages inactive:                              1543263.\nPages speculative:                             14629.\nPages throttled:                                   0.\nPages wired down:                             247928.\nPages purgeable:                               44349.\n\"Translation faults\":                     2553029149.\nPages copy-on-write:                       153439418.\nPages zero filled:                        4825504912.\nPages reactivated:                          19078894.\nPages purged:                               49298887.\nFile-backed pages:                           1536340.\nAnonymous pages:                             1582335.\nPages stored in compressor:                  1569881.\nPages occupied by compressor:                 764121.\nDecompressions:                             13652173.\nCompressions:                               22249294.\nPageins:                                    65428877.\nPageouts:                                      67021.\nSwapins:                                      718183.\nSwapouts:                                    1012357.\n",
+      "swapout_bytes": 16586457088,
+      "compressed_bytes": 12519358464
+    },
+    {
+      "elapsed_s": 4.0164042910328135,
+      "total_bytes": 68719476736,
+      "free_percentage": 75,
+      "estimated_available_bytes": 51539607552,
+      "vm_stat": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                     7606.\nPages active:                                1557244.\nPages inactive:                              1541943.\nPages speculative:                             11797.\nPages throttled:                                   0.\nPages wired down:                             254682.\nPages purgeable:                               17212.\n\"Translation faults\":                     2553068250.\nPages copy-on-write:                       153439951.\nPages zero filled:                        4825874859.\nPages reactivated:                          19078894.\nPages purged:                               49325517.\nFile-backed pages:                           1536431.\nAnonymous pages:                             1574553.\nPages stored in compressor:                  1569878.\nPages occupied by compressor:                 764118.\nDecompressions:                             13652176.\nCompressions:                               22249294.\nPageins:                                    65428888.\nPageouts:                                      67021.\nSwapins:                                      718183.\nSwapouts:                                    1012357.\n",
+      "swapout_bytes": 16586457088,
+      "compressed_bytes": 12519309312
+    },
+    {
+      "elapsed_s": 6.035439416009467,
+      "total_bytes": 68719476736,
+      "free_percentage": 75,
+      "estimated_available_bytes": 51539607552,
+      "vm_stat": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                     1971.\nPages active:                                1553474.\nPages inactive:                              1551415.\nPages speculative:                               585.\nPages throttled:                                   0.\nPages wired down:                             249492.\nPages purgeable:                                3087.\n\"Translation faults\":                     2553303859.\nPages copy-on-write:                       153440356.\nPages zero filled:                        4826288063.\nPages reactivated:                          19153824.\nPages purged:                               49340419.\nFile-backed pages:                           1510892.\nAnonymous pages:                             1594582.\nPages stored in compressor:                  1598271.\nPages occupied by compressor:                 780053.\nDecompressions:                             13652177.\nCompressions:                               22277697.\nPageins:                                    65493242.\nPageouts:                                      67074.\nSwapins:                                      718183.\nSwapouts:                                    1012357.\n",
+      "swapout_bytes": 16586457088,
+      "compressed_bytes": 12780388352
+    },
+    {
+      "elapsed_s": 8.044020875007845,
+      "total_bytes": 68719476736,
+      "free_percentage": 70,
+      "estimated_available_bytes": 48103633715,
+      "vm_stat": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                    79895.\nPages active:                                1411774.\nPages inactive:                              1406008.\nPages speculative:                               910.\nPages throttled:                                   0.\nPages wired down:                             443940.\nPages purgeable:                                3089.\n\"Translation faults\":                     2553354452.\nPages copy-on-write:                       153440922.\nPages zero filled:                        4826859634.\nPages reactivated:                          19251147.\nPages purged:                               49340419.\nFile-backed pages:                           1399064.\nAnonymous pages:                             1419628.\nPages stored in compressor:                  1673375.\nPages occupied by compressor:                 794717.\nDecompressions:                             13652213.\nCompressions:                               22352838.\nPageins:                                    65501580.\nPageouts:                                      67074.\nSwapins:                                      718183.\nSwapouts:                                    1012357.\n",
+      "swapout_bytes": 16586457088,
+      "compressed_bytes": 13020643328
+    },
+    {
+      "elapsed_s": 10.052221624995582,
+      "total_bytes": 68719476736,
+      "free_percentage": 74,
+      "estimated_available_bytes": 50852412784,
+      "vm_stat": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                     2263.\nPages active:                                1543323.\nPages inactive:                              1541477.\nPages speculative:                               776.\nPages throttled:                                   0.\nPages wired down:                             248134.\nPages purgeable:                                1356.\n\"Translation faults\":                     2553543366.\nPages copy-on-write:                       153441314.\nPages zero filled:                        4827238871.\nPages reactivated:                          19265818.\nPages purged:                               49342504.\nFile-backed pages:                           1478057.\nAnonymous pages:                             1607519.\nPages stored in compressor:                  1709571.\nPages occupied by compressor:                 799972.\nDecompressions:                             13652215.\nCompressions:                               22389036.\nPageins:                                    65624582.\nPageouts:                                      67074.\nSwapins:                                      718183.\nSwapouts:                                    1012357.\n",
+      "swapout_bytes": 16586457088,
+      "compressed_bytes": 13106741248
+    },
+    {
+      "elapsed_s": 12.061221832991578,
+      "total_bytes": 68719476736,
+      "free_percentage": 74,
+      "estimated_available_bytes": 50852412784,
+      "vm_stat": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                    10983.\nPages active:                                1536016.\nPages inactive:                              1530022.\nPages speculative:                              2975.\nPages throttled:                                   0.\nPages wired down:                             252075.\nPages purgeable:                                1273.\n\"Translation faults\":                     2553587030.\nPages copy-on-write:                       153442033.\nPages zero filled:                        4827597926.\nPages reactivated:                          19271982.\nPages purged:                               49342504.\nFile-backed pages:                           1473729.\nAnonymous pages:                             1595284.\nPages stored in compressor:                  1733791.\nPages occupied by compressor:                 804113.\nDecompressions:                             13652219.\nCompressions:                               22413260.\nPageins:                                    65640439.\nPageouts:                                      67096.\nSwapins:                                      718183.\nSwapouts:                                    1012357.\n",
+      "swapout_bytes": 16586457088,
+      "compressed_bytes": 13174587392
+    },
+    {
+      "elapsed_s": 14.07125466602156,
+      "total_bytes": 68719476736,
+      "free_percentage": 74,
+      "estimated_available_bytes": 50852412784,
+      "vm_stat": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                     6294.\nPages active:                                1541014.\nPages inactive:                              1533608.\nPages speculative:                              4201.\nPages throttled:                                   0.\nPages wired down:                             248049.\nPages purgeable:                                1361.\n\"Translation faults\":                     2553599626.\nPages copy-on-write:                       153442475.\nPages zero filled:                        4827923039.\nPages reactivated:                          19272032.\nPages purged:                               49342747.\nFile-backed pages:                           1472892.\nAnonymous pages:                             1605931.\nPages stored in compressor:                  1734094.\nPages occupied by compressor:                 804117.\nDecompressions:                             13652223.\nCompressions:                               22413567.\nPageins:                                    65640583.\nPageouts:                                      67099.\nSwapins:                                      718183.\nSwapouts:                                    1012357.\n",
+      "swapout_bytes": 16586457088,
+      "compressed_bytes": 13174652928
+    },
+    {
+      "elapsed_s": 16.079982416005805,
+      "total_bytes": 68719476736,
+      "free_percentage": 67,
+      "estimated_available_bytes": 46042049413,
+      "vm_stat": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                     9808.\nPages active:                                1398626.\nPages inactive:                              1392440.\nPages speculative:                              4605.\nPages throttled:                                   0.\nPages wired down:                             523581.\nPages purgeable:                                1183.\n\"Translation faults\":                     2553612448.\nPages copy-on-write:                       153443169.\nPages zero filled:                        4828323896.\nPages reactivated:                          19292016.\nPages purged:                               49342838.\nFile-backed pages:                           1434151.\nAnonymous pages:                             1361520.\nPages stored in compressor:                  1768390.\nPages occupied by compressor:                 808298.\nDecompressions:                             13652226.\nCompressions:                               22447872.\nPageins:                                    65640741.\nPageouts:                                      67100.\nSwapins:                                      718183.\nSwapouts:                                    1012357.\n",
+      "swapout_bytes": 16586457088,
+      "compressed_bytes": 13243154432
+    },
+    {
+      "elapsed_s": 18.088291166001,
+      "total_bytes": 68719476736,
+      "free_percentage": 67,
+      "estimated_available_bytes": 46042049413,
+      "vm_stat": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                    12297.\nPages active:                                1399222.\nPages inactive:                              1390859.\nPages speculative:                              4733.\nPages throttled:                                   0.\nPages wired down:                             521974.\nPages purgeable:                                 880.\n\"Translation faults\":                     2553625146.\nPages copy-on-write:                       153443954.\nPages zero filled:                        4828641534.\nPages reactivated:                          19292068.\nPages purged:                               49342838.\nFile-backed pages:                           1434277.\nAnonymous pages:                             1360537.\nPages stored in compressor:                  1768389.\nPages occupied by compressor:                 808298.\nDecompressions:                             13652227.\nCompressions:                               22447872.\nPageins:                                    65640778.\nPageouts:                                      67100.\nSwapins:                                      718183.\nSwapouts:                                    1012357.\n",
+      "swapout_bytes": 16586457088,
+      "compressed_bytes": 13243154432
+    },
+    {
+      "elapsed_s": 20.099062916007824,
+      "total_bytes": 68719476736,
+      "free_percentage": 67,
+      "estimated_available_bytes": 46042049413,
+      "vm_stat": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                     9721.\nPages active:                                1399201.\nPages inactive:                              1391110.\nPages speculative:                              4261.\nPages throttled:                                   0.\nPages wired down:                             524888.\nPages purgeable:                                1146.\n\"Translation faults\":                     2553636355.\nPages copy-on-write:                       153444542.\nPages zero filled:                        4828978284.\nPages reactivated:                          19292094.\nPages purged:                               49342843.\nFile-backed pages:                           1433820.\nAnonymous pages:                             1360752.\nPages stored in compressor:                  1768143.\nPages occupied by compressor:                 808119.\nDecompressions:                             13652473.\nCompressions:                               22447872.\nPageins:                                    65640786.\nPageouts:                                      67100.\nSwapins:                                      718183.\nSwapouts:                                    1012357.\n",
+      "swapout_bytes": 16586457088,
+      "compressed_bytes": 13240221696
+    },
+    {
+      "elapsed_s": 22.108782041002996,
+      "total_bytes": 68719476736,
+      "free_percentage": 67,
+      "estimated_available_bytes": 46042049413,
+      "vm_stat": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                     7140.\nPages active:                                1400927.\nPages inactive:                              1395353.\nPages speculative:                              4247.\nPages throttled:                                   0.\nPages wired down:                             521531.\nPages purgeable:                                1445.\n\"Translation faults\":                     2553646724.\nPages copy-on-write:                       153445067.\nPages zero filled:                        4829296972.\nPages reactivated:                          19292094.\nPages purged:                               49342843.\nFile-backed pages:                           1433829.\nAnonymous pages:                             1366698.\nPages stored in compressor:                  1768139.\nPages occupied by compressor:                 808119.\nDecompressions:                             13652477.\nCompressions:                               22447872.\nPageins:                                    65640794.\nPageouts:                                      67100.\nSwapins:                                      718183.\nSwapouts:                                    1012357.\n",
+      "swapout_bytes": 16586457088,
+      "compressed_bytes": 13240221696
+    },
+    {
+      "elapsed_s": 24.117745249997824,
+      "total_bytes": 68719476736,
+      "free_percentage": 67,
+      "estimated_available_bytes": 46042049413,
+      "vm_stat": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                    10963.\nPages active:                                1401607.\nPages inactive:                              1395938.\nPages speculative:                              2739.\nPages throttled:                                   0.\nPages wired down:                             517958.\nPages purgeable:                                1177.\n\"Translation faults\":                     2553656949.\nPages copy-on-write:                       153445683.\nPages zero filled:                        4829631414.\nPages reactivated:                          19292122.\nPages purged:                               49342845.\nFile-backed pages:                           1432334.\nAnonymous pages:                             1367950.\nPages stored in compressor:                  1768136.\nPages occupied by compressor:                 808119.\nDecompressions:                             13652480.\nCompressions:                               22447872.\nPageins:                                    65640798.\nPageouts:                                      67100.\nSwapins:                                      718183.\nSwapouts:                                    1012357.\n",
+      "swapout_bytes": 16586457088,
+      "compressed_bytes": 13240221696
+    },
+    {
+      "elapsed_s": 26.125745000026654,
+      "total_bytes": 68719476736,
+      "free_percentage": 67,
+      "estimated_available_bytes": 46042049413,
+      "vm_stat": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                     6359.\nPages active:                                1399600.\nPages inactive:                              1393720.\nPages speculative:                              2881.\nPages throttled:                                   0.\nPages wired down:                             526338.\nPages purgeable:                                1400.\n\"Translation faults\":                     2553667498.\nPages copy-on-write:                       153446318.\nPages zero filled:                        4829949137.\nPages reactivated:                          19292122.\nPages purged:                               49342845.\nFile-backed pages:                           1432533.\nAnonymous pages:                             1363668.\nPages stored in compressor:                  1768121.\nPages occupied by compressor:                 808114.\nDecompressions:                             13652495.\nCompressions:                               22447872.\nPageins:                                    65640820.\nPageouts:                                      67100.\nSwapins:                                      718183.\nSwapouts:                                    1012357.\n",
+      "swapout_bytes": 16586457088,
+      "compressed_bytes": 13240139776
+    },
+    {
+      "elapsed_s": 28.136902958038263,
+      "total_bytes": 68719476736,
+      "free_percentage": 67,
+      "estimated_available_bytes": 46042049413,
+      "vm_stat": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                     6065.\nPages active:                                1401573.\nPages inactive:                              1395322.\nPages speculative:                               962.\nPages throttled:                                   0.\nPages wired down:                             525341.\nPages purgeable:                                1644.\n\"Translation faults\":                     2553675888.\nPages copy-on-write:                       153446795.\nPages zero filled:                        4830284759.\nPages reactivated:                          19292151.\nPages purged:                               49342863.\nFile-backed pages:                           1430624.\nAnonymous pages:                             1367233.\nPages stored in compressor:                  1768115.\nPages occupied by compressor:                 808110.\nDecompressions:                             13652501.\nCompressions:                               22447872.\nPageins:                                    65640845.\nPageouts:                                      67102.\nSwapins:                                      718183.\nSwapouts:                                    1012357.\n",
+      "swapout_bytes": 16586457088,
+      "compressed_bytes": 13240074240
+    },
+    {
+      "elapsed_s": 30.147596750000957,
+      "total_bytes": 68719476736,
+      "free_percentage": 67,
+      "estimated_available_bytes": 46042049413,
+      "vm_stat": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                     8118.\nPages active:                                1398101.\nPages inactive:                              1394264.\nPages speculative:                               987.\nPages throttled:                                   0.\nPages wired down:                             527678.\nPages purgeable:                                1034.\n\"Translation faults\":                     2553684472.\nPages copy-on-write:                       153447237.\nPages zero filled:                        4830600955.\nPages reactivated:                          19292188.\nPages purged:                               49342863.\nFile-backed pages:                           1430658.\nAnonymous pages:                             1362694.\nPages stored in compressor:                  1768104.\nPages occupied by compressor:                 808110.\nDecompressions:                             13652502.\nCompressions:                               22447872.\nPageins:                                    65640849.\nPageouts:                                      67102.\nSwapins:                                      718183.\nSwapouts:                                    1012357.\n",
+      "swapout_bytes": 16586457088,
+      "compressed_bytes": 13240074240
+    },
+    {
+      "elapsed_s": 32.15643612499116,
+      "total_bytes": 68719476736,
+      "free_percentage": 67,
+      "estimated_available_bytes": 46042049413,
+      "vm_stat": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                     8555.\nPages active:                                1399202.\nPages inactive:                              1395547.\nPages speculative:                               438.\nPages throttled:                                   0.\nPages wired down:                             525474.\nPages purgeable:                                1493.\n\"Translation faults\":                     2553694481.\nPages copy-on-write:                       153447836.\nPages zero filled:                        4830933561.\nPages reactivated:                          19292193.\nPages purged:                               49343046.\nFile-backed pages:                           1429735.\nAnonymous pages:                             1365452.\nPages stored in compressor:                  1768099.\nPages occupied by compressor:                 808108.\nDecompressions:                             13652507.\nCompressions:                               22447872.\nPageins:                                    65640859.\nPageouts:                                      67129.\nSwapins:                                      718183.\nSwapouts:                                    1012357.\n",
+      "swapout_bytes": 16586457088,
+      "compressed_bytes": 13240041472
+    },
+    {
+      "elapsed_s": 34.165496750036255,
+      "total_bytes": 68719476736,
+      "free_percentage": 67,
+      "estimated_available_bytes": 46042049413,
+      "vm_stat": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                     6488.\nPages active:                                1398788.\nPages inactive:                              1395092.\nPages speculative:                               430.\nPages throttled:                                   0.\nPages wired down:                             528401.\nPages purgeable:                                5127.\n\"Translation faults\":                     2553713816.\nPages copy-on-write:                       153449231.\nPages zero filled:                        4831255562.\nPages reactivated:                          19292238.\nPages purged:                               49343050.\nFile-backed pages:                           1425032.\nAnonymous pages:                             1369278.\nPages stored in compressor:                  1768096.\nPages occupied by compressor:                 808107.\nDecompressions:                             13652510.\nCompressions:                               22447872.\nPageins:                                    65640945.\nPageouts:                                      67132.\nSwapins:                                      718183.\nSwapouts:                                    1012357.\n",
+      "swapout_bytes": 16586457088,
+      "compressed_bytes": 13240025088
+    },
+    {
+      "elapsed_s": 36.17394708300708,
+      "total_bytes": 68719476736,
+      "free_percentage": 67,
+      "estimated_available_bytes": 46042049413,
+      "vm_stat": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                    11205.\nPages active:                                1401683.\nPages inactive:                              1395326.\nPages speculative:                               634.\nPages throttled:                                   0.\nPages wired down:                             520255.\nPages purgeable:                                5107.\n\"Translation faults\":                     2553722285.\nPages copy-on-write:                       153449706.\nPages zero filled:                        4831592870.\nPages reactivated:                          19292238.\nPages purged:                               49343052.\nFile-backed pages:                           1423044.\nAnonymous pages:                             1374599.\nPages stored in compressor:                  1768095.\nPages occupied by compressor:                 808107.\nDecompressions:                             13652511.\nCompressions:                               22447872.\nPageins:                                    65640947.\nPageouts:                                      67143.\nSwapins:                                      718183.\nSwapouts:                                    1012357.\n",
+      "swapout_bytes": 16586457088,
+      "compressed_bytes": 13240025088
+    },
+    {
+      "elapsed_s": 38.18262733303709,
+      "total_bytes": 68719476736,
+      "free_percentage": 67,
+      "estimated_available_bytes": 46042049413,
+      "vm_stat": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                     9312.\nPages active:                                1399408.\nPages inactive:                              1395794.\nPages speculative:                               814.\nPages throttled:                                   0.\nPages wired down:                             523880.\nPages purgeable:                                5199.\n\"Translation faults\":                     2553735336.\nPages copy-on-write:                       153450726.\nPages zero filled:                        4831910884.\nPages reactivated:                          19292290.\nPages purged:                               49343116.\nFile-backed pages:                           1423400.\nAnonymous pages:                             1372616.\nPages stored in compressor:                  1768090.\nPages occupied by compressor:                 808105.\nDecompressions:                             13652516.\nCompressions:                               22447872.\nPageins:                                    65641181.\nPageouts:                                      67143.\nSwapins:                                      718183.\nSwapouts:                                    1012357.\n",
+      "swapout_bytes": 16586457088,
+      "compressed_bytes": 13239992320
+    },
+    {
+      "elapsed_s": 40.1942728330032,
+      "total_bytes": 68719476736,
+      "free_percentage": 67,
+      "estimated_available_bytes": 46042049413,
+      "vm_stat": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                     7090.\nPages active:                                1399277.\nPages inactive:                              1397566.\nPages speculative:                               713.\nPages throttled:                                   0.\nPages wired down:                             525237.\nPages purgeable:                                5335.\n\"Translation faults\":                     2553752790.\nPages copy-on-write:                       153451606.\nPages zero filled:                        4832246591.\nPages reactivated:                          19292290.\nPages purged:                               49343125.\nFile-backed pages:                           1420409.\nAnonymous pages:                             1377147.\nPages stored in compressor:                  1765463.\nPages occupied by compressor:                 807452.\nDecompressions:                             13655153.\nCompressions:                               22447872.\nPageins:                                    65641224.\nPageouts:                                      67150.\nSwapins:                                      718183.\nSwapouts:                                    1012357.\n",
+      "swapout_bytes": 16586457088,
+      "compressed_bytes": 13229293568
+    },
+    {
+      "elapsed_s": 42.20450625004014,
+      "total_bytes": 68719476736,
+      "free_percentage": 67,
+      "estimated_available_bytes": 46042049413,
+      "vm_stat": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                     6992.\nPages active:                                1401975.\nPages inactive:                              1398538.\nPages speculative:                               722.\nPages throttled:                                   0.\nPages wired down:                             521721.\nPages purgeable:                                5208.\n\"Translation faults\":                     2553761369.\nPages copy-on-write:                       153452007.\nPages zero filled:                        4832562856.\nPages reactivated:                          19292353.\nPages purged:                               49343125.\nFile-backed pages:                           1420429.\nAnonymous pages:                             1380806.\nPages stored in compressor:                  1765457.\nPages occupied by compressor:                 807452.\nDecompressions:                             13655159.\nCompressions:                               22447872.\nPageins:                                    65641226.\nPageouts:                                      67150.\nSwapins:                                      718183.\nSwapouts:                                    1012357.\n",
+      "swapout_bytes": 16586457088,
+      "compressed_bytes": 13229293568
+    },
+    {
+      "elapsed_s": 44.21787687501637,
+      "total_bytes": 68719476736,
+      "free_percentage": 74,
+      "estimated_available_bytes": 50852412784,
+      "vm_stat": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                   453028.\nPages active:                                1312523.\nPages inactive:                              1310935.\nPages speculative:                               536.\nPages throttled:                                   0.\nPages wired down:                             252844.\nPages purgeable:                                4801.\n\"Translation faults\":                     2553774535.\nPages copy-on-write:                       153452956.\nPages zero filled:                        4832886970.\nPages reactivated:                          19292428.\nPages purged:                               49343359.\nFile-backed pages:                           1417437.\nAnonymous pages:                             1206557.\nPages stored in compressor:                  1765449.\nPages occupied by compressor:                 807452.\nDecompressions:                             13655167.\nCompressions:                               22447872.\nPageins:                                    65641283.\nPageouts:                                      67163.\nSwapins:                                      718183.\nSwapouts:                                    1012357.\n",
+      "swapout_bytes": 16586457088,
+      "compressed_bytes": 13229293568
+    }
+  ],
+  "maximum_elapsed_s": 300,
+  "min_available_estimate_bytes": 12884901888,
+  "initial_memory": {
+    "total_bytes": 68719476736,
+    "free_percentage": 75,
+    "estimated_available_bytes": 51539607552,
+    "vm_stat": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                    19388.\nPages active:                                1551813.\nPages inactive:                              1534684.\nPages speculative:                             14985.\nPages throttled:                                   0.\nPages wired down:                             250441.\nPages purgeable:                               45927.\n\"Translation faults\":                     2552992254.\nPages copy-on-write:                       153436607.\nPages zero filled:                        4825173282.\nPages reactivated:                          19078892.\nPages purged:                               49297152.\nFile-backed pages:                           1534382.\nAnonymous pages:                             1567100.\nPages stored in compressor:                  1569885.\nPages occupied by compressor:                 764123.\nDecompressions:                             13652169.\nCompressions:                               22249294.\nPageins:                                    65428827.\nPageouts:                                      67021.\nSwapins:                                      718183.\nSwapouts:                                    1012357.\n"
+  },
+  "outcome": "completed",
+  "runner_exit_code": 1,
+  "final_memory": {
+    "total_bytes": 68719476736,
+    "free_percentage": 74,
+    "estimated_available_bytes": 50852412784,
+    "vm_stat": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                   452934.\nPages active:                                1312602.\nPages inactive:                              1310895.\nPages speculative:                               548.\nPages throttled:                                   0.\nPages wired down:                             252844.\nPages purgeable:                                4801.\n\"Translation faults\":                     2553775663.\nPages copy-on-write:                       153453232.\nPages zero filled:                        4832889699.\nPages reactivated:                          19292428.\nPages purged:                               49343359.\nFile-backed pages:                           1417449.\nAnonymous pages:                             1206596.\nPages stored in compressor:                  1765449.\nPages occupied by compressor:                 807452.\nDecompressions:                             13655167.\nCompressions:                               22447872.\nPageins:                                    65641285.\nPageouts:                                      67163.\nSwapins:                                      718183.\nSwapouts:                                    1012357.\n"
+  },
+  "elapsed_s": 44.22531383304158,
+  "cleanup": "Capacity context cancelled/awaited; only its owned disposable process group is terminated"
+}

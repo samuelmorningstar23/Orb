@@ -1,0 +1,133 @@
+{
+  "schema_version": 1,
+  "created_at": "2026-10-21T09:44:54.452877+00:00",
+  "run_id": "b13fb29377b0",
+  "evidence_kind": "actual_orb_disposable_real_local_model",
+  "synthetic_data_only": true,
+  "concurrency": 1,
+  "mode": "fresh-ai",
+  "hardware_runtime": {
+    "platform": "macOS-26.5.2-arm64-arm-64bit",
+    "machine": "arm64",
+    "python": "3.12.13",
+    "cpu_count": 12,
+    "client_hardware_only": false,
+    "server_hardware_verified": true,
+    "memory_bytes": "68719476736",
+    "chip": "Apple M2 Max",
+    "git_commit": "a5bae8bcba38280134be5970d25d8c314027f682",
+    "source_sha256": {
+      "scripts/loadtest_capacity.py": "d03878ede6a44a3a284ca43cd8ca982a8d948919c6cddfba59ebcb28ace577b5",
+      "scripts/loadtest_capacity_fixture.py": "4c3d3d4b8afc42f18a83e62760fef549b8f387a159d6a5e601a43fbf3c88167f",
+      "server/services/llm_queue_service.py": "2302fd60d4da8b0be0b86fef9026614a7a188b844e045ce0c09281ca09f67fde",
+      "server/services/gpu_coordinator.py": "239fa29a4b16fb7d2da658c3f27a1e27a82088e46703c489a3dffc422ec30bd0",
+      "server/services/patient_summary_service.py": "d0b59e4d5d06f4f7c87e0771e4ced1ed04b012a0bd20dad2cfe1ac27ae14b595",
+      "server/routes/sage_routes.py": "3f9047e49de5a053c3f4d95708cef0937838bbc1a2f2f7a00772395e4899b818"
+    },
+    "httpx_version": "0.28.1",
+    "server_colocated_owned_child": true
+  },
+  "limitations": [
+    "Readable milestone is >=32 nonheading characters / four words, not a clinical usefulness verdict.",
+    "No clinical correctness, monitoring, ASR or imaging capacity is certified.",
+    "Unique prompts/threads prevent trivial answer dedup; this is a bounded scripted case mix.",
+    "Failures and rejections remain in target denominators; successful-only quantiles are labelled.",
+    "Summary cache reads do not prove 30-minute generation throughput or scheduler coverage."
+  ],
+  "background_workloads": {
+    "asr": "not_run",
+    "imaging": "not_run",
+    "monitoring": "not_run",
+    "summary_refresh": "not_run"
+  },
+  "fixture_observations": {
+    "chat_calls": 0,
+    "generate_calls": 0,
+    "peak_inflight": 0
+  },
+  "fixture_configuration": {},
+  "fixture_summary_prewarm": false,
+  "summary": {
+    "requests": 1,
+    "successful": 1,
+    "failed": 0,
+    "http_status_counts": {
+      "200": 1
+    },
+    "wall_s": 23.101085541013163,
+    "completed_successfully_per_second": 0.04328800905154963,
+    "all_ai_requests_meet_completed_answer_targets": false,
+    "lanes": {
+      "general": {
+        "requests": 1,
+        "successful": 1,
+        "failures": {},
+        "full": {
+          "samples": 1,
+          "p50_s": 23.100983582960907,
+          "p95_s": 23.100983582960907,
+          "p99_s": 23.100983582960907,
+          "max_s": 23.100983582960907
+        },
+        "first_readable": {
+          "samples": 1,
+          "p50_s": 7.516152374970261,
+          "p95_s": 7.516152374970261,
+          "p99_s": 7.516152374970261,
+          "max_s": 7.516152374970261
+        },
+        "queue_wait": {
+          "samples": 1,
+          "p50_s": 0.000103,
+          "p95_s": 0.000103,
+          "p99_s": 0.000103,
+          "max_s": 0.000103
+        },
+        "retrieval": {
+          "samples": 1,
+          "p50_s": 0.023,
+          "p95_s": 0.023,
+          "p99_s": 0.023,
+          "max_s": 0.023
+        },
+        "target_s": 3.0,
+        "first_readable_meeting_target": 0,
+        "full_meeting_target": 0,
+        "all_requests_meet_target": false
+      }
+    }
+  },
+  "requests": [
+    {
+      "request_id": "capacity-b13fb29377b0-00000",
+      "lane": "general",
+      "role": "doctor",
+      "status": 200,
+      "success": true,
+      "error": null,
+      "full_s": 23.100983582960907,
+      "first_content_s": 6.97360570798628,
+      "first_readable_s": 7.516152374970261,
+      "completion_s": 23.09168466698611,
+      "terminal": true,
+      "content_chars": 667,
+      "content_events": 126,
+      "queue_ms": 0.103,
+      "retrieval_ms": 23,
+      "prompt_tokens": null,
+      "output_tokens": null,
+      "model": "medgemma:27b",
+      "provider": "ollama",
+      "cache_hit": false,
+      "answer_sha256": "a062a1d405b0073f1acb5d2b705e025f4d2a96a9ae6529a8af98df03cf46f3af",
+      "target_s": 3.0,
+      "first_readable_within_target": false,
+      "completed_within_target": false
+    }
+  ],
+  "qualification_status": "diagnostic_not_isolated",
+  "measurement_caveats": [
+    "Model daemon and host were shared with separately coordinated diagnostic work; this sample is not an isolated cold or warm hardware qualification.",
+    "Observed single-request latency is useful evidence that the tested configuration did not meet the target, not a reliable throughput sizing estimate."
+  ]
+}

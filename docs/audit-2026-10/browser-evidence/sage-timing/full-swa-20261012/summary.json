@@ -1,0 +1,677 @@
+{
+  "schema": "orb.audit.sage-browser-latency-full-swa/1",
+  "recorded_at_utc": "2026-10-12T08:39:52.383317+00:00",
+  "status": "FAILED_PARTIAL_PERFORMANCE_INTERMEDIATE",
+  "qualification": "idle synthetic local inference; not busy-ward acceptance",
+  "summary": "All 11 real browser journeys and all 11 LLM turn completions passed. Seven of nine warm latency observations passed: all patient and department repeats; general after department missed. Initial cold 20.141s miss retained. No full SLA claim.",
+  "timing_target_interpretation": "strict submit-to-first-readable-visible-answer; successful completion required",
+  "strict_targets_ms": {
+    "general": 3000,
+    "patient": 5000,
+    "department": 10000
+  },
+  "initial_observation_retained": true,
+  "cold_policy": "Initial nonresident runner is shown separately; its target miss is retained. No universal SLA qualification.",
+  "warm_counts": {
+    "observations": 9,
+    "passed": 7,
+    "failed": 2
+  },
+  "warm_by_category": {
+    "general": {
+      "first_readable_ms": [
+        1452.4,
+        4906.4,
+        4878
+      ],
+      "passes": 1,
+      "observations": 3
+    },
+    "patient": {
+      "first_readable_ms": [
+        3987,
+        3980.7,
+        3989.5
+      ],
+      "passes": 3,
+      "observations": 3
+    },
+    "department": {
+      "first_readable_ms": [
+        5228.1,
+        314.9,
+        348.7
+      ],
+      "passes": 3,
+      "observations": 3
+    }
+  },
+  "observations": [
+    {
+      "index": 0,
+      "category": "general",
+      "repeat": null,
+      "phase": "initial residency diagnostic; excluded from warm SLA",
+      "first_readable_ms": 20141.4,
+      "full_completion_ms": 24471.7,
+      "target_ms": 3000,
+      "target_met": false,
+      "successful_completion": true,
+      "server_timing": {
+        "retrieval_ms": 6465,
+        "ttft_ms": 19872,
+        "first_content_ms": 20061,
+        "total_ms": 24439
+      },
+      "provider_split": {
+        "backend_log_line": 804,
+        "model": "medgemma:27b",
+        "prompt_evaluated_tokens": 697,
+        "prompt_evaluation_ms": 4195,
+        "decode_tokens": 73,
+        "decode_ms": 4573,
+        "prompt_total_tokens": 697,
+        "prompt_cached_tokens": 0
+      },
+      "screenshot": "00-general.png"
+    },
+    {
+      "index": 1,
+      "category": "general",
+      "repeat": 1,
+      "phase": "warm SLA",
+      "first_readable_ms": 1452.4,
+      "full_completion_ms": 5653,
+      "target_ms": 3000,
+      "target_met": true,
+      "successful_completion": true,
+      "server_timing": {
+        "retrieval_ms": 1092,
+        "ttft_ms": 1193,
+        "first_content_ms": 1384,
+        "total_ms": 5634
+      },
+      "provider_split": {
+        "backend_log_line": 847,
+        "model": "medgemma:27b",
+        "prompt_evaluated_tokens": 1,
+        "prompt_evaluation_ms": 82,
+        "decode_tokens": 71,
+        "decode_ms": 4441,
+        "prompt_total_tokens": 697,
+        "prompt_cached_tokens": 696
+      },
+      "screenshot": "01-general.png"
+    },
+    {
+      "index": 2,
+      "category": "patient",
+      "repeat": 1,
+      "phase": "warm SLA",
+      "first_readable_ms": 3987,
+      "full_completion_ms": 39629.6,
+      "target_ms": 5000,
+      "target_met": true,
+      "successful_completion": true,
+      "server_timing": {
+        "retrieval_ms": 308,
+        "ttft_ms": 3594,
+        "first_content_ms": 3789,
+        "total_ms": 39615
+      },
+      "provider_split": {
+        "backend_log_line": 860,
+        "model": "medgemma:27b",
+        "prompt_evaluated_tokens": 519,
+        "prompt_evaluation_ms": 3273,
+        "decode_tokens": 561,
+        "decode_ms": 36020,
+        "prompt_total_tokens": 1092,
+        "prompt_cached_tokens": 573
+      },
+      "screenshot": "02-patient.png"
+    },
+    {
+      "index": 3,
+      "category": "department",
+      "repeat": 1,
+      "phase": "warm SLA",
+      "first_readable_ms": 5228.1,
+      "full_completion_ms": 22881.9,
+      "target_ms": 10000,
+      "target_met": true,
+      "successful_completion": true,
+      "server_timing": {
+        "retrieval_ms": 3,
+        "ttft_ms": 5020,
+        "first_content_ms": 5020,
+        "total_ms": 22869
+      },
+      "provider_split": {
+        "backend_log_line": 868,
+        "model": "medgemma:27b",
+        "prompt_evaluated_tokens": 821,
+        "prompt_evaluation_ms": 4919,
+        "decode_tokens": 279,
+        "decode_ms": 17849,
+        "prompt_total_tokens": 824,
+        "prompt_cached_tokens": 3
+      },
+      "screenshot": "03-department.png"
+    },
+    {
+      "index": 4,
+      "category": "general",
+      "repeat": 2,
+      "phase": "warm SLA",
+      "first_readable_ms": 4906.4,
+      "full_completion_ms": 9231.3,
+      "target_ms": 3000,
+      "target_met": false,
+      "successful_completion": true,
+      "server_timing": {
+        "retrieval_ms": 354,
+        "ttft_ms": 4640,
+        "first_content_ms": 4835,
+        "total_ms": 9221
+      },
+      "provider_split": {
+        "backend_log_line": 879,
+        "model": "medgemma:27b",
+        "prompt_evaluated_tokens": 697,
+        "prompt_evaluation_ms": 4175,
+        "decode_tokens": 73,
+        "decode_ms": 4580,
+        "prompt_total_tokens": 697,
+        "prompt_cached_tokens": 0
+      },
+      "screenshot": "04-general.png"
+    },
+    {
+      "index": 5,
+      "category": "patient",
+      "repeat": 2,
+      "phase": "warm SLA",
+      "first_readable_ms": 3980.7,
+      "full_completion_ms": 56365.3,
+      "target_ms": 5000,
+      "target_met": true,
+      "successful_completion": true,
+      "server_timing": {
+        "retrieval_ms": 301,
+        "ttft_ms": 3587,
+        "first_content_ms": 3782,
+        "total_ms": 56347
+      },
+      "provider_split": {
+        "backend_log_line": 893,
+        "model": "medgemma:27b",
+        "prompt_evaluated_tokens": 519,
+        "prompt_evaluation_ms": 3270,
+        "decode_tokens": 817,
+        "decode_ms": 52761,
+        "prompt_total_tokens": 1092,
+        "prompt_cached_tokens": 573
+      },
+      "screenshot": "05-patient.png"
+    },
+    {
+      "index": 6,
+      "category": "department",
+      "repeat": 2,
+      "phase": "warm SLA",
+      "first_readable_ms": 314.9,
+      "full_completion_ms": 17610.5,
+      "target_ms": 10000,
+      "target_met": true,
+      "successful_completion": true,
+      "server_timing": {
+        "retrieval_ms": 2,
+        "ttft_ms": 115,
+        "first_content_ms": 115,
+        "total_ms": 17595
+      },
+      "provider_split": {
+        "backend_log_line": 903,
+        "model": "medgemma:27b",
+        "prompt_evaluated_tokens": 1,
+        "prompt_evaluation_ms": 66,
+        "decode_tokens": 273,
+        "decode_ms": 17481,
+        "prompt_total_tokens": 824,
+        "prompt_cached_tokens": 823
+      },
+      "screenshot": "06-department.png"
+    },
+    {
+      "index": 7,
+      "category": "general",
+      "repeat": 3,
+      "phase": "warm SLA",
+      "first_readable_ms": 4878,
+      "full_completion_ms": 9072.6,
+      "target_ms": 3000,
+      "target_met": false,
+      "successful_completion": true,
+      "server_timing": {
+        "retrieval_ms": 380,
+        "ttft_ms": 4605,
+        "first_content_ms": 4801,
+        "total_ms": 9062
+      },
+      "provider_split": {
+        "backend_log_line": 918,
+        "model": "medgemma:27b",
+        "prompt_evaluated_tokens": 697,
+        "prompt_evaluation_ms": 4182,
+        "decode_tokens": 71,
+        "decode_ms": 4457,
+        "prompt_total_tokens": 697,
+        "prompt_cached_tokens": 0
+      },
+      "screenshot": "07-general.png"
+    },
+    {
+      "index": 8,
+      "category": "patient",
+      "repeat": 3,
+      "phase": "warm SLA",
+      "first_readable_ms": 3989.5,
+      "full_completion_ms": 44206.1,
+      "target_ms": 5000,
+      "target_met": true,
+      "successful_completion": true,
+      "server_timing": {
+        "retrieval_ms": 309,
+        "ttft_ms": 3593,
+        "first_content_ms": 3785,
+        "total_ms": 44187
+      },
+      "provider_split": {
+        "backend_log_line": 931,
+        "model": "medgemma:27b",
+        "prompt_evaluated_tokens": 519,
+        "prompt_evaluation_ms": 3271,
+        "decode_tokens": 629,
+        "decode_ms": 40594,
+        "prompt_total_tokens": 1092,
+        "prompt_cached_tokens": 573
+      },
+      "screenshot": "08-patient.png"
+    },
+    {
+      "index": 9,
+      "category": "department",
+      "repeat": 3,
+      "phase": "warm SLA",
+      "first_readable_ms": 348.7,
+      "full_completion_ms": 19115.2,
+      "target_ms": 10000,
+      "target_met": true,
+      "successful_completion": true,
+      "server_timing": {
+        "retrieval_ms": 3,
+        "ttft_ms": 152,
+        "first_content_ms": 152,
+        "total_ms": 19102
+      },
+      "provider_split": {
+        "backend_log_line": 945,
+        "model": "medgemma:27b",
+        "prompt_evaluated_tokens": 1,
+        "prompt_evaluation_ms": 65,
+        "decode_tokens": 295,
+        "decode_ms": 18950,
+        "prompt_total_tokens": 824,
+        "prompt_cached_tokens": 823
+      },
+      "screenshot": "09-department.png"
+    },
+    {
+      "index": "chart-prewarm",
+      "category": "patient",
+      "repeat": null,
+      "phase": "additional real chart-open prefix prewarm; baseline observations remain separate",
+      "first_readable_ms": 3809.8,
+      "full_completion_ms": 58105,
+      "target_ms": 5000,
+      "target_met": true,
+      "successful_completion": true,
+      "server_timing": {
+        "retrieval_ms": 1003,
+        "ttft_ms": 3415,
+        "first_content_ms": 3606,
+        "total_ms": 58085
+      },
+      "provider_split": {
+        "backend_log_line": 1008,
+        "model": "medgemma:27b",
+        "prompt_evaluated_tokens": 67,
+        "prompt_evaluation_ms": 629,
+        "decode_tokens": 850,
+        "decode_ms": 54670,
+        "prompt_total_tokens": 1098,
+        "prompt_cached_tokens": 1031
+      },
+      "screenshot": "chart-prewarm-patient.png"
+    }
+  ],
+  "chart_preparation": {
+    "patientId": "PAT-F0BA68ED",
+    "prefetchResponse": {
+      "status": "warmed",
+      "patient_id": "PAT-F0BA68ED"
+    },
+    "prefetchDurationMs": 1373.699999988079,
+    "openToSubmitMs": 1500.5,
+    "openToFirstReadableMs": 5310.299999952316,
+    "prefixWarmEvidence": {
+      "patientId": "PAT-F0BA68ED",
+      "model": "medgemma:27b",
+      "durationMs": 396,
+      "promptTokens": 1047,
+      "promptEvaluationMs": 302
+    },
+    "prefixConfirmed": true,
+    "screenshot": "prewarmed-patient-chart.png"
+  },
+  "journeys": {
+    "exitCode": 0,
+    "stats": {
+      "startTime": "2026-10-12T08:32:10.560Z",
+      "duration": 28451.346,
+      "expected": 11,
+      "skipped": 0,
+      "unexpected": 0,
+      "flaky": 0
+    },
+    "report": "journeys.json",
+    "artifacts": "journey-artifacts"
+  },
+  "browser_errors": {
+    "page": [],
+    "console": [],
+    "external_requests": []
+  },
+  "runtime": {
+    "version": "0.35.1",
+    "primary_and_ambient_model": "medgemma:27b",
+    "model_digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+    "context_cells": 8192,
+    "parallel_live_slots": 1,
+    "kv_type": "f16",
+    "full_swa_cache": true,
+    "swa_cache_mib": 3328,
+    "non_swa_cache_mib": 640,
+    "allocation_evidence": "runtime/ollama.log:238-246",
+    "launcher_sha256": "031f233edbbbe8e5d92e7f038adbc8a6c10dc9540cad2e9e81569531b1a33a38",
+    "cleanup_attestation": "runtime/cleanup.json",
+    "background_model_jobs": false,
+    "normal_maintenance": "ordinary non-model maintenance remains enabled; overlap is retained in backend.log"
+  },
+  "manual_protected_posture_verification": [
+    {
+      "index": 0,
+      "category": "general",
+      "checks": {
+        "thinking_enabled": true,
+        "thinking_requested": true,
+        "safety_floor_enabled": true,
+        "safety_floor_satisfied": true,
+        "model_preserved": true,
+        "no_downgrade": true,
+        "valid_wire_completion": true,
+        "valid_answer": true
+      }
+    },
+    {
+      "index": 1,
+      "category": "general",
+      "checks": {
+        "thinking_enabled": true,
+        "thinking_requested": true,
+        "safety_floor_enabled": true,
+        "safety_floor_satisfied": true,
+        "model_preserved": true,
+        "no_downgrade": true,
+        "valid_wire_completion": true,
+        "valid_answer": true
+      }
+    },
+    {
+      "index": 2,
+      "category": "patient",
+      "checks": {
+        "thinking_enabled": true,
+        "thinking_requested": true,
+        "safety_floor_enabled": true,
+        "safety_floor_satisfied": true,
+        "model_preserved": true,
+        "no_downgrade": true,
+        "valid_wire_completion": true,
+        "valid_answer": true
+      }
+    },
+    {
+      "index": 3,
+      "category": "department",
+      "checks": {
+        "thinking_enabled": true,
+        "thinking_requested": true,
+        "safety_floor_enabled": true,
+        "safety_floor_satisfied": true,
+        "model_preserved": true,
+        "no_downgrade": true,
+        "valid_wire_completion": true,
+        "valid_answer": true
+      }
+    },
+    {
+      "index": 4,
+      "category": "general",
+      "checks": {
+        "thinking_enabled": true,
+        "thinking_requested": true,
+        "safety_floor_enabled": true,
+        "safety_floor_satisfied": true,
+        "model_preserved": true,
+        "no_downgrade": true,
+        "valid_wire_completion": true,
+        "valid_answer": true
+      }
+    },
+    {
+      "index": 5,
+      "category": "patient",
+      "checks": {
+        "thinking_enabled": true,
+        "thinking_requested": true,
+        "safety_floor_enabled": true,
+        "safety_floor_satisfied": true,
+        "model_preserved": true,
+        "no_downgrade": true,
+        "valid_wire_completion": true,
+        "valid_answer": true
+      }
+    },
+    {
+      "index": 6,
+      "category": "department",
+      "checks": {
+        "thinking_enabled": true,
+        "thinking_requested": true,
+        "safety_floor_enabled": true,
+        "safety_floor_satisfied": true,
+        "model_preserved": true,
+        "no_downgrade": true,
+        "valid_wire_completion": true,
+        "valid_answer": true
+      }
+    },
+    {
+      "index": 7,
+      "category": "general",
+      "checks": {
+        "thinking_enabled": true,
+        "thinking_requested": true,
+        "safety_floor_enabled": true,
+        "safety_floor_satisfied": true,
+        "model_preserved": true,
+        "no_downgrade": true,
+        "valid_wire_completion": true,
+        "valid_answer": true
+      }
+    },
+    {
+      "index": 8,
+      "category": "patient",
+      "checks": {
+        "thinking_enabled": true,
+        "thinking_requested": true,
+        "safety_floor_enabled": true,
+        "safety_floor_satisfied": true,
+        "model_preserved": true,
+        "no_downgrade": true,
+        "valid_wire_completion": true,
+        "valid_answer": true
+      }
+    },
+    {
+      "index": 9,
+      "category": "department",
+      "checks": {
+        "thinking_enabled": true,
+        "thinking_requested": true,
+        "safety_floor_enabled": true,
+        "safety_floor_satisfied": true,
+        "model_preserved": true,
+        "no_downgrade": true,
+        "valid_wire_completion": true,
+        "valid_answer": true
+      }
+    },
+    {
+      "index": "chart-prewarm",
+      "category": "patient",
+      "checks": {
+        "thinking_enabled": true,
+        "thinking_requested": true,
+        "safety_floor_enabled": true,
+        "safety_floor_satisfied": true,
+        "model_preserved": true,
+        "no_downgrade": true,
+        "valid_wire_completion": true,
+        "valid_answer": true
+      }
+    }
+  ],
+  "retrieval": {
+    "description": "explicit installed embedder/reranker snapshots; real corpus initialized in disposable DB; isolated worker",
+    "corpus": {
+      "sources": 19,
+      "vectors": 19,
+      "fingerprint": "e85261d5dc762d793b10470056b9cfcec365d679d3bda7a3ba0c208d8ef7ded2"
+    }
+  },
+  "hardware": {
+    "platform": "darwin",
+    "architecture": "arm64",
+    "cpu": "Apple M2 Max",
+    "logicalCpus": 12,
+    "memoryBytes": 68719476736
+  },
+  "browser_version": "149.0.7827.55",
+  "started_at_utc": "2026-10-12T08:26:43.757Z",
+  "finished_at_utc": "2026-10-12T08:32:39.308Z",
+  "exit_code": 1,
+  "bundle_sha256": "c7a759ed29e706bb547eae838157a4de3919393fd8c88d521d13054d2a7577d2",
+  "harness_sha256": "679ba94194d723cb6a8a85277e307ac54a471edf521b5090e4605b366594d16d",
+  "source_acceptance": {
+    "results": "docs/audit-2026-10/backend-sage-speed-acceptance-20261012/results.json",
+    "results_sha256": "9c5023cb3684c8fd955ce8dfb4e0e105707574afd67fca296633dd62e8afde36",
+    "source_manifest": "docs/audit-2026-10/backend-sage-speed-acceptance-20261012/source-sha256.json",
+    "source_manifest_sha256": "edee0202111b45ba2276db7791be17f8f770428acc2d03550fb93eaf272e6b7d",
+    "observed_source_matches": {
+      "server/routes/sage_routes.py": {
+        "sha256": "93f9fba9b99f2e2e102c8bce289cd3c064d71ff481ae6844d4865e000988e7a9",
+        "acceptance_sha256": "93f9fba9b99f2e2e102c8bce289cd3c064d71ff481ae6844d4865e000988e7a9",
+        "matches_acceptance": true
+      },
+      "server/services/sage_service.py": {
+        "sha256": "2f77ff28bf3c30551e634f58866e90ffe15ac47b78d245c4aa107d3cf88ab1ed",
+        "acceptance_sha256": "2f77ff28bf3c30551e634f58866e90ffe15ac47b78d245c4aa107d3cf88ab1ed",
+        "matches_acceptance": true
+      },
+      "server/services/llm_providers.py": {
+        "sha256": "13b39ac2a3cd6216486967ddf219a1a16bf4cd144f16994ea9b06590c7436d02",
+        "acceptance_sha256": "13b39ac2a3cd6216486967ddf219a1a16bf4cd144f16994ea9b06590c7436d02",
+        "matches_acceptance": true
+      },
+      "server/services/clinical_knowledge.py": {
+        "sha256": "c53a09ec88dd5ed0feee2cd7bfbbd417c8f0aac6cf6ecce61e7ac23e2f0275cc",
+        "acceptance_sha256": "c53a09ec88dd5ed0feee2cd7bfbbd417c8f0aac6cf6ecce61e7ac23e2f0275cc",
+        "matches_acceptance": true
+      },
+      "server/services/local_transformers.py": {
+        "sha256": "b5777652fb29de126e05eabf35312846fa1ebac108162b83d684993936ccbeca",
+        "acceptance_sha256": "b5777652fb29de126e05eabf35312846fa1ebac108162b83d684993936ccbeca",
+        "matches_acceptance": true
+      },
+      "scripts/sage_browser_timing.cjs": {
+        "sha256": "679ba94194d723cb6a8a85277e307ac54a471edf521b5090e4605b366594d16d",
+        "acceptance_sha256": "679ba94194d723cb6a8a85277e307ac54a471edf521b5090e4605b366594d16d",
+        "matches_acceptance": true
+      },
+      "scripts/sage_browser_timing.test.cjs": {
+        "sha256": "4a545020de316f4ac0a875d458319d13c20ee911130a69487880c6b5113254fb",
+        "acceptance_sha256": "4a545020de316f4ac0a875d458319d13c20ee911130a69487880c6b5113254fb",
+        "matches_acceptance": true
+      },
+      "scripts/sage_browser_timing.md": {
+        "sha256": "4efc1dabd58fcff9fc724a9d4c0792cf4abd16ab62a40689fe8e235237276fa5",
+        "acceptance_sha256": "4efc1dabd58fcff9fc724a9d4c0792cf4abd16ab62a40689fe8e235237276fa5",
+        "matches_acceptance": true
+      },
+      "scripts/e2e_server.py": {
+        "sha256": "90cde4f221b159a951c836e6a60ba46c2ca1eb650c52909cb1ef9178e1e0c755",
+        "acceptance_sha256": "90cde4f221b159a951c836e6a60ba46c2ca1eb650c52909cb1ef9178e1e0c755",
+        "matches_acceptance": true
+      },
+      "scripts/serve-ollama.sh": {
+        "sha256": "031f233edbbbe8e5d92e7f038adbc8a6c10dc9540cad2e9e81569531b1a33a38",
+        "acceptance_sha256": "031f233edbbbe8e5d92e7f038adbc8a6c10dc9540cad2e9e81569531b1a33a38",
+        "matches_acceptance": true
+      }
+    }
+  },
+  "diagnosis": {
+    "confirmed": "General after department restores a saved patient prompt, then the runtime forces full prompt reprocessing. G2/G3 cached zero of 697 tokens, with prefill 4175/4182ms. Full SWA was actually allocated.",
+    "evidence": [
+      "runtime/ollama.log:456-477",
+      "runtime/ollama.log:566-588"
+    ],
+    "limit": "Single live slot saved prompt restoration remains unqualified; no source edits, best-of retest, prompt/model change, or clinical priority change in this run."
+  },
+  "screenshots_inspected": [
+    "04-general.png",
+    "08-patient.png",
+    "09-department.png",
+    "prewarmed-patient-chart.png"
+  ],
+  "evidence_directory": "docs/audit-2026-10/browser-evidence/sage-timing/full-swa-20261012",
+  "raw_timings": "timings.json",
+  "scope": "Synthetic isolated DB, installed read-only cached weights, actual Ollama/SSE/browser, no API mocks. Root-owned daemon stopped; all 33 model files unchanged and shared service untouched.",
+  "command": [
+    "node",
+    "scripts/sage_browser_timing.cjs",
+    "--python=/private/tmp/orb-ml-upgrade-20261012/bin/python",
+    "--inference-url=http://127.0.0.1:11436",
+    "--embedding-model=/Users/samuelmorningstar/.cache/huggingface/hub/models--BAAI--bge-m3/snapshots/5617a9f61b028005a4858fdac845db406aefb181",
+    "--reranker-model=/Users/samuelmorningstar/.cache/huggingface/hub/models--BAAI--bge-reranker-v2-m3/snapshots/953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e",
+    "--warm-runs=3",
+    "--timeout-ms=240000",
+    "--chart-prewarm=true",
+    "--journeys=true",
+    "--out=/private/tmp/orb-sage-browser-swa-full-20261012"
+  ]
+}

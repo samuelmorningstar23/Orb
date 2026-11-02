@@ -1,0 +1,176 @@
+{
+  "schema": "orb.audit.documentation-sage-speed-final/1",
+  "verified_at_utc": "2026-10-12T09:17:47.663640+00:00",
+  "status": "PASSED",
+  "method": "Lightweight read-only citation/link/JSON/SHA-256/PNG-signature/whitespace checks; only this new documentation manifest written. No tests, builds, browser, model calls or live configuration/data reads.",
+  "source_citations": {
+    "command": [
+      "python3",
+      "scripts/check-doc-citations.py",
+      "--quiet"
+    ],
+    "exit_code": 0,
+    "output": "citations   9020/9020 resolve and are in range  (100.00%)\nanchors     490/490 point at their symbol    (100.0%)\n\nOK \u2014 every citation resolves and every symbol anchor is correct.",
+    "current_final_doc_citations_checked": 0,
+    "current_final_doc_citation_errors": [],
+    "corrections": []
+  },
+  "local_references": {
+    "documents": [
+      "docs/SAGE_SPEED_FIX_2026-10.md",
+      "docs/SETUP.md",
+      "docs/INSTALL_RUNBOOK.md",
+      "README.md",
+      "docs/README.md",
+      "docs/audit-2026-10/browser-evidence/sage-timing/cache-save-20261012/README.md"
+    ],
+    "checked": 94,
+    "missing": []
+  },
+  "json": {
+    "parsed_files": 24,
+    "files_sha256": {
+      "docs/audit-2026-10/backend-sage-speed-acceptance-20261012/dist-sha256.json": "c21fdc2bd80854412def9c53a5ff9433a342a952b2ca5806db1a762f82d012cb",
+      "docs/audit-2026-10/backend-sage-speed-acceptance-20261012/results.json": "9c5023cb3684c8fd955ce8dfb4e0e105707574afd67fca296633dd62e8afde36",
+      "docs/audit-2026-10/backend-sage-speed-acceptance-20261012/source-sha256.json": "edee0202111b45ba2276db7791be17f8f770428acc2d03550fb93eaf272e6b7d",
+      "docs/audit-2026-10/backend-sage-speed-pre-startup-20261012-v7/verification.json": "df1c53e1de46fe7ac79e94b316d64ca777c59e62d001f97537e7b81e145a18ab",
+      "docs/audit-2026-10/backend-sage-speed-runtime-delta-20261012.json": "f0db875a3071d9172f23c61a996d84646092b85bd71b9489c69667b0489fef96",
+      "docs/audit-2026-10/browser-evidence/sage-timing/cache-save-20261012/evidence-manifest.json": "28e8d3c1c8831553b95efb894d909207715b71fd8260a393b834257da4b64a5b",
+      "docs/audit-2026-10/browser-evidence/sage-timing/cache-save-20261012/journey-artifacts/.last-run.json": "91d1c43004802cd49950d78eb11c8fa7d05da8ffffe219a8b13b2f561bc00903",
+      "docs/audit-2026-10/browser-evidence/sage-timing/cache-save-20261012/journeys.json": "46d458bd59d295f7f5e46b5287d63db59e7f705d08cf0df7f413c5ee7463649a",
+      "docs/audit-2026-10/browser-evidence/sage-timing/cache-save-20261012/runtime/application-parity.json": "f0db875a3071d9172f23c61a996d84646092b85bd71b9489c69667b0489fef96",
+      "docs/audit-2026-10/browser-evidence/sage-timing/cache-save-20261012/runtime/cleanup.json": "0e54f4e651709893321460606e16388fc15285a2b810e41d7f42d9ad36adf09b",
+      "docs/audit-2026-10/browser-evidence/sage-timing/cache-save-20261012/runtime/preflight.json": "c80b35d488132af5b5fefb15de8b0c66f3de7ba5e04fb14a45c1e30ec01100da",
+      "docs/audit-2026-10/browser-evidence/sage-timing/cache-save-20261012/runtime/profile-verification.json": "dfd55e794046a9df8176b71a6b38ea4c4dd2c1feb0eafec53ad67d68341c7f42",
+      "docs/audit-2026-10/browser-evidence/sage-timing/cache-save-20261012/runtime/runtime.json": "0e9f4482fcb7e69725b2154edb82dcaced6623c8de7480fe903b2affa003f8f1",
+      "docs/audit-2026-10/browser-evidence/sage-timing/cache-save-20261012/summary.json": "4a2aa130aae66dfa786191d1870976cf1211e95467995e9a9aaac72abf97da70",
+      "docs/audit-2026-10/browser-evidence/sage-timing/cache-save-20261012/timings.current.json": "9e14027e9a6ec6499933591be377d336a8dd7db6443290d96136f8717ba9bce0",
+      "docs/audit-2026-10/browser-evidence/sage-timing/cache-save-20261012/timings.json": "2da1190060792da749b00e286c68f28c7716b7fe66906e3a5c6a7d814b7556ef",
+      "docs/audit-2026-10/ollama-cache-profile-acceptance-20261012/rejected-two-slot/verification.json": "fafad7709680fd97faca109bbd05e31b66685cac75f4d83aaca50704bbbd70a6",
+      "docs/audit-2026-10/ollama-cache-profile-acceptance-20261012/verification.json": "dfd55e794046a9df8176b71a6b38ea4c4dd2c1feb0eafec53ad67d68341c7f42",
+      "docs/audit-2026-10/ollama-entrypoints-acceptance-20261012/verification.json": "3c225490e9b7258d60c6c32f86db41f59381b26e0e12fe1ac29c28f82baf396a",
+      "docs/audit-2026-10/provider-metrics-acceptance-20261012/verification.json": "c1c9b51cda52d6df1a9be9b0e191938815f01b751c095cccaa9411544b219abf",
+      "docs/audit-2026-10/sage-browser-latency-cache-save.json": "4a2aa130aae66dfa786191d1870976cf1211e95467995e9a9aaac72abf97da70",
+      "docs/audit-2026-10/sage-cache-save-control-20261012.json": "7fbee1cf1a5a13eecfb9830c79a0f4e54147dc0652a4778ca4d1d65ddb5157ce",
+      "docs/audit-2026-10/sage-swa-cache-control-20261012.json": "776380564b5272bf6a7aa587aa292677cea5d25bb9d2f4454330bc7786c7d1b8",
+      "docs/audit-2026-10/sage-two-slot-rejected-20261012/manifest.json": "91f5fbc483a05b0b8fbbb64b738372f67c55bb52778867f777496cdc87a2518a"
+    },
+    "errors": []
+  },
+  "focused_runtime_delta": {
+    "verification": "docs/audit-2026-10/ollama-cache-profile-acceptance-20261012/verification.json",
+    "verification_sha256": "dfd55e794046a9df8176b71a6b38ea4c4dd2c1feb0eafec53ad67d68341c7f42",
+    "passed": 160,
+    "overlap": "Focused cases overlap v8; no combined unique-case total claimed.",
+    "source_sha256": {
+      "scripts/serve-ollama.sh": "3f0dddbf51af4ae5475b5ef1634d69e16244c7f7c2a3769d2ef191a3f22f6985",
+      "config/ollama-xdg/llama.cpp/config.ini": "c8807fc49c7a03431fa38f8b4c0fcbce1cd612ccba2b97a2521515eac274a4c0",
+      "server/tests/test_ollama_launcher.py": "57d1dee08dbda8d80ae6893509408b4ce72872e79da23d147b0a643e40d4956d",
+      "server/tests/test_run_orb_launcher.py": "07da44592b89639f6cbfcd69b8760a69fc115858b04b25e597f7e1acb09cd7df",
+      "setup-mac.sh": "0f1b033f2743c160b12e142ccbb29f350e9c5c03023c55818a803ab71641ae18",
+      "run-orb.sh": "2660694fbe18e2c14522629fa01d291ee3549ec3caf00d46d11ea5adfb4f45ee",
+      "server/services/ops_health_service.py": "fe3dca11f7ffc76c26b4c21be4a2d83db7cc2438a94c65b04207c173393ab811",
+      ".env.example": "8c855091eb5ae5bb7137e3f52258fd2113b658a4442f1a958f005912389e5cbc",
+      "docs/SETUP.md": "d2e73be1210024fd32018bf1ebdd8f0a5568a30e3aae08e6b89faf56f639f26e"
+    },
+    "source_hashes_checked": 9,
+    "hash_drift": [],
+    "pytest_log_sha256": "d0cd0218a90cc137104608db19d8310438e4cd0cc1397eb30f44e34a536787fa"
+  },
+  "application_baseline": {
+    "verification": "docs/audit-2026-10/backend-sage-speed-acceptance-20261012/results.json",
+    "verification_sha256": "9c5023cb3684c8fd955ce8dfb4e0e105707574afd67fca296633dd62e8afde36",
+    "counts": {
+      "tests": 16111,
+      "passed": 16103,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 8
+    },
+    "elapsed_seconds": 365.21,
+    "source_manifest_sha256": "edee0202111b45ba2276db7791be17f8f770428acc2d03550fb93eaf272e6b7d",
+    "compared_application_files": 1283,
+    "application_drift": [],
+    "application_fingerprint_sha256": "f74f83cf0c1bf5474236b6c2aabf08073593d4be4794335c5b8d18b8499177bb",
+    "dist_manifest_sha256": "c21fdc2bd80854412def9c53a5ff9433a342a952b2ca5806db1a762f82d012cb",
+    "compared_dist_files": 181,
+    "dist_drift": [],
+    "new_dist_files": [],
+    "dist_index_sha256": "c7a759ed29e706bb547eae838157a4de3919393fd8c88d521d13054d2a7577d2",
+    "parity_verification": "docs/audit-2026-10/backend-sage-speed-runtime-delta-20261012.json",
+    "parity_sha256": "f0db875a3071d9172f23c61a996d84646092b85bd71b9489c69667b0489fef96",
+    "classification": "v8 application and built frontend remain unchanged; operational launcher/INI/two-test delta is covered by distinct focused acceptance and final real-browser evidence. No whole-repository v8 equivalence claimed."
+  },
+  "final_browser_evidence": {
+    "directory": "docs/audit-2026-10/browser-evidence/sage-timing/cache-save-20261012",
+    "manifest": "docs/audit-2026-10/browser-evidence/sage-timing/cache-save-20261012/evidence-manifest.json",
+    "manifest_sha256": "28e8d3c1c8831553b95efb894d909207715b71fd8260a393b834257da4b64a5b",
+    "artifacts_verified": 41,
+    "png_files_present_with_signature": 22,
+    "artifact_errors": [],
+    "warm_targets": {
+      "observations": 9,
+      "passed": 9,
+      "failed": 0
+    },
+    "successful_answers": 11,
+    "successful_journeys": 11,
+    "cold_first_readable_ms": 19982.1,
+    "cold_target_met": false,
+    "chart_prefetch_ms": 23255.19999998808,
+    "chart_open_to_first_readable_ms": 25408.600000023842,
+    "chart_submit_to_first_readable_ms": 2039.3,
+    "qualification": "idle synthetic local inference; not busy-ward acceptance",
+    "cleanup": {
+      "schema": "orb.sage.owned-runtime-cleanup/1",
+      "timestamp_utc": "2026-10-12T09:09:48.642767+00:00",
+      "controller_exit_code": 0,
+      "owned_daemon_pid": 41550,
+      "owned_daemon_exit_code": 0,
+      "owned_port_11436_connect_ex": 61,
+      "owned_port_closed": true,
+      "shared_api_ps": {
+        "models": []
+      },
+      "launcher_unchanged": true,
+      "runner_config_unchanged": true,
+      "model_file_count": 33,
+      "model_files_unchanged": true,
+      "private_home_copied": false,
+      "cleanup_scope": "Only owned PID/process group, no shared service changes."
+    }
+  },
+  "documentation_sha256": {
+    "docs/SAGE_SPEED_FIX_2026-10.md": "7260bbe09f41b649e9e78eeaccacd06288b6a9010a343d73585179e99dafe8d7",
+    "docs/SETUP.md": "d2e73be1210024fd32018bf1ebdd8f0a5568a30e3aae08e6b89faf56f639f26e",
+    "docs/INSTALL_RUNBOOK.md": "0dfbac9dd73a5b3097297ba802ccdcf1bda4bbcb2e563254fbb7d44a3fc67332",
+    "README.md": "20ddd1d9a5ffcd12bdb7b77195ab823d762562e62a3de75798aa39d8260c057a",
+    "docs/README.md": "7e599d7b8a02d96ddf0d5f64f6983089848295ce48b564e04d01e1006c3817cc",
+    "docs/audit-2026-10/browser-evidence/sage-timing/cache-save-20261012/README.md": "36019c22b90160486a6edf233af42cb2c400f8cd4c0af251d1fb38ab2054ebdb"
+  },
+  "expected_post_parity_documentation_drift": [
+    {
+      "path": "docs/SAGE_SPEED_FIX_2026-10.md",
+      "historical_parity_sha256": "13e6760b56f7788ff3a1f6661fbd49ab38a187aa3d95a18c2f5e66eeee17abbf",
+      "current_sha256": "7260bbe09f41b649e9e78eeaccacd06288b6a9010a343d73585179e99dafe8d7",
+      "classification": "expected documentation/evidence update after historical parity record; not application drift"
+    }
+  ],
+  "git_diff_check": {
+    "command": [
+      "git",
+      "diff",
+      "--check"
+    ],
+    "exit_code": 0,
+    "output": ""
+  },
+  "historical_records": "Existing v8, earlier final-v6, earlier documentation-final-verification, 65/110/160 focused stages, pilot and failed-browser records remain unmodified.",
+  "limits": [
+    "Warm idle synthetic acceptance on the qualified local runtime; not busy-ward or universal latency acceptance.",
+    "Cold 19.982s and chart-open 25.409s remain explicit misses/operational limits; full answer completion is separate from first readable.",
+    "PNG presence, signature, size and hash checked; prior browser agent visual inspection retained without a new visual run.",
+    "No tests/builds/model/browser activity performed in this final consistency pass."
+  ],
+  "errors": []
+}

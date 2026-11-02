@@ -1,0 +1,65 @@
+{
+  "scope": "Synthetic actual Bash launcher and bounded setup startup helper; no models, real network, shared daemon or private data accessed.",
+  "interpreter": "/private/tmp/orb-ml-upgrade-20261012/bin/python",
+  "python_version": "3.12.13",
+  "pytest": {
+    "command": [
+      "/private/tmp/orb-ml-upgrade-20261012/bin/python",
+      "-m",
+      "pytest",
+      "-q",
+      "tests/test_ollama_launcher.py",
+      "tests/test_install_script.py"
+    ],
+    "cwd": "/Users/samuelmorningstar/Documents/Projects/Orb/server",
+    "exit_code": 0,
+    "passed": 65,
+    "seconds": 29.99,
+    "new_launcher_cases": 50,
+    "existing_installer_cases": 15,
+    "captured_stdout": "docs/audit-2026-10/ollama-launcher-acceptance-20261012/pytest.log",
+    "stdout_sha256": "04a624bdc747e972723b68115d3b3598075d85b7fb541390ab9cd087afb267b5",
+    "original_captured_stdout": "/private/tmp/orb-ollama-launcher-verification-20261012-rx525x1k/pytest.log"
+  },
+  "checks": [
+    {
+      "command": [
+        "bash",
+        "-n",
+        "scripts/serve-ollama.sh",
+        "setup-mac.sh"
+      ],
+      "cwd": "/Users/samuelmorningstar/Documents/Projects/Orb",
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "git",
+        "diff",
+        "--check",
+        "--",
+        "scripts/serve-ollama.sh",
+        "setup-mac.sh",
+        "server/tests/test_ollama_launcher.py",
+        "docs/SETUP.md",
+        ".env.example"
+      ],
+      "cwd": "/Users/samuelmorningstar/Documents/Projects/Orb",
+      "exit_code": 0
+    }
+  ],
+  "source_sha256": {
+    "scripts/serve-ollama.sh": "031f233edbbbe8e5d92e7f038adbc8a6c10dc9540cad2e9e81569531b1a33a38",
+    "setup-mac.sh": "0f1b033f2743c160b12e142ccbb29f350e9c5c03023c55818a803ab71641ae18",
+    "server/tests/test_ollama_launcher.py": "1ca441025cd807c8705595dca19351abb74aa718b7d59ea92b6ff7ecc1026ecf",
+    "docs/SETUP.md": "df3a63967ac076bc169a3f429cc7b8471e6b5b19e6ba0754a70159a63635ace4",
+    ".env.example": "f92fde55f384d920474c26621f4a69d7c5eba03b388f4f9717ea4d412aa4473a"
+  },
+  "limits": [
+    "No real daemon launched or hardware/model inference exercised by these tests.",
+    "Full-SWA qualification is exact Ollama0.35.1, Darwin arm64, at least64GiB; runtime latency pilot is separately owned root evidence.",
+    "Off prevents launcher enablement; system/user llama.cpp config.ini can still enable full-SWA.",
+    "NO_CLOUD disables cloud inference/web search; not an operating-system egress firewall."
+  ],
+  "original_manifest_sha256": "5b5c0da960fc98d39eee69015a7ba56fea4cd0505b8f2078de0a642ee91fc301"
+}

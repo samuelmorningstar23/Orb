@@ -1,0 +1,488 @@
+{
+  "evidence_kind": "owned_synthetic_fake_model_contract_only",
+  "real_inference": false,
+  "fixture_variant": "source-facts-v1-one-populated-99-empty",
+  "summary": {
+    "requests": 6,
+    "successful": 6,
+    "failed": 0,
+    "http_status_counts": {
+      "200": 6
+    },
+    "wall_s": 0.23257087502861395,
+    "completed_successfully_per_second": 25.798587201694108,
+    "all_ai_requests_meet_completed_answer_targets": true,
+    "lanes": {
+      "department": {
+        "requests": 2,
+        "successful": 2,
+        "failures": {},
+        "full": {
+          "samples": 2,
+          "p50_s": 0.039655417029280216,
+          "p95_s": 0.04187395900953561,
+          "p99_s": 0.04187395900953561,
+          "max_s": 0.04187395900953561
+        },
+        "terminal_completed_answer": {
+          "samples": 2,
+          "p50_s": 0.03640083404025063,
+          "p95_s": 0.037911833031103015,
+          "p99_s": 0.037911833031103015,
+          "max_s": 0.037911833031103015
+        },
+        "post_terminal_stream_close": {
+          "samples": 2,
+          "p50_s": 0.0017435839981772006,
+          "p95_s": 0.0054731249692849815,
+          "p99_s": 0.0054731249692849815,
+          "max_s": 0.0054731249692849815
+        },
+        "first_readable": {
+          "samples": 2,
+          "p50_s": 0.009454125014599413,
+          "p95_s": 0.010522124997805804,
+          "p99_s": 0.010522124997805804,
+          "max_s": 0.010522124997805804
+        },
+        "queue_wait": {
+          "samples": 2,
+          "p50_s": 6.7e-05,
+          "p95_s": 7.9e-05,
+          "p99_s": 7.9e-05,
+          "max_s": 7.9e-05
+        },
+        "retrieval": {
+          "samples": 2,
+          "p50_s": 0.003,
+          "p95_s": 0.003,
+          "p99_s": 0.003,
+          "max_s": 0.003
+        },
+        "target_s": 15.0,
+        "first_readable_meeting_target": 2,
+        "full_meeting_target": 2,
+        "all_requests_meet_target": true
+      },
+      "general": {
+        "requests": 2,
+        "successful": 2,
+        "failures": {},
+        "full": {
+          "samples": 2,
+          "p50_s": 0.038683125050738454,
+          "p95_s": 0.08154783304780722,
+          "p99_s": 0.08154783304780722,
+          "max_s": 0.08154783304780722
+        },
+        "terminal_completed_answer": {
+          "samples": 2,
+          "p50_s": 0.03755987499607727,
+          "p95_s": 0.07970016699982807,
+          "p99_s": 0.07970016699982807,
+          "max_s": 0.07970016699982807
+        },
+        "post_terminal_stream_close": {
+          "samples": 2,
+          "p50_s": 0.0011232500546611845,
+          "p95_s": 0.0018476660479791462,
+          "p99_s": 0.0018476660479791462,
+          "max_s": 0.0018476660479791462
+        },
+        "first_readable": {
+          "samples": 2,
+          "p50_s": 0.01023887499468401,
+          "p95_s": 0.051529542019125074,
+          "p99_s": 0.051529542019125074,
+          "max_s": 0.051529542019125074
+        },
+        "queue_wait": {
+          "samples": 2,
+          "p50_s": 6.3e-05,
+          "p95_s": 0.000101,
+          "p99_s": 0.000101,
+          "max_s": 0.000101
+        },
+        "retrieval": {
+          "samples": 2,
+          "p50_s": 0.003,
+          "p95_s": 0.022,
+          "p99_s": 0.022,
+          "max_s": 0.022
+        },
+        "target_s": 3.0,
+        "first_readable_meeting_target": 2,
+        "full_meeting_target": 2,
+        "all_requests_meet_target": true
+      },
+      "patient": {
+        "requests": 2,
+        "successful": 2,
+        "failures": {},
+        "full": {
+          "samples": 2,
+          "p50_s": 0.013230415992438793,
+          "p95_s": 0.01734208402922377,
+          "p99_s": 0.01734208402922377,
+          "max_s": 0.01734208402922377
+        },
+        "terminal_completed_answer": {
+          "samples": 2,
+          "p50_s": 0.012129708018619567,
+          "p95_s": 0.015772792045027018,
+          "p99_s": 0.015772792045027018,
+          "max_s": 0.015772792045027018
+        },
+        "post_terminal_stream_close": {
+          "samples": 2,
+          "p50_s": 0.001100707973819226,
+          "p95_s": 0.0015692919841967523,
+          "p99_s": 0.0015692919841967523,
+          "max_s": 0.0015692919841967523
+        },
+        "first_readable": {
+          "samples": 2,
+          "p50_s": 0.011791708006057888,
+          "p95_s": 0.015374209033325315,
+          "p99_s": 0.015374209033325315,
+          "max_s": 0.015374209033325315
+        },
+        "queue_wait": {
+          "samples": 2,
+          "p50_s": 5.9e-05,
+          "p95_s": 0.000103,
+          "p99_s": 0.000103,
+          "max_s": 0.000103
+        },
+        "retrieval": {
+          "samples": 2,
+          "p50_s": 0.004,
+          "p95_s": 0.007,
+          "p99_s": 0.007,
+          "max_s": 0.007
+        },
+        "target_s": 5.0,
+        "first_readable_meeting_target": 2,
+        "full_meeting_target": 2,
+        "all_requests_meet_target": true
+      }
+    }
+  },
+  "quality": {
+    "required": true,
+    "contract": "source-facts-v1",
+    "patient_requests": 2,
+    "transport_completed": 2,
+    "task_checks_passed": 2,
+    "all_patient_requests_passed": true,
+    "clinical_accuracy_qualified": false
+  },
+  "requests": [
+    {
+      "request_id": "capacity-grounding-contract-smoke-00000",
+      "lane": "general",
+      "role": "doctor",
+      "status": 200,
+      "success": true,
+      "error": null,
+      "full_s": 0.08154783304780722,
+      "first_content_s": 0.051529542019125074,
+      "first_readable_s": 0.051529542019125074,
+      "completion_s": 0.07970016699982807,
+      "terminal": true,
+      "content_chars": 533,
+      "content_events": 7,
+      "queue_ms": 0.101,
+      "retrieval_ms": 22,
+      "prompt_tokens": null,
+      "output_tokens": null,
+      "model": "medgemma:27b",
+      "provider": "ollama",
+      "cache_hit": false,
+      "synthetic_answer": "This is a synthetic benchmark answer, not clinical advice. The fixture reports only documented observations and does not place orders or change a chart. Review the patient's source record and escalate uncertainty to the responsible clinician. Missing medication reconciliation, absent observations, and unreviewed results should remain explicit gaps. These generated words test the real Orb retrieval, admission and sanitisation pipeline with a fake model service; they do not establish clinical correctness or inference throughput.\n",
+      "summary_grounding_proof_count": 0,
+      "summary_grounding": null,
+      "answer_sha256": "0804d4fdfc150b008818c13fe73896eae4d674e3ae8d04d1f62161f4a66c9e6d",
+      "target_s": 3.0,
+      "first_readable_within_target": true,
+      "completed_within_target": true
+    },
+    {
+      "request_id": "capacity-grounding-contract-smoke-00001",
+      "lane": "patient",
+      "role": "doctor",
+      "status": 200,
+      "success": true,
+      "error": null,
+      "full_s": 0.01734208402922377,
+      "first_content_s": 0.015374209033325315,
+      "first_readable_s": 0.015374209033325315,
+      "completion_s": 0.015772792045027018,
+      "terminal": true,
+      "content_chars": 3331,
+      "content_events": 1,
+      "queue_ms": 0.103,
+      "retrieval_ms": 7,
+      "prompt_tokens": null,
+      "output_tokens": null,
+      "model": "medgemma:27b",
+      "provider": "ollama",
+      "cache_hit": false,
+      "synthetic_answer": "About XqzAA VyxA, bed 1:\n\nExtractive record summary for clinician review.\n\nSource scope by domain: {\"current_medications\":\"Current non-discontinued medication rows; not an administration or change-history ledger\",\"imaging\":\"Latest clinician-reviewed imaging record; not restricted to the current stay\",\"labs\":\"At most two most recently created lab documents; not restricted to the current stay\",\"medication_changes\":\"Medication change history has not been retrieved\",\"notes\":\"Latest signed Scribe note; not restricted to the current stay\",\"observations\":\"At most six latest non-voided observation rows; earlier-stay rows excluded where a readmission boundary exists; row timestamps do not replace carried-forward measurement times\",\"problems\":\"At most eight active problem-list entries; recorded provenance retained, not assumed confirmed diagnoses\",\"unresolved_tasks\":\"Outstanding-task ledger has not been retrieved\"}. Supplied authorized record only; not a complete patient history.\n\n**Patient**\n\n> Recorded patient identity: name: XqzAA VyxA; age: 30; sex: M; bed: 1; ward: General Medicine\n\nSource: patients:CAP-SYNTH-000.name,age,sex,bed,ward at 2026-10-23 08:57:55\n\n**Recorded diagnosis**\n\n> Recorded diagnosis: Synthetic evaluation record\n\nSource: patients:CAP-SYNTH-000.diagnosis at 2026-10-23 08:57:55\n\n**Observations**\n\n> \\[SIMULATED OBSERVATION, not a real measurement\\] Observation record timestamp 2026-10-23T08:57:55.443719+00:00: heart\\_rate: 83.0; systolic\\_bp: 121.0; diastolic\\_bp: 76.0; spo2: 96.0; temperature: 37.2; respiratory\\_rate: 18.0; consciousness: alert; on\\_oxygen: 0; pain\\_score: unknown \\(not recorded\\); source qualifiers: source: simulated\n\nSource: vitals:1.heart\\_rate,systolic\\_bp,diastolic\\_bp,spo2,temperature,respiratory\\_rate,consciousness,on\\_oxygen,pain\\_score,source at 2026-10-23T08:57:55.443719+00:00\n\n**Current medication records**\n\n> Current medication row: Synthetic Test Tablet 5 mg Oral OD; recorded status: active; recorded source: manual; on hold since 2026-10-23T08:57:55.443719+00:00; recorded hold reason: Synthetic hold pending review; this record does not confirm administration\n\nSource: medications:1.drug\\_name,dosage,route,frequency,status,source,verified\\_by,verified\\_at,held\\_at,hold\\_reason at 2026-10-23 08:57:55\n\n**Laboratory records**\n\n> \\[SIMULATED RESULT, not a real lab or image\\] Lab document Synthetic sodium \\(created 2026-10-23T08:57:55.443719+00:00\\): Sodium 129 mmol/L; synthetic test result only.\n\nSource: clinical\\_documents:1.title,content,source at 2026-10-23T08:57:55.443719+00:00\n\n**Documented notes**\n\n> Signed Scribe note \\(created 2026-10-23T08:57:55.443719+00:00; signed\\_at: 2026-10-23T08:57:55.443719+00:00\\): Synthetic note: no chest pain reported. Imaging was discussed, but this note does not document that a scan occurred.\n\nSource: scribe\\_notes:1.structured\\_note,status,signed\\_at,unverified\\_ack\\_by,unverified\\_ack\\_at at 2026-10-23T08:57:55.443719+00:00\n\n**Unknowns and source limitations**\n\n- Imaging: no reviewed imaging report was supplied; whether imaging was performed is unknown.\n\n- Medication changes: medication-change history is unknown in the supplied record; a current list does not establish whether changes occurred.\n\n- Unresolved tasks: outstanding-task status is unknown; no complete clinical task ledger was supplied.",
+      "summary_grounding_proof_count": 1,
+      "summary_grounding": {
+        "contract": "source-facts-v1",
+        "patient_id": "CAP-SYNTH-000",
+        "extractive_only": true,
+        "clinical_validation": false,
+        "source_fingerprint": "a599a5d6442420b9574bb2f24172881274b88ce1dd72b40ecaa784a4c74cc4c7",
+        "selected_fact_ids": [
+          "F0001",
+          "F0002",
+          "F0003",
+          "F0004",
+          "F0005",
+          "F0006"
+        ],
+        "source_references": [
+          {
+            "fact_id": "F0001",
+            "table": "patients",
+            "id": "CAP-SYNTH-000",
+            "patient_id": "CAP-SYNTH-000",
+            "field": "name,age,sex,bed,ward",
+            "recorded_at": "2026-10-23 08:57:55"
+          },
+          {
+            "fact_id": "F0002",
+            "table": "patients",
+            "id": "CAP-SYNTH-000",
+            "patient_id": "CAP-SYNTH-000",
+            "field": "diagnosis",
+            "recorded_at": "2026-10-23 08:57:55"
+          },
+          {
+            "fact_id": "F0003",
+            "table": "vitals",
+            "id": 1,
+            "patient_id": "CAP-SYNTH-000",
+            "field": "heart_rate,systolic_bp,diastolic_bp,spo2,temperature,respiratory_rate,consciousness,on_oxygen,pain_score,source",
+            "recorded_at": "2026-10-23T08:57:55.443719+00:00"
+          },
+          {
+            "fact_id": "F0004",
+            "table": "medications",
+            "id": 1,
+            "patient_id": "CAP-SYNTH-000",
+            "field": "drug_name,dosage,route,frequency,status,source,verified_by,verified_at,held_at,hold_reason",
+            "recorded_at": "2026-10-23 08:57:55"
+          },
+          {
+            "fact_id": "F0005",
+            "table": "clinical_documents",
+            "id": 1,
+            "patient_id": "CAP-SYNTH-000",
+            "field": "title,content,source",
+            "recorded_at": "2026-10-23T08:57:55.443719+00:00"
+          },
+          {
+            "fact_id": "F0006",
+            "table": "scribe_notes",
+            "id": 1,
+            "patient_id": "CAP-SYNTH-000",
+            "field": "structured_note,status,signed_at,unverified_ack_by,unverified_ack_at",
+            "recorded_at": "2026-10-23T08:57:55.443719+00:00"
+          }
+        ]
+      },
+      "answer_sha256": "e1348aec4eb08a73be681cf1edbf898301eb5586bff09046b8456b2cfe7c5db9",
+      "target_s": 5.0,
+      "first_readable_within_target": true,
+      "completed_within_target": true,
+      "transport_success": true,
+      "workflow_quality": {
+        "passed": true,
+        "checks": {
+          "trusted_source_evidence_present": true,
+          "patient_scope_matches": true,
+          "single_grounding_proof": true,
+          "grounding_proof_present": true,
+          "contract_version_matches": true,
+          "source_fingerprint_matches": true,
+          "all_source_facts_selected_once": true,
+          "source_references_match": true,
+          "extractive_only_declared": true,
+          "clinical_validation_not_claimed": true,
+          "grounding_metadata_matches": true,
+          "exact_source_rendering": true,
+          "unknowns_and_scope_preserved": true
+        },
+        "scope": "Exact source-facts-v1 rendering/provenance regression; not clinical validation"
+      }
+    },
+    {
+      "request_id": "capacity-grounding-contract-smoke-00002",
+      "lane": "department",
+      "role": "doctor",
+      "status": 200,
+      "success": true,
+      "error": null,
+      "full_s": 0.039655417029280216,
+      "first_content_s": 0.010522124997805804,
+      "first_readable_s": 0.010522124997805804,
+      "completion_s": 0.037911833031103015,
+      "terminal": true,
+      "content_chars": 694,
+      "content_events": 9,
+      "queue_ms": 0.079,
+      "retrieval_ms": 3,
+      "prompt_tokens": null,
+      "output_tokens": null,
+      "model": "medgemma:27b",
+      "provider": "ollama",
+      "cache_hit": false,
+      "synthetic_answer": "NOACT|This is a synthetic benchmark answer, not clinical advice. The fixture reports only documented observations and does not place orders or change a chart. Review the patient's source record and escalate uncertainty to the responsible clinician. Missing medication reconciliation, absent observations, and unreviewed results should remain explicit gaps. These generated words test the real Orb retrieval, admission and sanitisation pipeline with a fake model service; they do not establish clinical correctness or inference throughput.\n<details><display_mode>concise</display_mode><clinical_assessment>Synthetic workload only.</clinical_assessment><cited_sources>[]</cited_sources></details>",
+      "summary_grounding_proof_count": 0,
+      "summary_grounding": null,
+      "answer_sha256": "67b8ab089199fb1c2e4c13212cc096cf713e2496f4796dede9f13c34ba1e36a7",
+      "target_s": 15.0,
+      "first_readable_within_target": true,
+      "completed_within_target": true
+    },
+    {
+      "request_id": "capacity-grounding-contract-smoke-00003",
+      "lane": "general",
+      "role": "doctor",
+      "status": 200,
+      "success": true,
+      "error": null,
+      "full_s": 0.038683125050738454,
+      "first_content_s": 0.01023887499468401,
+      "first_readable_s": 0.01023887499468401,
+      "completion_s": 0.03755987499607727,
+      "terminal": true,
+      "content_chars": 533,
+      "content_events": 7,
+      "queue_ms": 0.063,
+      "retrieval_ms": 3,
+      "prompt_tokens": null,
+      "output_tokens": null,
+      "model": "medgemma:27b",
+      "provider": "ollama",
+      "cache_hit": false,
+      "synthetic_answer": "This is a synthetic benchmark answer, not clinical advice. The fixture reports only documented observations and does not place orders or change a chart. Review the patient's source record and escalate uncertainty to the responsible clinician. Missing medication reconciliation, absent observations, and unreviewed results should remain explicit gaps. These generated words test the real Orb retrieval, admission and sanitisation pipeline with a fake model service; they do not establish clinical correctness or inference throughput.\n",
+      "summary_grounding_proof_count": 0,
+      "summary_grounding": null,
+      "answer_sha256": "0804d4fdfc150b008818c13fe73896eae4d674e3ae8d04d1f62161f4a66c9e6d",
+      "target_s": 3.0,
+      "first_readable_within_target": true,
+      "completed_within_target": true
+    },
+    {
+      "request_id": "capacity-grounding-contract-smoke-00004",
+      "lane": "patient",
+      "role": "doctor",
+      "status": 200,
+      "success": true,
+      "error": null,
+      "full_s": 0.013230415992438793,
+      "first_content_s": 0.011791708006057888,
+      "first_readable_s": 0.011791708006057888,
+      "completion_s": 0.012129708018619567,
+      "terminal": true,
+      "content_chars": 2122,
+      "content_events": 1,
+      "queue_ms": 0.059,
+      "retrieval_ms": 4,
+      "prompt_tokens": null,
+      "output_tokens": null,
+      "model": "medgemma:27b",
+      "provider": "ollama",
+      "cache_hit": false,
+      "synthetic_answer": "About XqzAB VyxB, bed 2:\n\nExtractive record summary for clinician review.\n\nSource scope by domain: {\"current_medications\":\"Current non-discontinued medication rows; not an administration or change-history ledger\",\"imaging\":\"Latest clinician-reviewed imaging record; not restricted to the current stay\",\"labs\":\"At most two most recently created lab documents; not restricted to the current stay\",\"medication_changes\":\"Medication change history has not been retrieved\",\"notes\":\"Latest signed Scribe note; not restricted to the current stay\",\"observations\":\"At most six latest non-voided observation rows; earlier-stay rows excluded where a readmission boundary exists; row timestamps do not replace carried-forward measurement times\",\"problems\":\"At most eight active problem-list entries; recorded provenance retained, not assumed confirmed diagnoses\",\"unresolved_tasks\":\"Outstanding-task ledger has not been retrieved\"}. Supplied authorized record only; not a complete patient history.\n\n**Patient**\n\n> Recorded patient identity: name: XqzAB VyxB; age: 31; sex: F; bed: 2; ward: General Medicine\n\nSource: patients:CAP-SYNTH-001.name,age,sex,bed,ward at 2026-10-23 08:57:55\n\n**Recorded diagnosis**\n\n> Recorded diagnosis: Synthetic evaluation record\n\nSource: patients:CAP-SYNTH-001.diagnosis at 2026-10-23 08:57:55\n\n**Unknowns and source limitations**\n\n- Observations: no vital observations were supplied in this scoped record; current observations are unknown.\n\n- Current medications: no current medication entries were supplied in this scoped record; the current regimen is unknown.\n\n- Laboratory results: unavailable in the supplied record; results are unknown, not established as normal.\n\n- Imaging: no reviewed imaging report was supplied; whether imaging was performed is unknown.\n\n- Notes: no signed or other authorized clinical notes were supplied in this scoped record.\n\n- Medication changes: medication-change history is unknown in the supplied record; a current list does not establish whether changes occurred.\n\n- Unresolved tasks: outstanding-task status is unknown; no complete clinical task ledger was supplied.",
+      "summary_grounding_proof_count": 1,
+      "summary_grounding": {
+        "contract": "source-facts-v1",
+        "patient_id": "CAP-SYNTH-001",
+        "extractive_only": true,
+        "clinical_validation": false,
+        "source_fingerprint": "4349dacc6d3ac7e033ab127ab2af2ead25134ec119aef6c1765749f15bfa4265",
+        "selected_fact_ids": [
+          "F0001",
+          "F0002"
+        ],
+        "source_references": [
+          {
+            "fact_id": "F0001",
+            "table": "patients",
+            "id": "CAP-SYNTH-001",
+            "patient_id": "CAP-SYNTH-001",
+            "field": "name,age,sex,bed,ward",
+            "recorded_at": "2026-10-23 08:57:55"
+          },
+          {
+            "fact_id": "F0002",
+            "table": "patients",
+            "id": "CAP-SYNTH-001",
+            "patient_id": "CAP-SYNTH-001",
+            "field": "diagnosis",
+            "recorded_at": "2026-10-23 08:57:55"
+          }
+        ]
+      },
+      "answer_sha256": "c5543d14686abc3eb07a5de5f808982e1ae5ed2c7a73c26e2ab5ad225373952a",
+      "target_s": 5.0,
+      "first_readable_within_target": true,
+      "completed_within_target": true,
+      "transport_success": true,
+      "workflow_quality": {
+        "passed": true,
+        "checks": {
+          "trusted_source_evidence_present": true,
+          "patient_scope_matches": true,
+          "single_grounding_proof": true,
+          "grounding_proof_present": true,
+          "contract_version_matches": true,
+          "source_fingerprint_matches": true,
+          "all_source_facts_selected_once": true,
+          "source_references_match": true,
+          "extractive_only_declared": true,
+          "clinical_validation_not_claimed": true,
+          "grounding_metadata_matches": true,
+          "exact_source_rendering": true,
+          "unknowns_and_scope_preserved": true
+        },
+        "scope": "Exact source-facts-v1 rendering/provenance regression; not clinical validation"
+      }
+    },
+    {
+      "request_id": "capacity-grounding-contract-smoke-00005",
+      "lane": "department",
+      "role": "doctor",
+      "status": 200,
+      "success": true,
+      "error": null,
+      "full_s": 0.04187395900953561,
+      "first_content_s": 0.009454125014599413,
+      "first_readable_s": 0.009454125014599413,
+      "completion_s": 0.03640083404025063,
+      "terminal": true,
+      "content_chars": 694,
+      "content_events": 9,
+      "queue_ms": 0.067,
+      "retrieval_ms": 3,
+      "prompt_tokens": null,
+      "output_tokens": null,
+      "model": "medgemma:27b",
+      "provider": "ollama",
+      "cache_hit": false,
+      "synthetic_answer": "NOACT|This is a synthetic benchmark answer, not clinical advice. The fixture reports only documented observations and does not place orders or change a chart. Review the patient's source record and escalate uncertainty to the responsible clinician. Missing medication reconciliation, absent observations, and unreviewed results should remain explicit gaps. These generated words test the real Orb retrieval, admission and sanitisation pipeline with a fake model service; they do not establish clinical correctness or inference throughput.\n<details><display_mode>concise</display_mode><clinical_assessment>Synthetic workload only.</clinical_assessment><cited_sources>[]</cited_sources></details>",
+      "summary_grounding_proof_count": 0,
+      "summary_grounding": null,
+      "answer_sha256": "67b8ab089199fb1c2e4c13212cc096cf713e2496f4796dede9f13c34ba1e36a7",
+      "target_s": 15.0,
+      "first_readable_within_target": true,
+      "completed_within_target": true
+    }
+  ]
+}

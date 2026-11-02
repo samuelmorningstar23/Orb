@@ -1,0 +1,43 @@
+{
+  "scope": "tiny synthetic normalization test only; no clinical/model inference",
+  "reference": "explicit float32 normalization and weight multiplication followed by cast to input dtype, matching installed HF Gemma3RMSNorm.forward",
+  "rows": [
+    {
+      "input_scale": 0.01,
+      "input_dtype": "mlx.core.float16",
+      "original_output_dtype": "mlx.core.float32",
+      "corrected_output_dtype": "mlx.core.float16",
+      "norm_weight_identity_preserved": true,
+      "norm_weight_dtype": "mlx.core.float32",
+      "max_absolute_error_vs_reference": 0.0,
+      "max_fp16_ulp_difference": 0,
+      "bitwise_equal_in_this_fixture": true,
+      "reference_within_one_fp16_ulp": true
+    },
+    {
+      "input_scale": 1.0,
+      "input_dtype": "mlx.core.float16",
+      "original_output_dtype": "mlx.core.float32",
+      "corrected_output_dtype": "mlx.core.float16",
+      "norm_weight_identity_preserved": true,
+      "norm_weight_dtype": "mlx.core.float32",
+      "max_absolute_error_vs_reference": 0.0,
+      "max_fp16_ulp_difference": 0,
+      "bitwise_equal_in_this_fixture": true,
+      "reference_within_one_fp16_ulp": true
+    },
+    {
+      "input_scale": 1000.0,
+      "input_dtype": "mlx.core.float16",
+      "original_output_dtype": "mlx.core.float32",
+      "corrected_output_dtype": "mlx.core.float16",
+      "norm_weight_identity_preserved": true,
+      "norm_weight_dtype": "mlx.core.float32",
+      "max_absolute_error_vs_reference": 0.0,
+      "max_fp16_ulp_difference": 0,
+      "bitwise_equal_in_this_fixture": true,
+      "reference_within_one_fp16_ulp": true
+    }
+  ],
+  "passed": true
+}

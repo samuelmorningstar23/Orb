@@ -1,0 +1,26 @@
+{
+  "command": [
+    "/private/tmp/orb-ml-upgrade-20261012/bin/python",
+    "-m",
+    "pytest",
+    "tests/test_llm_provider_metrics.py",
+    "tests/test_local_model_stream_contract.py",
+    "tests/test_llm_providers.py",
+    "-q"
+  ],
+  "working_directory": "/private/tmp/orb-sage-scope-isolation-20261012-m8k50ugb/source/server",
+  "state": "/private/tmp/orb-provider-cache-metrics-20261012-raew49gb/state",
+  "exit_code": 0,
+  "log": "docs/audit-2026-10/provider-metrics-acceptance-20261012/pytest.log",
+  "environment_boundary": "Owned synthetic source/DB/uploads/watchdog/FHIR/cache only. Ollama port9, offline HF flags, native transport mocked; no actual model calls.",
+  "original_log": "/private/tmp/orb-provider-cache-metrics-20261012-raew49gb/pytest.log",
+  "original_verification_sha256": "62cf78fb08ea6680c461892e52abc435002004183a77ef82f712358bf19edab9",
+  "log_sha256": "6454de4b11e88ead9b2c0ea94b9bfcf89c67be7b328ee39ffb66edb32534d734",
+  "passed": 31,
+  "seconds": 1.52,
+  "new_cases": 10,
+  "source_sha256": {
+    "server/services/llm_providers.py": "13b39ac2a3cd6216486967ddf219a1a16bf4cd144f16994ea9b06590c7436d02",
+    "server/tests/test_llm_provider_metrics.py": "092e11dd157d46ea1e59937a577da6ac06235acce7b219bd3bc3d188a60698ff"
+  }
+}

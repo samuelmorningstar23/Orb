@@ -1,0 +1,40 @@
+{
+  "scope": "Real Chromium journeys against final built Orb and FastAPI0.133.0/Starlette1.3.1; synthetic isolated database; no API mocks",
+  "screenshots": [
+    {
+      "file": "docs/audit-2026-10/browser-evidence/real-offline-workflows/real-infection-surveillance.png",
+      "sha256": "b7c8bde08f361e136fdded886f6367a0eeab8ae00c8d5dc39b708947f245cdeb",
+      "width": 1280,
+      "height": 720,
+      "source": "test-results/06-offline-workflows-all-t-899a6-nst-real-authenticated-APIs-chromium/real-infection-surveillance.png"
+    },
+    {
+      "file": "docs/audit-2026-10/browser-evidence/real-offline-workflows/real-care-plan-persisted.png",
+      "sha256": "a27f7d39cf5898dbb2eab2c197acea1553a6c158c284be11c5f1087969ea903c",
+      "width": 1280,
+      "height": 720,
+      "source": "test-results/06-offline-workflows-care--fcac2-me-and-reopens-from-storage-chromium/real-care-plan-persisted.png"
+    },
+    {
+      "file": "docs/audit-2026-10/browser-evidence/real-offline-workflows/real-feedback-persisted.png",
+      "sha256": "638f323c4b951af4051cc0d32d2f87a5923948a96b63dfcd5b878597d7ca51e2",
+      "width": 1280,
+      "height": 720,
+      "source": "test-results/06-offline-workflows-compl-c897d-load-with-immutable-history-chromium/real-feedback-persisted.png"
+    },
+    {
+      "file": "docs/audit-2026-10/browser-evidence/real-offline-workflows/real-radiology-signed.png",
+      "sha256": "e875c964883ec4ba851087fcb96b9fb748641a2aa79acf43a8dcb70eec902bbd",
+      "width": 1280,
+      "height": 720,
+      "source": "test-results/06-offline-workflows-radio-4bd72-appends-an-audited-addendum-chromium/real-radiology-signed.png"
+    },
+    {
+      "file": "docs/audit-2026-10/browser-evidence/real-offline-workflows/real-reporting-preview.png",
+      "sha256": "982f8f230d310bf5da68525ae38acd9ddc421c64532ef9e3f9bf323a6056536a",
+      "width": 1280,
+      "height": 720,
+      "source": "test-results/06-offline-workflows-saved-949e8--previewed-synthetic-cohort-chromium/real-reporting-preview.png"
+    }
+  ]
+}

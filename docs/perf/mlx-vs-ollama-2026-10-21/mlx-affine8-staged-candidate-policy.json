@@ -1,0 +1,16 @@
+{
+  "mlx_lm_version": "0.32.2",
+  "source_ollama_weight_digest": "sha256:4b97da6b21a8fb1405a0d1efee462bfd6c4d3c46307bac8b34373835f07ca758",
+  "conversion_label": "medgemma-27b-text-mlx-native-affine-8-requantized-candidate",
+  "context_policy": "reject_input_plus_output_over_8192",
+  "sampling_parity_verified": false,
+  "template_parity_verified": false,
+  "clinical_equivalence_qualified": false,
+  "sampling_wrapper": {
+    "path": "/Users/samuelmorningstar/Documents/Projects/Orb/scripts/serve_mlx_benchmark.py",
+    "sha256": "abfdfbcaeaa13ac539abb7fb3195e335a1d69816e823a44fd1ea3139934451ac"
+  },
+  "note": "Higher precision candidate made directly from original GGUF after the mixed4/6 candidate failed factual fidelity. Input/sampler/numerical/clinical parity remain unqualified until separately tested; production model unchanged. Staged uncached per-file loading is separately pinned; it preserves stored values and sampler. Tiny real-loader bitwise checks passed for uint32, float16 and float32; full-model quality remains unqualified.",
+  "loading_mode": "staged-uncached",
+  "loading_wrapper_sha256": "c9311445d21cbbbeb89aa0cf7a82ab0afb7d7dfb79869e6429de0b142a374ed4"
+}

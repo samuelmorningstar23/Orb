@@ -1,0 +1,961 @@
+{
+  "audit_date": "2026-10-11",
+  "scanner": "bundled pnpm11.25.0",
+  "scope": "Baseline committed npm package-lock.json copied to a temporary directory and converted for audit; no dependencies installed or scripts executed.",
+  "version_parity": {
+    "npm_unique_package_version_pairs": 783,
+    "converted_pairs": 783,
+    "only_in_npm": [],
+    "only_in_converted": []
+  },
+  "metadata": {
+    "vulnerabilities": {
+      "info": 0,
+      "low": 2,
+      "moderate": 9,
+      "high": 33,
+      "critical": 2
+    },
+    "dependencies": 171,
+    "devDependencies": 612,
+    "optionalDependencies": 85,
+    "totalDependencies": 783
+  },
+  "advisory_records": 46,
+  "unique_advisory_urls": 33,
+  "limitations": [
+    "Counts include distinct affected major-version ranges for the same advisory; advisory records are not proven exploits.",
+    "npm CLI itself was unavailable locally; CI runs npm audit against the committed lockfile.",
+    "The frontend audit owner is addressing compatible fixes; this file preserves the before scan."
+  ],
+  "advisories": [
+    {
+      "registry_id": 1123896,
+      "package": "brace-expansion",
+      "severity": "high",
+      "url": "https://github.com/advisories/GHSA-3jxr-9vmj-r5cp",
+      "vulnerable_versions": ">=2.0.0 <2.1.2",
+      "patched_versions": ">=2.1.2",
+      "findings": [
+        {
+          "version": "2.1.1",
+          "development": true,
+          "optional": false,
+          "path_count": 1,
+          "example_paths": [
+            ".>vite-plugin-pwa>workbox-build>@trickfilm400/rollup-plugin-off-main-thread>ejs>jake>filelist>minimatch>brace-expansion"
+          ]
+        }
+      ]
+    },
+    {
+      "registry_id": 1123897,
+      "package": "brace-expansion",
+      "severity": "high",
+      "url": "https://github.com/advisories/GHSA-3jxr-9vmj-r5cp",
+      "vulnerable_versions": "<1.1.16",
+      "patched_versions": ">=1.1.16",
+      "findings": [
+        {
+          "version": "1.1.15",
+          "development": true,
+          "optional": false,
+          "path_count": 42,
+          "example_paths": [
+            ".>eslint>@eslint/config-array>minimatch>brace-expansion",
+            ".>eslint>@eslint/eslintrc>minimatch>brace-expansion",
+            ".>eslint>minimatch>brace-expansion"
+          ]
+        }
+      ]
+    },
+    {
+      "registry_id": 1123898,
+      "package": "brace-expansion",
+      "severity": "high",
+      "url": "https://github.com/advisories/GHSA-3jxr-9vmj-r5cp",
+      "vulnerable_versions": ">=3.0.0 <5.0.7",
+      "patched_versions": ">=5.0.7",
+      "findings": [
+        {
+          "version": "5.0.6",
+          "development": true,
+          "optional": false,
+          "path_count": 8,
+          "example_paths": [
+            ".>typescript-eslint>@typescript-eslint/eslint-plugin>@typescript-eslint/parser>@typescript-eslint/typescript-estree>minimatch>brace-expansion",
+            ".>typescript-eslint>@typescript-eslint/eslint-plugin>@typescript-eslint/type-utils>@typescript-eslint/typescript-estree>minimatch>brace-expansion",
+            ".>typescript-eslint>@typescript-eslint/eslint-plugin>@typescript-eslint/type-utils>@typescript-eslint/utils>@typescript-eslint/typescript-estree>minimatch>brace-expansion"
+          ]
+        }
+      ]
+    },
+    {
+      "registry_id": 1123911,
+      "package": "js-yaml",
+      "severity": "high",
+      "url": "https://github.com/advisories/GHSA-52cp-r559-cp3m",
+      "vulnerable_versions": ">=4.0.0 <4.3.0",
+      "patched_versions": ">=4.3.0",
+      "findings": [
+        {
+          "version": "4.2.0",
+          "development": true,
+          "optional": false,
+          "path_count": 14,
+          "example_paths": [
+            ".>eslint>@eslint/eslintrc>js-yaml",
+            ".>eslint-plugin-react-hooks>eslint>@eslint/eslintrc>js-yaml",
+            ".>eslint-plugin-react-refresh>eslint>@eslint/eslintrc>js-yaml"
+          ]
+        }
+      ]
+    },
+    {
+      "registry_id": 1124064,
+      "package": "fast-uri",
+      "severity": "high",
+      "url": "https://github.com/advisories/GHSA-v2hh-gcrm-f6hx",
+      "vulnerable_versions": ">=3.0.0 <=3.1.3",
+      "patched_versions": ">=3.1.4",
+      "findings": [
+        {
+          "version": "3.1.2",
+          "development": true,
+          "optional": false,
+          "path_count": 2,
+          "example_paths": [
+            ".>vite-plugin-pwa>workbox-build>@apideck/better-ajv-errors>ajv>fast-uri",
+            ".>vite-plugin-pwa>workbox-build>ajv>fast-uri"
+          ]
+        }
+      ]
+    },
+    {
+      "registry_id": 1130588,
+      "package": "brace-expansion",
+      "severity": "high",
+      "url": "https://github.com/advisories/GHSA-mh99-v99m-4gvg",
+      "vulnerable_versions": "<1.1.17",
+      "patched_versions": ">=1.1.17",
+      "findings": [
+        {
+          "version": "1.1.15",
+          "development": true,
+          "optional": false,
+          "path_count": 42,
+          "example_paths": [
+            ".>eslint>@eslint/config-array>minimatch>brace-expansion",
+            ".>eslint>@eslint/eslintrc>minimatch>brace-expansion",
+            ".>eslint>minimatch>brace-expansion"
+          ]
+        }
+      ]
+    },
+    {
+      "registry_id": 1130589,
+      "package": "brace-expansion",
+      "severity": "high",
+      "url": "https://github.com/advisories/GHSA-mh99-v99m-4gvg",
+      "vulnerable_versions": ">=2.0.0 <2.1.3",
+      "patched_versions": ">=2.1.3",
+      "findings": [
+        {
+          "version": "2.1.1",
+          "development": true,
+          "optional": false,
+          "path_count": 1,
+          "example_paths": [
+            ".>vite-plugin-pwa>workbox-build>@trickfilm400/rollup-plugin-off-main-thread>ejs>jake>filelist>minimatch>brace-expansion"
+          ]
+        }
+      ]
+    },
+    {
+      "registry_id": 1130591,
+      "package": "brace-expansion",
+      "severity": "high",
+      "url": "https://github.com/advisories/GHSA-mh99-v99m-4gvg",
+      "vulnerable_versions": ">=4.0.0 <5.0.8",
+      "patched_versions": ">=5.0.8",
+      "findings": [
+        {
+          "version": "5.0.6",
+          "development": true,
+          "optional": false,
+          "path_count": 8,
+          "example_paths": [
+            ".>typescript-eslint>@typescript-eslint/eslint-plugin>@typescript-eslint/parser>@typescript-eslint/typescript-estree>minimatch>brace-expansion",
+            ".>typescript-eslint>@typescript-eslint/eslint-plugin>@typescript-eslint/type-utils>@typescript-eslint/typescript-estree>minimatch>brace-expansion",
+            ".>typescript-eslint>@typescript-eslint/eslint-plugin>@typescript-eslint/type-utils>@typescript-eslint/utils>@typescript-eslint/typescript-estree>minimatch>brace-expansion"
+          ]
+        }
+      ]
+    },
+    {
+      "registry_id": 1130709,
+      "package": "postcss",
+      "severity": "moderate",
+      "url": "https://github.com/advisories/GHSA-fxqj-rqcc-2cmp",
+      "vulnerable_versions": "<=8.5.22",
+      "patched_versions": ">=8.5.23",
+      "findings": [
+        {
+          "version": "8.5.15",
+          "development": true,
+          "optional": false,
+          "path_count": 6,
+          "example_paths": [
+            ".>@vitejs/plugin-react>vite>postcss",
+            ".>vite>postcss",
+            ".>vite-plugin-pwa>vite>postcss"
+          ]
+        }
+      ]
+    },
+    {
+      "registry_id": 1130713,
+      "package": "socket.io-parser",
+      "severity": "high",
+      "url": "https://github.com/advisories/GHSA-2m8v-j782-fhvr",
+      "vulnerable_versions": ">=4.0.0 <4.2.7",
+      "patched_versions": ">=4.2.7",
+      "findings": [
+        {
+          "version": "4.2.6",
+          "development": false,
+          "optional": false,
+          "path_count": 1,
+          "example_paths": [
+            ".>socket.io-client>socket.io-parser"
+          ]
+        }
+      ]
+    },
+    {
+      "registry_id": 1130720,
+      "package": "fast-uri",
+      "severity": "high",
+      "url": "https://github.com/advisories/GHSA-7p8r-x3mc-p8w7",
+      "vulnerable_versions": ">=3.0.0 <3.1.5",
+      "patched_versions": ">=3.1.5",
+      "findings": [
+        {
+          "version": "3.1.2",
+          "development": true,
+          "optional": false,
+          "path_count": 2,
+          "example_paths": [
+            ".>vite-plugin-pwa>workbox-build>@apideck/better-ajv-errors>ajv>fast-uri",
+            ".>vite-plugin-pwa>workbox-build>ajv>fast-uri"
+          ]
+        }
+      ]
+    },
+    {
+      "registry_id": 1130734,
+      "package": "brace-expansion",
+      "severity": "high",
+      "url": "https://github.com/advisories/GHSA-rgw5-rvv9-x895",
+      "vulnerable_versions": ">=4.0.0 <5.0.9",
+      "patched_versions": ">=5.0.9",
+      "findings": [
+        {
+          "version": "5.0.6",
+          "development": true,
+          "optional": false,
+          "path_count": 8,
+          "example_paths": [
+            ".>typescript-eslint>@typescript-eslint/eslint-plugin>@typescript-eslint/parser>@typescript-eslint/typescript-estree>minimatch>brace-expansion",
+            ".>typescript-eslint>@typescript-eslint/eslint-plugin>@typescript-eslint/type-utils>@typescript-eslint/typescript-estree>minimatch>brace-expansion",
+            ".>typescript-eslint>@typescript-eslint/eslint-plugin>@typescript-eslint/type-utils>@typescript-eslint/utils>@typescript-eslint/typescript-estree>minimatch>brace-expansion"
+          ]
+        }
+      ]
+    },
+    {
+      "registry_id": 1130736,
+      "package": "brace-expansion",
+      "severity": "high",
+      "url": "https://github.com/advisories/GHSA-rgw5-rvv9-x895",
+      "vulnerable_versions": ">=2.0.0 <2.1.4",
+      "patched_versions": ">=2.1.4",
+      "findings": [
+        {
+          "version": "2.1.1",
+          "development": true,
+          "optional": false,
+          "path_count": 1,
+          "example_paths": [
+            ".>vite-plugin-pwa>workbox-build>@trickfilm400/rollup-plugin-off-main-thread>ejs>jake>filelist>minimatch>brace-expansion"
+          ]
+        }
+      ]
+    },
+    {
+      "registry_id": 1130737,
+      "package": "brace-expansion",
+      "severity": "high",
+      "url": "https://github.com/advisories/GHSA-rgw5-rvv9-x895",
+      "vulnerable_versions": "<1.1.18",
+      "patched_versions": ">=1.1.18",
+      "findings": [
+        {
+          "version": "1.1.15",
+          "development": true,
+          "optional": false,
+          "path_count": 42,
+          "example_paths": [
+            ".>eslint>@eslint/config-array>minimatch>brace-expansion",
+            ".>eslint>@eslint/eslintrc>minimatch>brace-expansion",
+            ".>eslint>minimatch>brace-expansion"
+          ]
+        }
+      ]
+    },
+    {
+      "registry_id": 1138115,
+      "package": "js-yaml",
+      "severity": "high",
+      "url": "https://github.com/advisories/GHSA-5p4m-2wfm-xmqj",
+      "vulnerable_versions": ">=4.0.0 <4.3.1",
+      "patched_versions": ">=4.3.1",
+      "findings": [
+        {
+          "version": "4.2.0",
+          "development": true,
+          "optional": false,
+          "path_count": 14,
+          "example_paths": [
+            ".>eslint>@eslint/eslintrc>js-yaml",
+            ".>eslint-plugin-react-hooks>eslint>@eslint/eslintrc>js-yaml",
+            ".>eslint-plugin-react-refresh>eslint>@eslint/eslintrc>js-yaml"
+          ]
+        }
+      ]
+    },
+    {
+      "registry_id": 1138538,
+      "package": "dompurify",
+      "severity": "moderate",
+      "url": "https://github.com/advisories/GHSA-55q2-fjhq-7xh7",
+      "vulnerable_versions": "<=3.4.12",
+      "patched_versions": ">=3.4.13",
+      "findings": [
+        {
+          "version": "3.4.11",
+          "development": false,
+          "optional": false,
+          "path_count": 1,
+          "example_paths": [
+            ".>dompurify"
+          ]
+        }
+      ]
+    },
+    {
+      "registry_id": 1138769,
+      "package": "react-router",
+      "severity": "high",
+      "url": "https://github.com/advisories/GHSA-qwww-vcr4-c8h2",
+      "vulnerable_versions": ">=7.12.0 <7.18.2",
+      "patched_versions": ">=7.18.2",
+      "findings": [
+        {
+          "version": "7.18.0",
+          "development": false,
+          "optional": false,
+          "path_count": 1,
+          "example_paths": [
+            ".>react-router-dom>react-router"
+          ]
+        }
+      ]
+    },
+    {
+      "registry_id": 1138811,
+      "package": "nanoid",
+      "severity": "high",
+      "url": "https://github.com/advisories/GHSA-28wg-ghj8-5hjv",
+      "vulnerable_versions": "<3.3.16",
+      "patched_versions": ">=3.3.16",
+      "findings": [
+        {
+          "version": "3.3.15",
+          "development": true,
+          "optional": false,
+          "path_count": 6,
+          "example_paths": [
+            ".>@vitejs/plugin-react>vite>postcss>nanoid",
+            ".>vite>postcss>nanoid",
+            ".>vite-plugin-pwa>vite>postcss>nanoid"
+          ]
+        }
+      ]
+    },
+    {
+      "registry_id": 1139427,
+      "package": "nanoid",
+      "severity": "high",
+      "url": "https://github.com/advisories/GHSA-2v37-7h3g-55p8",
+      "vulnerable_versions": "<3.3.18",
+      "patched_versions": ">=3.3.18",
+      "findings": [
+        {
+          "version": "3.3.15",
+          "development": true,
+          "optional": false,
+          "path_count": 6,
+          "example_paths": [
+            ".>@vitejs/plugin-react>vite>postcss>nanoid",
+            ".>vite>postcss>nanoid",
+            ".>vite-plugin-pwa>vite>postcss>nanoid"
+          ]
+        }
+      ]
+    },
+    {
+      "registry_id": 1139510,
+      "package": "postcss",
+      "severity": "high",
+      "url": "https://github.com/advisories/GHSA-r28c-9q8g-f849",
+      "vulnerable_versions": "<=8.5.17",
+      "patched_versions": ">=8.5.18",
+      "findings": [
+        {
+          "version": "8.5.15",
+          "development": true,
+          "optional": false,
+          "path_count": 6,
+          "example_paths": [
+            ".>@vitejs/plugin-react>vite>postcss",
+            ".>vite>postcss",
+            ".>vite-plugin-pwa>vite>postcss"
+          ]
+        }
+      ]
+    },
+    {
+      "registry_id": 1153171,
+      "package": "browserslist",
+      "severity": "high",
+      "url": "https://github.com/advisories/GHSA-c83g-rgw3-j3cx",
+      "vulnerable_versions": "<=4.28.6",
+      "patched_versions": ">=4.28.7",
+      "findings": [
+        {
+          "version": "4.28.4",
+          "development": true,
+          "optional": false,
+          "path_count": 100,
+          "example_paths": [
+            ".>eslint-plugin-react-hooks>@babel/core>@babel/helper-compilation-targets>browserslist",
+            ".>vite-plugin-pwa>workbox-build>@babel/core>@babel/helper-compilation-targets>browserslist",
+            ".>vite-plugin-pwa>workbox-build>@babel/preset-env>@babel/core>@babel/helper-compilation-targets>browserslist"
+          ]
+        }
+      ]
+    },
+    {
+      "registry_id": 1153172,
+      "package": "browserslist",
+      "severity": "high",
+      "url": "https://github.com/advisories/GHSA-73wf-gq98-2v4g",
+      "vulnerable_versions": "<=4.28.6",
+      "patched_versions": ">=4.28.7",
+      "findings": [
+        {
+          "version": "4.28.4",
+          "development": true,
+          "optional": false,
+          "path_count": 100,
+          "example_paths": [
+            ".>eslint-plugin-react-hooks>@babel/core>@babel/helper-compilation-targets>browserslist",
+            ".>vite-plugin-pwa>workbox-build>@babel/core>@babel/helper-compilation-targets>browserslist",
+            ".>vite-plugin-pwa>workbox-build>@babel/preset-env>@babel/core>@babel/helper-compilation-targets>browserslist"
+          ]
+        }
+      ]
+    },
+    {
+      "registry_id": 1158524,
+      "package": "fast-uri",
+      "severity": "high",
+      "url": "https://github.com/advisories/GHSA-f65p-4m7j-42xc",
+      "vulnerable_versions": ">=3.0.0 <3.1.6",
+      "patched_versions": ">=3.1.6",
+      "findings": [
+        {
+          "version": "3.1.2",
+          "development": true,
+          "optional": false,
+          "path_count": 2,
+          "example_paths": [
+            ".>vite-plugin-pwa>workbox-build>@apideck/better-ajv-errors>ajv>fast-uri",
+            ".>vite-plugin-pwa>workbox-build>ajv>fast-uri"
+          ]
+        }
+      ]
+    },
+    {
+      "registry_id": 1158527,
+      "package": "fast-uri",
+      "severity": "high",
+      "url": "https://github.com/advisories/GHSA-fph4-wmhf-6fwf",
+      "vulnerable_versions": ">=3.1.2 <3.1.6",
+      "patched_versions": ">=3.1.6",
+      "findings": [
+        {
+          "version": "3.1.2",
+          "development": true,
+          "optional": false,
+          "path_count": 2,
+          "example_paths": [
+            ".>vite-plugin-pwa>workbox-build>@apideck/better-ajv-errors>ajv>fast-uri",
+            ".>vite-plugin-pwa>workbox-build>ajv>fast-uri"
+          ]
+        }
+      ]
+    },
+    {
+      "registry_id": 1158530,
+      "package": "fast-uri",
+      "severity": "high",
+      "url": "https://github.com/advisories/GHSA-jqff-g426-hqxp",
+      "vulnerable_versions": ">=3.0.0 <3.1.6",
+      "patched_versions": ">=3.1.6",
+      "findings": [
+        {
+          "version": "3.1.2",
+          "development": true,
+          "optional": false,
+          "path_count": 2,
+          "example_paths": [
+            ".>vite-plugin-pwa>workbox-build>@apideck/better-ajv-errors>ajv>fast-uri",
+            ".>vite-plugin-pwa>workbox-build>ajv>fast-uri"
+          ]
+        }
+      ]
+    },
+    {
+      "registry_id": 1193683,
+      "package": "vitest",
+      "severity": "moderate",
+      "url": "https://github.com/advisories/GHSA-82fw-gwwq-j7x9",
+      "vulnerable_versions": ">=2.1.0 <4.1.11",
+      "patched_versions": ">=4.1.11",
+      "findings": [
+        {
+          "version": "3.2.6",
+          "development": true,
+          "optional": false,
+          "path_count": 1,
+          "example_paths": [
+            ".>vitest"
+          ]
+        }
+      ]
+    },
+    {
+      "registry_id": 1193684,
+      "package": "@vitest/mocker",
+      "severity": "moderate",
+      "url": "https://github.com/advisories/GHSA-82fw-gwwq-j7x9",
+      "vulnerable_versions": ">=2.1.0 <4.1.11",
+      "patched_versions": ">=4.1.11",
+      "findings": [
+        {
+          "version": "3.2.6",
+          "development": true,
+          "optional": false,
+          "path_count": 1,
+          "example_paths": [
+            ".>vitest>@vitest/mocker"
+          ]
+        }
+      ]
+    },
+    {
+      "registry_id": 1193686,
+      "package": "baseline-browser-mapping",
+      "severity": "moderate",
+      "url": "https://github.com/advisories/GHSA-w5vr-8v7q-w6rv",
+      "vulnerable_versions": ">=2.0.0 <2.11.0",
+      "patched_versions": ">=2.11.0",
+      "findings": [
+        {
+          "version": "2.10.38",
+          "development": true,
+          "optional": false,
+          "path_count": 100,
+          "example_paths": [
+            ".>eslint-plugin-react-hooks>@babel/core>@babel/helper-compilation-targets>browserslist>baseline-browser-mapping",
+            ".>vite-plugin-pwa>workbox-build>@babel/core>@babel/helper-compilation-targets>browserslist>baseline-browser-mapping",
+            ".>vite-plugin-pwa>workbox-build>@babel/preset-env>@babel/core>@babel/helper-compilation-targets>browserslist>baseline-browser-mapping"
+          ]
+        }
+      ]
+    },
+    {
+      "registry_id": 1193727,
+      "package": "js-yaml",
+      "severity": "high",
+      "url": "https://github.com/advisories/GHSA-2883-xcg3-v3hh",
+      "vulnerable_versions": ">=4.0.0 <4.3.2",
+      "patched_versions": ">=4.3.2",
+      "findings": [
+        {
+          "version": "4.2.0",
+          "development": true,
+          "optional": false,
+          "path_count": 14,
+          "example_paths": [
+            ".>eslint>@eslint/eslintrc>js-yaml",
+            ".>eslint-plugin-react-hooks>eslint>@eslint/eslintrc>js-yaml",
+            ".>eslint-plugin-react-refresh>eslint>@eslint/eslintrc>js-yaml"
+          ]
+        }
+      ]
+    },
+    {
+      "registry_id": 1204921,
+      "package": "fast-uri",
+      "severity": "high",
+      "url": "https://github.com/advisories/GHSA-4c8g-83qw-93j6",
+      "vulnerable_versions": ">=3.0.0 <3.1.3",
+      "patched_versions": ">=3.1.3",
+      "findings": [
+        {
+          "version": "3.1.2",
+          "development": true,
+          "optional": false,
+          "path_count": 2,
+          "example_paths": [
+            ".>vite-plugin-pwa>workbox-build>@apideck/better-ajv-errors>ajv>fast-uri",
+            ".>vite-plugin-pwa>workbox-build>ajv>fast-uri"
+          ]
+        }
+      ]
+    },
+    {
+      "registry_id": 1239943,
+      "package": "fast-uri",
+      "severity": "high",
+      "url": "https://github.com/advisories/GHSA-qw65-cvwx-89v3",
+      "vulnerable_versions": ">=3.0.0 <3.1.7",
+      "patched_versions": ">=3.1.7",
+      "findings": [
+        {
+          "version": "3.1.2",
+          "development": true,
+          "optional": false,
+          "path_count": 2,
+          "example_paths": [
+            ".>vite-plugin-pwa>workbox-build>@apideck/better-ajv-errors>ajv>fast-uri",
+            ".>vite-plugin-pwa>workbox-build>ajv>fast-uri"
+          ]
+        }
+      ]
+    },
+    {
+      "registry_id": 1240091,
+      "package": "fast-uri",
+      "severity": "moderate",
+      "url": "https://github.com/advisories/GHSA-hrr3-gc8f-f4qj",
+      "vulnerable_versions": ">=3.0.0 <3.1.8",
+      "patched_versions": ">=3.1.8",
+      "findings": [
+        {
+          "version": "3.1.2",
+          "development": true,
+          "optional": false,
+          "path_count": 2,
+          "example_paths": [
+            ".>vite-plugin-pwa>workbox-build>@apideck/better-ajv-errors>ajv>fast-uri",
+            ".>vite-plugin-pwa>workbox-build>ajv>fast-uri"
+          ]
+        }
+      ]
+    },
+    {
+      "registry_id": 1240100,
+      "package": "brace-expansion",
+      "severity": "moderate",
+      "url": "https://github.com/advisories/GHSA-q2hr-2g5m-vwhr",
+      "vulnerable_versions": "<1.1.21",
+      "patched_versions": ">=1.1.21",
+      "findings": [
+        {
+          "version": "1.1.15",
+          "development": true,
+          "optional": false,
+          "path_count": 42,
+          "example_paths": [
+            ".>eslint>@eslint/config-array>minimatch>brace-expansion",
+            ".>eslint>@eslint/eslintrc>minimatch>brace-expansion",
+            ".>eslint>minimatch>brace-expansion"
+          ]
+        }
+      ]
+    },
+    {
+      "registry_id": 1240101,
+      "package": "brace-expansion",
+      "severity": "moderate",
+      "url": "https://github.com/advisories/GHSA-q2hr-2g5m-vwhr",
+      "vulnerable_versions": ">=2.0.0 <2.1.7",
+      "patched_versions": ">=2.1.7",
+      "findings": [
+        {
+          "version": "2.1.1",
+          "development": true,
+          "optional": false,
+          "path_count": 1,
+          "example_paths": [
+            ".>vite-plugin-pwa>workbox-build>@trickfilm400/rollup-plugin-off-main-thread>ejs>jake>filelist>minimatch>brace-expansion"
+          ]
+        }
+      ]
+    },
+    {
+      "registry_id": 1240103,
+      "package": "brace-expansion",
+      "severity": "moderate",
+      "url": "https://github.com/advisories/GHSA-q2hr-2g5m-vwhr",
+      "vulnerable_versions": ">=4.0.0 <5.0.12",
+      "patched_versions": ">=5.0.12",
+      "findings": [
+        {
+          "version": "5.0.6",
+          "development": true,
+          "optional": false,
+          "path_count": 8,
+          "example_paths": [
+            ".>typescript-eslint>@typescript-eslint/eslint-plugin>@typescript-eslint/parser>@typescript-eslint/typescript-estree>minimatch>brace-expansion",
+            ".>typescript-eslint>@typescript-eslint/eslint-plugin>@typescript-eslint/type-utils>@typescript-eslint/typescript-estree>minimatch>brace-expansion",
+            ".>typescript-eslint>@typescript-eslint/eslint-plugin>@typescript-eslint/type-utils>@typescript-eslint/utils>@typescript-eslint/typescript-estree>minimatch>brace-expansion"
+          ]
+        }
+      ]
+    },
+    {
+      "registry_id": 1240104,
+      "package": "brace-expansion",
+      "severity": "high",
+      "url": "https://github.com/advisories/GHSA-qhr7-859c-m2p7",
+      "vulnerable_versions": "<1.1.20",
+      "patched_versions": ">=1.1.20",
+      "findings": [
+        {
+          "version": "1.1.15",
+          "development": true,
+          "optional": false,
+          "path_count": 42,
+          "example_paths": [
+            ".>eslint>@eslint/config-array>minimatch>brace-expansion",
+            ".>eslint>@eslint/eslintrc>minimatch>brace-expansion",
+            ".>eslint>minimatch>brace-expansion"
+          ]
+        }
+      ]
+    },
+    {
+      "registry_id": 1240105,
+      "package": "brace-expansion",
+      "severity": "high",
+      "url": "https://github.com/advisories/GHSA-qhr7-859c-m2p7",
+      "vulnerable_versions": ">=2.0.0 <2.1.6",
+      "patched_versions": ">=2.1.6",
+      "findings": [
+        {
+          "version": "2.1.1",
+          "development": true,
+          "optional": false,
+          "path_count": 1,
+          "example_paths": [
+            ".>vite-plugin-pwa>workbox-build>@trickfilm400/rollup-plugin-off-main-thread>ejs>jake>filelist>minimatch>brace-expansion"
+          ]
+        }
+      ]
+    },
+    {
+      "registry_id": 1240107,
+      "package": "brace-expansion",
+      "severity": "high",
+      "url": "https://github.com/advisories/GHSA-qhr7-859c-m2p7",
+      "vulnerable_versions": ">=4.0.0 <5.0.11",
+      "patched_versions": ">=5.0.11",
+      "findings": [
+        {
+          "version": "5.0.6",
+          "development": true,
+          "optional": false,
+          "path_count": 8,
+          "example_paths": [
+            ".>typescript-eslint>@typescript-eslint/eslint-plugin>@typescript-eslint/parser>@typescript-eslint/typescript-estree>minimatch>brace-expansion",
+            ".>typescript-eslint>@typescript-eslint/eslint-plugin>@typescript-eslint/type-utils>@typescript-eslint/typescript-estree>minimatch>brace-expansion",
+            ".>typescript-eslint>@typescript-eslint/eslint-plugin>@typescript-eslint/type-utils>@typescript-eslint/utils>@typescript-eslint/typescript-estree>minimatch>brace-expansion"
+          ]
+        }
+      ]
+    },
+    {
+      "registry_id": 1240108,
+      "package": "brace-expansion",
+      "severity": "high",
+      "url": "https://github.com/advisories/GHSA-6j4f-fj2g-mc7p",
+      "vulnerable_versions": "<1.1.19",
+      "patched_versions": ">=1.1.19",
+      "findings": [
+        {
+          "version": "1.1.15",
+          "development": true,
+          "optional": false,
+          "path_count": 42,
+          "example_paths": [
+            ".>eslint>@eslint/config-array>minimatch>brace-expansion",
+            ".>eslint>@eslint/eslintrc>minimatch>brace-expansion",
+            ".>eslint>minimatch>brace-expansion"
+          ]
+        }
+      ]
+    },
+    {
+      "registry_id": 1240109,
+      "package": "brace-expansion",
+      "severity": "high",
+      "url": "https://github.com/advisories/GHSA-6j4f-fj2g-mc7p",
+      "vulnerable_versions": ">=2.0.0 <2.1.5",
+      "patched_versions": ">=2.1.5",
+      "findings": [
+        {
+          "version": "2.1.1",
+          "development": true,
+          "optional": false,
+          "path_count": 1,
+          "example_paths": [
+            ".>vite-plugin-pwa>workbox-build>@trickfilm400/rollup-plugin-off-main-thread>ejs>jake>filelist>minimatch>brace-expansion"
+          ]
+        }
+      ]
+    },
+    {
+      "registry_id": 1240111,
+      "package": "brace-expansion",
+      "severity": "high",
+      "url": "https://github.com/advisories/GHSA-6j4f-fj2g-mc7p",
+      "vulnerable_versions": ">=4.0.0 <5.0.10",
+      "patched_versions": ">=5.0.10",
+      "findings": [
+        {
+          "version": "5.0.6",
+          "development": true,
+          "optional": false,
+          "path_count": 8,
+          "example_paths": [
+            ".>typescript-eslint>@typescript-eslint/eslint-plugin>@typescript-eslint/parser>@typescript-eslint/typescript-estree>minimatch>brace-expansion",
+            ".>typescript-eslint>@typescript-eslint/eslint-plugin>@typescript-eslint/type-utils>@typescript-eslint/typescript-estree>minimatch>brace-expansion",
+            ".>typescript-eslint>@typescript-eslint/eslint-plugin>@typescript-eslint/type-utils>@typescript-eslint/utils>@typescript-eslint/typescript-estree>minimatch>brace-expansion"
+          ]
+        }
+      ]
+    },
+    {
+      "registry_id": 1240978,
+      "package": "dompurify",
+      "severity": "low",
+      "url": "https://github.com/advisories/GHSA-c2j3-45gr-mqc4",
+      "vulnerable_versions": "<=3.4.11",
+      "patched_versions": ">=3.4.12",
+      "findings": [
+        {
+          "version": "3.4.11",
+          "development": false,
+          "optional": false,
+          "path_count": 1,
+          "example_paths": [
+            ".>dompurify"
+          ]
+        }
+      ]
+    },
+    {
+      "registry_id": 1241204,
+      "package": "dompurify",
+      "severity": "low",
+      "url": "https://github.com/advisories/GHSA-6688-9rhm-gjv2",
+      "vulnerable_versions": "<=3.4.15",
+      "patched_versions": ">=3.4.16",
+      "findings": [
+        {
+          "version": "3.4.11",
+          "development": false,
+          "optional": false,
+          "path_count": 1,
+          "example_paths": [
+            ".>dompurify"
+          ]
+        }
+      ]
+    },
+    {
+      "registry_id": 1241209,
+      "package": "source-map-js",
+      "severity": "high",
+      "url": "https://github.com/advisories/GHSA-68fv-2mgg-jv7q",
+      "vulnerable_versions": ">=1.0.0 <1.2.2",
+      "patched_versions": ">=1.2.2",
+      "findings": [
+        {
+          "version": "1.2.1",
+          "development": true,
+          "optional": false,
+          "path_count": 6,
+          "example_paths": [
+            ".>@vitejs/plugin-react>vite>postcss>source-map-js",
+            ".>vite>postcss>source-map-js",
+            ".>vite-plugin-pwa>vite>postcss>source-map-js"
+          ]
+        }
+      ]
+    },
+    {
+      "registry_id": 1241260,
+      "package": "tinypool",
+      "severity": "critical",
+      "url": "https://github.com/advisories/GHSA-5gmw-xhrv-c9v3",
+      "vulnerable_versions": "<=2.1.0",
+      "patched_versions": ">=2.1.1",
+      "findings": [
+        {
+          "version": "1.1.1",
+          "development": true,
+          "optional": false,
+          "path_count": 1,
+          "example_paths": [
+            ".>vitest>tinypool"
+          ]
+        }
+      ]
+    },
+    {
+      "registry_id": 1241261,
+      "package": "tinypool",
+      "severity": "critical",
+      "url": "https://github.com/advisories/GHSA-85c8-ppgw-ccpr",
+      "vulnerable_versions": "<2.1.2",
+      "patched_versions": ">=2.1.2",
+      "findings": [
+        {
+          "version": "1.1.1",
+          "development": true,
+          "optional": false,
+          "path_count": 1,
+          "example_paths": [
+            ".>vitest>tinypool"
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,2342 @@
+[
+  {
+    "capture": "offline/care-plans--new-documentation-saved",
+    "scenario": "offline/care-plans",
+    "step": "new-documentation-saved",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-care-plans--new-documentation-saved--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/care-plans--new-documentation-saved",
+    "scenario": "offline/care-plans",
+    "step": "new-documentation-saved",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-care-plans--new-documentation-saved--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/care-plans--new-patient-documentation-form",
+    "scenario": "offline/care-plans",
+    "step": "new-patient-documentation-form",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-care-plans--new-patient-documentation-form--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/care-plans--new-patient-documentation-form",
+    "scenario": "offline/care-plans",
+    "step": "new-patient-documentation-form",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-care-plans--new-patient-documentation-form--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/care-plans--record-detail-history",
+    "scenario": "offline/care-plans",
+    "step": "record-detail-history",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-care-plans--record-detail-history--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/care-plans--record-detail-history",
+    "scenario": "offline/care-plans",
+    "step": "record-detail-history",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-care-plans--record-detail-history--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/care-plans--revision-saved",
+    "scenario": "offline/care-plans",
+    "step": "revision-saved",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-care-plans--revision-saved--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/care-plans--revision-saved",
+    "scenario": "offline/care-plans",
+    "step": "revision-saved",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-care-plans--revision-saved--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/care-plans",
+    "scenario": "offline/care-plans",
+    "step": "default",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-care-plans--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/care-plans",
+    "scenario": "offline/care-plans",
+    "step": "default",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-care-plans--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/cssd--case-linked-custody-form",
+    "scenario": "offline/cssd",
+    "step": "case-linked-custody-form",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-cssd--case-linked-custody-form--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/cssd--case-linked-custody-form",
+    "scenario": "offline/cssd",
+    "step": "case-linked-custody-form",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-cssd--case-linked-custody-form--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/cssd--checks-recorded",
+    "scenario": "offline/cssd",
+    "step": "checks-recorded",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-cssd--checks-recorded--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/cssd--checks-recorded",
+    "scenario": "offline/cssd",
+    "step": "checks-recorded",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-cssd--checks-recorded--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/cssd--custody-issue-recorded",
+    "scenario": "offline/cssd",
+    "step": "custody-issue-recorded",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-cssd--custody-issue-recorded--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/cssd--custody-issue-recorded",
+    "scenario": "offline/cssd",
+    "step": "custody-issue-recorded",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-cssd--custody-issue-recorded--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/cssd--cycle-checks",
+    "scenario": "offline/cssd",
+    "step": "cycle-checks",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-cssd--cycle-checks--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/cssd--cycle-checks",
+    "scenario": "offline/cssd",
+    "step": "cycle-checks",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-cssd--cycle-checks--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/cssd--cycle-start-form",
+    "scenario": "offline/cssd",
+    "step": "cycle-start-form",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-cssd--cycle-start-form--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/cssd--cycle-start-form",
+    "scenario": "offline/cssd",
+    "step": "cycle-start-form",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-cssd--cycle-start-form--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/cssd",
+    "scenario": "offline/cssd",
+    "step": "default",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-cssd--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/cssd",
+    "scenario": "offline/cssd",
+    "step": "default",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-cssd--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/dialysis--new-documentation-saved",
+    "scenario": "offline/dialysis",
+    "step": "new-documentation-saved",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-dialysis--new-documentation-saved--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/dialysis--new-documentation-saved",
+    "scenario": "offline/dialysis",
+    "step": "new-documentation-saved",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-dialysis--new-documentation-saved--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/dialysis--new-patient-documentation-form",
+    "scenario": "offline/dialysis",
+    "step": "new-patient-documentation-form",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-dialysis--new-patient-documentation-form--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/dialysis--new-patient-documentation-form",
+    "scenario": "offline/dialysis",
+    "step": "new-patient-documentation-form",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-dialysis--new-patient-documentation-form--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/dialysis--record-detail-history",
+    "scenario": "offline/dialysis",
+    "step": "record-detail-history",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-dialysis--record-detail-history--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/dialysis--record-detail-history",
+    "scenario": "offline/dialysis",
+    "step": "record-detail-history",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-dialysis--record-detail-history--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/dialysis--revision-saved",
+    "scenario": "offline/dialysis",
+    "step": "revision-saved",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-dialysis--revision-saved--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/dialysis--revision-saved",
+    "scenario": "offline/dialysis",
+    "step": "revision-saved",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-dialysis--revision-saved--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/dialysis",
+    "scenario": "offline/dialysis",
+    "step": "default",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-dialysis--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/dialysis",
+    "scenario": "offline/dialysis",
+    "step": "default",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-dialysis--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/emergency--new-documentation-saved",
+    "scenario": "offline/emergency",
+    "step": "new-documentation-saved",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-emergency--new-documentation-saved--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/emergency--new-documentation-saved",
+    "scenario": "offline/emergency",
+    "step": "new-documentation-saved",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-emergency--new-documentation-saved--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/emergency--new-patient-documentation-form",
+    "scenario": "offline/emergency",
+    "step": "new-patient-documentation-form",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-emergency--new-patient-documentation-form--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/emergency--new-patient-documentation-form",
+    "scenario": "offline/emergency",
+    "step": "new-patient-documentation-form",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-emergency--new-patient-documentation-form--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/emergency--record-detail-history",
+    "scenario": "offline/emergency",
+    "step": "record-detail-history",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-emergency--record-detail-history--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/emergency--record-detail-history",
+    "scenario": "offline/emergency",
+    "step": "record-detail-history",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-emergency--record-detail-history--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/emergency--revision-saved",
+    "scenario": "offline/emergency",
+    "step": "revision-saved",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-emergency--revision-saved--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/emergency--revision-saved",
+    "scenario": "offline/emergency",
+    "step": "revision-saved",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-emergency--revision-saved--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/emergency",
+    "scenario": "offline/emergency",
+    "step": "default",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-emergency--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/emergency",
+    "scenario": "offline/emergency",
+    "step": "default",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-emergency--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/feedback--complaint-saved",
+    "scenario": "offline/feedback",
+    "step": "complaint-saved",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-feedback--complaint-saved--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/feedback--complaint-saved",
+    "scenario": "offline/feedback",
+    "step": "complaint-saved",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-feedback--complaint-saved--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/feedback--new-complaint-form",
+    "scenario": "offline/feedback",
+    "step": "new-complaint-form",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-feedback--new-complaint-form--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/feedback--new-complaint-form",
+    "scenario": "offline/feedback",
+    "step": "new-complaint-form",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-feedback--new-complaint-form--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/feedback--recorded-resolution",
+    "scenario": "offline/feedback",
+    "step": "recorded-resolution",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-feedback--recorded-resolution--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/feedback--recorded-resolution",
+    "scenario": "offline/feedback",
+    "step": "recorded-resolution",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-feedback--recorded-resolution--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/feedback--resolution-form",
+    "scenario": "offline/feedback",
+    "step": "resolution-form",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-feedback--resolution-form--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/feedback--resolution-form",
+    "scenario": "offline/feedback",
+    "step": "resolution-form",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-feedback--resolution-form--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/feedback--statement-and-history",
+    "scenario": "offline/feedback",
+    "step": "statement-and-history",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-feedback--statement-and-history--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/feedback--statement-and-history",
+    "scenario": "offline/feedback",
+    "step": "statement-and-history",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-feedback--statement-and-history--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/feedback",
+    "scenario": "offline/feedback",
+    "step": "default",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-feedback--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/feedback",
+    "scenario": "offline/feedback",
+    "step": "default",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-feedback--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/finance-tools--attribution-form",
+    "scenario": "offline/finance-tools",
+    "step": "attribution-form",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-finance-tools--attribution-form--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/finance-tools--attribution-form",
+    "scenario": "offline/finance-tools",
+    "step": "attribution-form",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-finance-tools--attribution-form--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/finance-tools--balanced-journal-preview",
+    "scenario": "offline/finance-tools",
+    "step": "balanced-journal-preview",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-finance-tools--balanced-journal-preview--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/finance-tools--balanced-journal-preview",
+    "scenario": "offline/finance-tools",
+    "step": "balanced-journal-preview",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-finance-tools--balanced-journal-preview--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/finance-tools--draft-statement",
+    "scenario": "offline/finance-tools",
+    "step": "draft-statement",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-finance-tools--draft-statement--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/finance-tools--draft-statement",
+    "scenario": "offline/finance-tools",
+    "step": "draft-statement",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-finance-tools--draft-statement--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/finance-tools--explicit-account-form",
+    "scenario": "offline/finance-tools",
+    "step": "explicit-account-form",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-finance-tools--explicit-account-form--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/finance-tools--explicit-account-form",
+    "scenario": "offline/finance-tools",
+    "step": "explicit-account-form",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-finance-tools--explicit-account-form--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/finance-tools--explicit-rule-form",
+    "scenario": "offline/finance-tools",
+    "step": "explicit-rule-form",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-finance-tools--explicit-rule-form--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/finance-tools--explicit-rule-form",
+    "scenario": "offline/finance-tools",
+    "step": "explicit-rule-form",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-finance-tools--explicit-rule-form--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/finance-tools--mapping-saved",
+    "scenario": "offline/finance-tools",
+    "step": "mapping-saved",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-finance-tools--mapping-saved--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/finance-tools--mapping-saved",
+    "scenario": "offline/finance-tools",
+    "step": "mapping-saved",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-finance-tools--mapping-saved--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/finance-tools--payment-attested",
+    "scenario": "offline/finance-tools",
+    "step": "payment-attested",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-finance-tools--payment-attested--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/finance-tools--payment-attested",
+    "scenario": "offline/finance-tools",
+    "step": "payment-attested",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-finance-tools--payment-attested--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/finance-tools--payout-preview",
+    "scenario": "offline/finance-tools",
+    "step": "payout-preview",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-finance-tools--payout-preview--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/finance-tools--payout-preview",
+    "scenario": "offline/finance-tools",
+    "step": "payout-preview",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-finance-tools--payout-preview--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/finance-tools--second-person-approval",
+    "scenario": "offline/finance-tools",
+    "step": "second-person-approval",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-finance-tools--second-person-approval--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/finance-tools--second-person-approval",
+    "scenario": "offline/finance-tools",
+    "step": "second-person-approval",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-finance-tools--second-person-approval--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/finance-tools",
+    "scenario": "offline/finance-tools",
+    "step": "default",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-finance-tools--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/finance-tools",
+    "scenario": "offline/finance-tools",
+    "step": "default",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-finance-tools--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/infection-surveillance--authored-isolation-end-form",
+    "scenario": "offline/infection-surveillance",
+    "step": "authored-isolation-end-form",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/final-followup/shots/offline-infection-surveillance--authored-isolation-end-form--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/final-followup",
+    "bundle_sha256": "c7a759ed29e706bb547eae838157a4de3919393fd8c88d521d13054d2a7577d2"
+  },
+  {
+    "capture": "offline/infection-surveillance--authored-isolation-end-form",
+    "scenario": "offline/infection-surveillance",
+    "step": "authored-isolation-end-form",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/final-followup/shots/offline-infection-surveillance--authored-isolation-end-form--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/final-followup",
+    "bundle_sha256": "c7a759ed29e706bb547eae838157a4de3919393fd8c88d521d13054d2a7577d2"
+  },
+  {
+    "capture": "offline/infection-surveillance--case-classification-recorded",
+    "scenario": "offline/infection-surveillance",
+    "step": "case-classification-recorded",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/final-followup/shots/offline-infection-surveillance--case-classification-recorded--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/final-followup",
+    "bundle_sha256": "c7a759ed29e706bb547eae838157a4de3919393fd8c88d521d13054d2a7577d2"
+  },
+  {
+    "capture": "offline/infection-surveillance--case-classification-recorded",
+    "scenario": "offline/infection-surveillance",
+    "step": "case-classification-recorded",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/final-followup/shots/offline-infection-surveillance--case-classification-recorded--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/final-followup",
+    "bundle_sha256": "c7a759ed29e706bb547eae838157a4de3919393fd8c88d521d13054d2a7577d2"
+  },
+  {
+    "capture": "offline/infection-surveillance--isolation-end-recorded",
+    "scenario": "offline/infection-surveillance",
+    "step": "isolation-end-recorded",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/final-followup/shots/offline-infection-surveillance--isolation-end-recorded--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/final-followup",
+    "bundle_sha256": "c7a759ed29e706bb547eae838157a4de3919393fd8c88d521d13054d2a7577d2"
+  },
+  {
+    "capture": "offline/infection-surveillance--isolation-end-recorded",
+    "scenario": "offline/infection-surveillance",
+    "step": "isolation-end-recorded",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/final-followup/shots/offline-infection-surveillance--isolation-end-recorded--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/final-followup",
+    "bundle_sha256": "c7a759ed29e706bb547eae838157a4de3919393fd8c88d521d13054d2a7577d2"
+  },
+  {
+    "capture": "offline/infection-surveillance--manual-case-review",
+    "scenario": "offline/infection-surveillance",
+    "step": "manual-case-review",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/final-followup/shots/offline-infection-surveillance--manual-case-review--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/final-followup",
+    "bundle_sha256": "c7a759ed29e706bb547eae838157a4de3919393fd8c88d521d13054d2a7577d2"
+  },
+  {
+    "capture": "offline/infection-surveillance--manual-case-review",
+    "scenario": "offline/infection-surveillance",
+    "step": "manual-case-review",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/final-followup/shots/offline-infection-surveillance--manual-case-review--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/final-followup",
+    "bundle_sha256": "c7a759ed29e706bb547eae838157a4de3919393fd8c88d521d13054d2a7577d2"
+  },
+  {
+    "capture": "offline/infection-surveillance--suppressed-reviewed-results",
+    "scenario": "offline/infection-surveillance",
+    "step": "suppressed-reviewed-results",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/final-followup/shots/offline-infection-surveillance--suppressed-reviewed-results--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/final-followup",
+    "bundle_sha256": "c7a759ed29e706bb547eae838157a4de3919393fd8c88d521d13054d2a7577d2"
+  },
+  {
+    "capture": "offline/infection-surveillance--suppressed-reviewed-results",
+    "scenario": "offline/infection-surveillance",
+    "step": "suppressed-reviewed-results",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/final-followup/shots/offline-infection-surveillance--suppressed-reviewed-results--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/final-followup",
+    "bundle_sha256": "c7a759ed29e706bb547eae838157a4de3919393fd8c88d521d13054d2a7577d2"
+  },
+  {
+    "capture": "offline/infection-surveillance--validated-susceptibility-form",
+    "scenario": "offline/infection-surveillance",
+    "step": "validated-susceptibility-form",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/final-followup/shots/offline-infection-surveillance--validated-susceptibility-form--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/final-followup",
+    "bundle_sha256": "c7a759ed29e706bb547eae838157a4de3919393fd8c88d521d13054d2a7577d2"
+  },
+  {
+    "capture": "offline/infection-surveillance--validated-susceptibility-form",
+    "scenario": "offline/infection-surveillance",
+    "step": "validated-susceptibility-form",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/final-followup/shots/offline-infection-surveillance--validated-susceptibility-form--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/final-followup",
+    "bundle_sha256": "c7a759ed29e706bb547eae838157a4de3919393fd8c88d521d13054d2a7577d2"
+  },
+  {
+    "capture": "offline/infection-surveillance",
+    "scenario": "offline/infection-surveillance",
+    "step": "default",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/final-followup/shots/offline-infection-surveillance--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/final-followup",
+    "bundle_sha256": "c7a759ed29e706bb547eae838157a4de3919393fd8c88d521d13054d2a7577d2"
+  },
+  {
+    "capture": "offline/infection-surveillance",
+    "scenario": "offline/infection-surveillance",
+    "step": "default",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/final-followup/shots/offline-infection-surveillance--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/final-followup",
+    "bundle_sha256": "c7a759ed29e706bb547eae838157a4de3919393fd8c88d521d13054d2a7577d2"
+  },
+  {
+    "capture": "offline/mortuary--authorised-handover-form",
+    "scenario": "offline/mortuary",
+    "step": "authorised-handover-form",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-mortuary--authorised-handover-form--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/mortuary--authorised-handover-form",
+    "scenario": "offline/mortuary",
+    "step": "authorised-handover-form",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-mortuary--authorised-handover-form--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/mortuary--custody-detail",
+    "scenario": "offline/mortuary",
+    "step": "custody-detail",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-mortuary--custody-detail--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/mortuary--custody-detail",
+    "scenario": "offline/mortuary",
+    "step": "custody-detail",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-mortuary--custody-detail--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/mortuary--receipt-form",
+    "scenario": "offline/mortuary",
+    "step": "receipt-form",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-mortuary--receipt-form--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/mortuary--receipt-form",
+    "scenario": "offline/mortuary",
+    "step": "receipt-form",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-mortuary--receipt-form--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/mortuary--receipt-saved",
+    "scenario": "offline/mortuary",
+    "step": "receipt-saved",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-mortuary--receipt-saved--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/mortuary--receipt-saved",
+    "scenario": "offline/mortuary",
+    "step": "receipt-saved",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-mortuary--receipt-saved--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/mortuary--recorded-handover",
+    "scenario": "offline/mortuary",
+    "step": "recorded-handover",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-mortuary--recorded-handover--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/mortuary--recorded-handover",
+    "scenario": "offline/mortuary",
+    "step": "recorded-handover",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-mortuary--recorded-handover--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/mortuary",
+    "scenario": "offline/mortuary",
+    "step": "default",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-mortuary--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/mortuary",
+    "scenario": "offline/mortuary",
+    "step": "default",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-mortuary--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/perioperative--new-documentation-saved",
+    "scenario": "offline/perioperative",
+    "step": "new-documentation-saved",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-perioperative--new-documentation-saved--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/perioperative--new-documentation-saved",
+    "scenario": "offline/perioperative",
+    "step": "new-documentation-saved",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-perioperative--new-documentation-saved--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/perioperative--new-patient-documentation-form",
+    "scenario": "offline/perioperative",
+    "step": "new-patient-documentation-form",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-perioperative--new-patient-documentation-form--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/perioperative--new-patient-documentation-form",
+    "scenario": "offline/perioperative",
+    "step": "new-patient-documentation-form",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-perioperative--new-patient-documentation-form--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/perioperative--record-detail-history",
+    "scenario": "offline/perioperative",
+    "step": "record-detail-history",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-perioperative--record-detail-history--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/perioperative--record-detail-history",
+    "scenario": "offline/perioperative",
+    "step": "record-detail-history",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-perioperative--record-detail-history--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/perioperative--revision-saved",
+    "scenario": "offline/perioperative",
+    "step": "revision-saved",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-perioperative--revision-saved--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/perioperative--revision-saved",
+    "scenario": "offline/perioperative",
+    "step": "revision-saved",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-perioperative--revision-saved--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/perioperative",
+    "scenario": "offline/perioperative",
+    "step": "default",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-perioperative--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/perioperative",
+    "scenario": "offline/perioperative",
+    "step": "default",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-perioperative--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/radiation-safety--officer-document-form",
+    "scenario": "offline/radiation-safety",
+    "step": "officer-document-form",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-radiation-safety--officer-document-form--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/radiation-safety--officer-document-form",
+    "scenario": "offline/radiation-safety",
+    "step": "officer-document-form",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-radiation-safety--officer-document-form--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/radiation-safety--officer-evidence-saved",
+    "scenario": "offline/radiation-safety",
+    "step": "officer-evidence-saved",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-radiation-safety--officer-evidence-saved--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/radiation-safety--officer-evidence-saved",
+    "scenario": "offline/radiation-safety",
+    "step": "officer-evidence-saved",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-radiation-safety--officer-evidence-saved--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/radiation-safety--source-evidence-detail",
+    "scenario": "offline/radiation-safety",
+    "step": "source-evidence-detail",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-radiation-safety--source-evidence-detail--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/radiation-safety--source-evidence-detail",
+    "scenario": "offline/radiation-safety",
+    "step": "source-evidence-detail",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-radiation-safety--source-evidence-detail--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/radiation-safety--withdrawal-recorded",
+    "scenario": "offline/radiation-safety",
+    "step": "withdrawal-recorded",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-radiation-safety--withdrawal-recorded--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/radiation-safety--withdrawal-recorded",
+    "scenario": "offline/radiation-safety",
+    "step": "withdrawal-recorded",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-radiation-safety--withdrawal-recorded--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/radiation-safety",
+    "scenario": "offline/radiation-safety",
+    "step": "default",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-radiation-safety--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/radiation-safety",
+    "scenario": "offline/radiation-safety",
+    "step": "default",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-radiation-safety--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/radiology--new-documentation-saved",
+    "scenario": "offline/radiology",
+    "step": "new-documentation-saved",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-radiology--new-documentation-saved--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/radiology--new-documentation-saved",
+    "scenario": "offline/radiology",
+    "step": "new-documentation-saved",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-radiology--new-documentation-saved--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/radiology--new-patient-documentation-form",
+    "scenario": "offline/radiology",
+    "step": "new-patient-documentation-form",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-radiology--new-patient-documentation-form--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/radiology--new-patient-documentation-form",
+    "scenario": "offline/radiology",
+    "step": "new-patient-documentation-form",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-radiology--new-patient-documentation-form--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/radiology--record-detail-history",
+    "scenario": "offline/radiology",
+    "step": "record-detail-history",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-radiology--record-detail-history--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/radiology--record-detail-history",
+    "scenario": "offline/radiology",
+    "step": "record-detail-history",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-radiology--record-detail-history--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/radiology--revision-saved",
+    "scenario": "offline/radiology",
+    "step": "revision-saved",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-radiology--revision-saved--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/radiology--revision-saved",
+    "scenario": "offline/radiology",
+    "step": "revision-saved",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-radiology--revision-saved--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/radiology",
+    "scenario": "offline/radiology",
+    "step": "default",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-radiology--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/radiology",
+    "scenario": "offline/radiology",
+    "step": "default",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-radiology--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/record-governance--file-custody",
+    "scenario": "offline/record-governance",
+    "step": "file-custody",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-record-governance--file-custody--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/record-governance--file-custody",
+    "scenario": "offline/record-governance",
+    "step": "file-custody",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-record-governance--file-custody--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/record-governance--file-movement-recorded",
+    "scenario": "offline/record-governance",
+    "step": "file-movement-recorded",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-record-governance--file-movement-recorded--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/record-governance--file-movement-recorded",
+    "scenario": "offline/record-governance",
+    "step": "file-movement-recorded",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-record-governance--file-movement-recorded--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/record-governance--hold-release-form",
+    "scenario": "offline/record-governance",
+    "step": "hold-release-form",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-record-governance--hold-release-form--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/record-governance--hold-release-form",
+    "scenario": "offline/record-governance",
+    "step": "hold-release-form",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-record-governance--hold-release-form--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/record-governance--hold-released",
+    "scenario": "offline/record-governance",
+    "step": "hold-released",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-record-governance--hold-released--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/record-governance--hold-released",
+    "scenario": "offline/record-governance",
+    "step": "hold-released",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-record-governance--hold-released--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/record-governance--patient-hold-detail",
+    "scenario": "offline/record-governance",
+    "step": "patient-hold-detail",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-record-governance--patient-hold-detail--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/record-governance--patient-hold-detail",
+    "scenario": "offline/record-governance",
+    "step": "patient-hold-detail",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-record-governance--patient-hold-detail--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/record-governance--release-request-detail",
+    "scenario": "offline/record-governance",
+    "step": "release-request-detail",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-record-governance--release-request-detail--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/record-governance--release-request-detail",
+    "scenario": "offline/record-governance",
+    "step": "release-request-detail",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-record-governance--release-request-detail--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/record-governance",
+    "scenario": "offline/record-governance",
+    "step": "default",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-record-governance--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/record-governance",
+    "scenario": "offline/record-governance",
+    "step": "default",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-record-governance--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/reporting--csv-export",
+    "scenario": "offline/reporting",
+    "step": "csv-export",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-reporting--csv-export--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/reporting--csv-export",
+    "scenario": "offline/reporting",
+    "step": "csv-export",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-reporting--csv-export--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/reporting--definition-saved",
+    "scenario": "offline/reporting",
+    "step": "definition-saved",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-reporting--definition-saved--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/reporting--definition-saved",
+    "scenario": "offline/reporting",
+    "step": "definition-saved",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-reporting--definition-saved--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/reporting--filtered-query",
+    "scenario": "offline/reporting",
+    "step": "filtered-query",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-reporting--filtered-query--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/reporting--filtered-query",
+    "scenario": "offline/reporting",
+    "step": "filtered-query",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-reporting--filtered-query--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/reporting--record-preview",
+    "scenario": "offline/reporting",
+    "step": "record-preview",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-reporting--record-preview--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/reporting--record-preview",
+    "scenario": "offline/reporting",
+    "step": "record-preview",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-reporting--record-preview--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/reporting--summary-preview",
+    "scenario": "offline/reporting",
+    "step": "summary-preview",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-reporting--summary-preview--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/reporting--summary-preview",
+    "scenario": "offline/reporting",
+    "step": "summary-preview",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-reporting--summary-preview--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/reporting",
+    "scenario": "offline/reporting",
+    "step": "default",
+    "theme": "dark",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-reporting--dark.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  },
+  {
+    "capture": "offline/reporting",
+    "scenario": "offline/reporting",
+    "step": "default",
+    "theme": "light",
+    "shot": "tests/visual/offline-2026-10/verified/shots/offline-reporting--light.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "mode": "mocked",
+    "findingCount": 0,
+    "source_output": "tests/visual/offline-2026-10/verified",
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+  }
+]

@@ -1,0 +1,97 @@
+{
+  "schema": "orb.audit.orders-terminology-fixture-isolation/1",
+  "date": "2026-10-12",
+  "root_cause": "The laboratory catalogue registers missing LOINC2524-7 with display Lactate. The terminology starter seed deliberately INSERT OR IGNORE preserves existing site/catalogue wording. This module assumed an otherwise fresh starter set when asserting the curated display. Runtime behavior is correct and unchanged.",
+  "before": {
+    "command": [
+      "env",
+      "-u",
+      "ORB_DB_PATH",
+      "ORB_SKIP_KNOWLEDGE_BASE=1",
+      "HF_HUB_OFFLINE=1",
+      "TRANSFORMERS_OFFLINE=1",
+      "ORB_OLLAMA_HOST=http://127.0.0.1:9",
+      "ORB_SEPSIS_AUTOSTART=1",
+      "ORB_FHIR_EXPORT_DIR=/private/tmp/orb-orders-fixture-exports",
+      "ORB_WATCHDOG_DIR=/private/tmp/orb-orders-fixture-watchdog",
+      "/private/tmp/orb-ml-upgrade-20261012/bin/python",
+      "-m",
+      "pytest",
+      "-q",
+      "tests/test_lab_master.py::test_every_starter_code_validates_for_orders_once_loaded",
+      "tests/test_orders_service.py::test_validate_and_display"
+    ],
+    "failed": 1,
+    "passed": 1,
+    "seconds": 3.32,
+    "log": "/private/tmp/orb-orders-fixture-before-20261012.log",
+    "failure": "test_validate_and_display: Lactate versus Lactate [Moles/volume] in Serum or Plasma"
+  },
+  "change": "Only test_orders_service._seed depends on the existing isolated_module_database fixture. All original test assertions and runtime code remain unchanged. No new collected cases.",
+  "source_hashes": {
+    "server/tests/test_orders_service.py": "87d6be0c7dbeb071a56449875a40365f2dd51877df08ee96c53742fd6b8899ee"
+  },
+  "cwd": "/private/tmp/orb-shared-context-20261012-8z62wzgm/source/server",
+  "verification": {
+    "whole_module_and_preservation": {
+      "command": [
+        "env",
+        "-u",
+        "ORB_DB_PATH",
+        "ORB_SKIP_KNOWLEDGE_BASE=1",
+        "HF_HUB_OFFLINE=1",
+        "TRANSFORMERS_OFFLINE=1",
+        "ORB_OLLAMA_HOST=http://127.0.0.1:9",
+        "ORB_SEPSIS_AUTOSTART=1",
+        "ORB_FHIR_EXPORT_DIR=/private/tmp/orb-orders-fixture-exports",
+        "ORB_WATCHDOG_DIR=/private/tmp/orb-orders-fixture-watchdog",
+        "/private/tmp/orb-ml-upgrade-20261012/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_lab_master.py::test_every_starter_code_validates_for_orders_once_loaded",
+        "tests/test_lab_master.py::test_register_codes_adds_only_missing_codes_and_keeps_existing_displays",
+        "tests/test_lab_master.py::test_the_starter_never_puts_back_what_the_pathologist_changed",
+        "tests/test_orders_service.py"
+      ],
+      "passed": 17,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 3.04,
+      "log": "/private/tmp/orb-orders-fixture-final-20261012.log",
+      "log_sha256": "581c3f592d968e9f91267a73965d4708b1d25583ff49a5c9b84b3c4cf8e2ac99"
+    },
+    "exact_original_contamination_pair": {
+      "command": [
+        "env",
+        "-u",
+        "ORB_DB_PATH",
+        "ORB_SKIP_KNOWLEDGE_BASE=1",
+        "HF_HUB_OFFLINE=1",
+        "TRANSFORMERS_OFFLINE=1",
+        "ORB_OLLAMA_HOST=http://127.0.0.1:9",
+        "ORB_SEPSIS_AUTOSTART=1",
+        "ORB_FHIR_EXPORT_DIR=/private/tmp/orb-orders-fixture-exports",
+        "ORB_WATCHDOG_DIR=/private/tmp/orb-orders-fixture-watchdog",
+        "/private/tmp/orb-ml-upgrade-20261012/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_lab_master.py::test_every_starter_code_validates_for_orders_once_loaded",
+        "tests/test_orders_service.py::test_validate_and_display"
+      ],
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 3.09,
+      "log": "/private/tmp/orb-orders-fixture-pair-final-20261012.log",
+      "log_sha256": "b2b904f9be22abafabd615aa568280b4b97f86afe5b9781e7d226e8884e7bb6a"
+    },
+    "git_diff_check": "passed"
+  },
+  "limits": [
+    "The2-case pair overlaps the17-case selection; results must not be added as unique totals.",
+    "No clinical terminology, licensed release, live database, model or application runtime was changed. Only synthetic test databases were accessed.",
+    "Full v5 failing snapshot is preserved by root; root owns a subsequent full acceptance rerun."
+  ]
+}

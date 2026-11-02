@@ -1,0 +1,32 @@
+{
+  "frozen_files": 71,
+  "source_changes_since_F": [],
+  "restoration_and_cleanup": [
+    {
+      "run": "run-a-native",
+      "restoration": "restored_and_verified"
+    },
+    {
+      "run": "run-b-native-retry",
+      "restoration": "restored_and_verified"
+    },
+    {
+      "run": "run-c-native-p1",
+      "restoration": "restored_and_verified"
+    },
+    {
+      "run": "run-d-mlx",
+      "restoration": "restored_and_verified"
+    },
+    {
+      "run": "run-e-resident-original",
+      "restoration": "restored_and_verified",
+      "owned_proxy_exit_observed": true
+    },
+    {
+      "run": "run-f-resident-serial-load",
+      "restoration": "restored_and_verified",
+      "owned_proxy_exit_observed": true
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "timestamp_utc": "2026-10-12T09:02:18.718335+00:00",
+  "shared_api_ps": {
+    "models": []
+  },
+  "owned_port_11436_free": true,
+  "source_sha256": {
+    "scripts/serve-ollama.sh": "3f0dddbf51af4ae5475b5ef1634d69e16244c7f7c2a3769d2ef191a3f22f6985",
+    "config/ollama-xdg/llama.cpp/config.ini": "c8807fc49c7a03431fa38f8b4c0fcbce1cd612ccba2b97a2521515eac274a4c0"
+  }
+}

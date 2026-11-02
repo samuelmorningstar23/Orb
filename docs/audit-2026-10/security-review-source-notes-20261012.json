@@ -1,0 +1,504 @@
+{
+  "schema": "orb.security.source-review-notes/1",
+  "recorded_at_utc": "2026-10-12T11:06:18.376107+00:00",
+  "scope": "Independent defensive read-only review of upload/download storage, restore/export boundaries, configured model destinations, resource limits, subprocess/deserialization and documented security posture. Application source unchanged.",
+  "method": "Read repository source and existing tests/dated audit evidence; independently compare source hashes in root synthetic proof records. No HTTP/network/model calls, no tests/tools against a running application, no live secrets/config/DB/uploads/backups/model reads. Only this new documentation JSON written.",
+  "finding_count": 6,
+  "findings": [
+    {
+      "id": "restore_archive_parent_containment",
+      "priority": "High, conditional operator/share boundary",
+      "verification": "Source defect plus exact extraction-command behavior independently reviewed from root synthetic results; full restore not exercised.",
+      "source": [
+        {
+          "path": "scripts/standby-restore.sh",
+          "line": 321,
+          "end_line": 326
+        },
+        {
+          "path": "scripts/standby-restore.sh",
+          "line": 295,
+          "end_line": 306
+        },
+        {
+          "path": "scripts/standby-restore.sh",
+          "line": 261,
+          "end_line": 262
+        }
+      ],
+      "weakness": "The matching media tar is extracted into dirname(UPLOADS_DIR), without requiring every archive member to belong to the expected upload subtree. Database verification does not validate companion archive membership or integrity. The database swap precedes media extraction.",
+      "prerequisites": [
+        "Write access to the backup companion archive or a malicious supplied backup set.",
+        "Operator invokes standby restore and its existing database/key/schema/live-primary guards permit installation.",
+        "The restore process has permission to write the target parent directory."
+      ],
+      "root_observation": {
+        "command": [
+          "tar",
+          "-xf",
+          "/private/tmp/orb-security-assessment-20261012-hvm7u_vm/synthetic-uploads.tar",
+          "-C",
+          "/private/tmp/orb-security-assessment-20261012-hvm7u_vm/restore-fixture"
+        ],
+        "exit_code": 0,
+        "member": "review-sentinel.txt",
+        "traversal_or_symlink_used": false,
+        "file_outside_uploads_replaced": true,
+        "restoration_script_invoked": false,
+        "scope": "Exact extraction command only, owned harmless fixture; full restore/gating not exercised."
+      },
+      "technical_limits": [
+        "Observed replacement was one harmless synthetic sentinel outside uploads, using an ordinary archive member; no traversal or symbolic link was required.",
+        "The whole restoration script, valid encrypted backup guards and database replacement were not run in this check.",
+        "No unauthenticated remote endpoint or remote code execution was demonstrated."
+      ],
+      "existing_defenses": [
+        "SQLCipher backup verification, schema/table checks, primary guard, private scratch copy and previous database generation exist."
+      ],
+      "coverage_gap": [
+        {
+          "path": "server/tests/test_warm_standby.py",
+          "line": 498,
+          "end_line": 509
+        }
+      ],
+      "recommended_normal_regressions": [
+        "Reject any archive member outside the expected upload subtree, including harmless sibling files.",
+        "Reject archive links/special entries and impose expanded-size/member limits before writes.",
+        "Verify failure leaves existing database/media intact or accurately reports partial recovery; test the complete guarded script separately."
+      ]
+    },
+    {
+      "id": "discharge_qr_private_storage",
+      "priority": "Medium, local confidentiality",
+      "verification": "Source defect plus root synthetic QR creation under controlled umask.",
+      "source": [
+        {
+          "path": "server/services/discharge_service.py",
+          "line": 785,
+          "end_line": 799
+        },
+        {
+          "path": "server/services/discharge_service.py",
+          "line": 866,
+          "end_line": 881
+        },
+        {
+          "path": "server/config.py",
+          "line": 38,
+          "end_line": 39
+        },
+        {
+          "path": "server/routes/vigil_routes.py",
+          "line": 1113,
+          "end_line": 1134
+        }
+      ],
+      "weakness": "QR generation writes the raw bearer-link image through img.save(path), bypassing encrypted/private media publication. File creation permissions follow the inherited umask.",
+      "prerequisites": [
+        "A discharge link is issued and a QR file is generated.",
+        "A local account can traverse the containing upload directory or access a copied/upload backup artifact."
+      ],
+      "root_observation": {
+        "synthetic_url_only": true,
+        "umask": "022",
+        "png_plaintext": true,
+        "file_mode": "0o644",
+        "configured_upload_encryption": true
+      },
+      "technical_limits": [
+        "0644 plaintext PNG was verified only with synthetic URL, umask022 and synthetic upload encryption configured.",
+        "Actual appliance directory permissions were not inspected; a private parent directory may prevent other-user access.",
+        "The HTTP QR route remains authenticated and patient-scoped; the discharge portal requires its additional DOB/grant controls. No portal access or real token disclosure was attempted."
+      ],
+      "existing_defenses": [
+        "High-entropy link token and hashed database token storage.",
+        "Authenticated patient-scoped QR response and portal verification."
+      ],
+      "coverage_gap": [
+        {
+          "path": "server/tests/test_discharge_qr_backend.py",
+          "line": 12,
+          "end_line": 27
+        }
+      ],
+      "recommended_normal_regressions": [
+        "Verify private creation from first byte under permissive umask and authenticated read compatibility.",
+        "Verify QR storage observes the declared upload encryption policy without exposing a plaintext intermediate."
+      ]
+    },
+    {
+      "id": "scribe_hints_in_process_arguments",
+      "priority": "Medium, local confidentiality",
+      "verification": "Static data-flow confirmation only; no worker process or process-list observation executed.",
+      "source": [
+        {
+          "path": "server/services/scribe_service.py",
+          "line": 57,
+          "end_line": 96
+        },
+        {
+          "path": "server/routes/scribe_routes.py",
+          "line": 363,
+          "end_line": 366
+        },
+        {
+          "path": "server/services/scribe_service.py",
+          "line": 228,
+          "end_line": 241
+        },
+        {
+          "path": "server/scripts/transcribe_worker.py",
+          "line": 24,
+          "end_line": 29
+        }
+      ],
+      "weakness": "The subprocess transcription fallback passes hints containing patient name, diagnosis, medicines and attending clinician as an argv entry.",
+      "prerequisites": [
+        "A patient-specific transcription selects the subprocess fallback.",
+        "Another local principal or process-inventory/logging tool can inspect this process command line."
+      ],
+      "technical_limits": [
+        "No claim that any particular OS account can inspect command lines was dynamically tested.",
+        "subprocess.run receives an argument list and does not use shell=True; this is confidentiality exposure, not shell injection.",
+        "No model, real patient context or process inventory was read."
+      ],
+      "existing_defenses": [
+        "The route scopes the patient before constructing hints.",
+        "Model gating, bounded execution timeout and private temporary audio conversion exist."
+      ],
+      "recommended_normal_regressions": [
+        "Capture subprocess arguments for synthetic hints and assert no clinical text appears in argv.",
+        "Transmit bounded synthetic context through private stdin/framed IPC and verify success/failure cleanup and protocol validation."
+      ]
+    },
+    {
+      "id": "unregistered_media_retained_on_denial_or_failure",
+      "priority": "Medium, retention and storage availability",
+      "verification": "Root isolated authenticated Lens denial and controlled failed-stream checks; full Scribe retention is source-only.",
+      "source": [
+        {
+          "path": "server/routes/lens_routes.py",
+          "line": 220,
+          "end_line": 245
+        },
+        {
+          "path": "server/routes/lens_routes.py",
+          "line": 254,
+          "end_line": 287
+        },
+        {
+          "path": "server/routes/scribe_routes.py",
+          "line": 386,
+          "end_line": 405
+        },
+        {
+          "path": "server/services/crypto_service.py",
+          "line": 148,
+          "end_line": 173
+        }
+      ],
+      "weakness": "Lens publishes the upload before patient authorization. Denial, failed inference and failed save/cancellation have no owned-file cleanup in this flow. Full Scribe transcription similarly retains its published file after a caught ASR failure.",
+      "prerequisites": [
+        "An authenticated caller has the relevant media feature permission.",
+        "Lens is explicitly enabled, or the applicable Scribe/model lane is enabled."
+      ],
+      "root_observations": {
+        "lens_scope": {
+          "endpoint": "POST /api/lens/analyze",
+          "caller": "Synthetic Cardiology doctor",
+          "patient": "Synthetic Oncology patient",
+          "response_status": 404,
+          "response": {
+            "detail": "Patient not found"
+          },
+          "new_orphan_files": 1,
+          "registered_analyses": 0,
+          "files_encrypted": true,
+          "file_modes": [
+            "0o600"
+          ],
+          "unauthenticated_control_status": 401,
+          "unauthenticated_control_created_files": 0
+        },
+        "lens_failure_cleanup": {
+          "controlled_model_seam": true,
+          "response_status": 200,
+          "terminal_error_present": true,
+          "new_orphan_files": 1,
+          "registered_analyses": 0
+        }
+      },
+      "technical_limits": [
+        "The denied Lens file was encrypted and mode0600. This finding is staging/retention behavior, not an encryption bypass or successful cross-department media read.",
+        "Unauthenticated control returned401 and created no file.",
+        "The failed-stream response had HTTP200 because SSE headers were already sent, and correctly contained a terminal error; the file retention is the defect.",
+        "Repeated disk exhaustion, Scribe failure/cancellation retention and cleanup across crashes were not dynamically tested."
+      ],
+      "existing_defenses": [
+        "25MiB image/100MiB audio per-file limits, streamed total-body limits and server-generated safe filenames.",
+        "Private atomic encrypted writes and typed generic error responses."
+      ],
+      "coverage_gap": [
+        {
+          "path": "server/tests/test_media_upload_errors.py",
+          "line": 76,
+          "end_line": 84
+        },
+        {
+          "path": "server/tests/test_media_stream_contracts.py",
+          "line": 105,
+          "end_line": 147
+        }
+      ],
+      "recommended_normal_regressions": [
+        "Assert an out-of-scope request never publishes a file.",
+        "Assert failed/cancelled inference or record-save removes only its owned unregistered file, including delayed worker completion.",
+        "Retain successful referenced media and preserve encryption/private modes."
+      ]
+    },
+    {
+      "id": "configured_model_destination_not_enforced_local",
+      "priority": "Medium, configuration/policy boundary",
+      "verification": "Static configuration-to-transport confirmation only; no network request or URL probing executed.",
+      "source": [
+        {
+          "path": "server/config.py",
+          "line": 215,
+          "end_line": 219
+        },
+        {
+          "path": "server/services/ollama_gateway.py",
+          "line": 102,
+          "end_line": 106
+        },
+        {
+          "path": "server/services/llm_providers.py",
+          "line": 130,
+          "end_line": 154
+        },
+        {
+          "path": "server/services/scribe_providers.py",
+          "line": 72,
+          "end_line": 95
+        },
+        {
+          "path": "run-orb.sh",
+          "line": 90,
+          "end_line": 105
+        },
+        {
+          "path": "server/services/llm_providers.py",
+          "line": 1,
+          "end_line": 9
+        }
+      ],
+      "weakness": "The backend accepts arbitrary ORB_OLLAMA_BASE_URL without local HTTP destination validation and uses it for clinical prompts. The startup wrapper skips remote/malformed daemon startup but continues launching the backend with the unchanged configured value. Strictly on-appliance/offline prose is therefore not an enforced transport invariant.",
+      "prerequisites": [
+        "Operator environment/configuration points the model endpoint outside the approved local boundary, or that configuration is compromised."
+      ],
+      "technical_limits": [
+        "No unauthenticated request-controlled model URL setter was identified. This is not a confirmed caller-controlled SSRF exploit.",
+        "The config source explicitly mentions a remote GPU box, so an approved LAN mode would need a stated policy rather than silently treating every remote value as an attack.",
+        "No DNS, redirects, proxies, remote endpoints or live environment values were probed."
+      ],
+      "existing_defenses": [
+        "Owned daemon launcher enforces loopback/no-cloud/no-prune controls.",
+        "HTTPX model clients use trust_env=False; model-off guards run before inference."
+      ],
+      "recommended_normal_regressions": [
+        "Define approved offline destination policy and validate configuration before constructing every provider/gateway client.",
+        "Use synthetic mocked transports to verify remote/malformed/userinfo/unsupported-scheme values are rejected before transport, while supported loopback variants remain usable."
+      ]
+    },
+    {
+      "id": "lens_terminal_stream_integrity",
+      "priority": "Medium, draft integrity/availability",
+      "verification": "Static parser/control-flow confirmation; no truncated-stream regression or model inference executed by this reviewer.",
+      "source": [
+        {
+          "path": "server/services/lens_service.py",
+          "line": 126,
+          "end_line": 151
+        },
+        {
+          "path": "server/routes/lens_routes.py",
+          "line": 267,
+          "end_line": 282
+        },
+        {
+          "path": "server/services/llm_providers.py",
+          "line": 199,
+          "end_line": 209
+        }
+      ],
+      "weakness": "Lens ignores malformed JSON frames and treats natural EOF as completion without requiring done:true or checking done_reason=length. Nonempty partial output can receive a disclaimer and be stored as a successfully completed unfiled analysis.",
+      "prerequisites": [
+        "Lens explicitly enabled and permitted caller submits an image.",
+        "The local model transport returns nonempty partial or length-truncated output without a proper successful terminal frame."
+      ],
+      "technical_limits": [
+        "No remote model attack, chart filing or clinical decision was demonstrated.",
+        "The investigational disclaimer and separate clinician review/assignment workflow remain in place.",
+        "Root failed-stream cleanup check uses a controlled service failure seam; it does not itself verify this parser-level EOF behavior."
+      ],
+      "existing_defenses": [
+        "Empty output and explicit error frames raise; routes emit generic terminal SSE errors.",
+        "Saved analyses begin unfiled and carry the investigational disclaimer."
+      ],
+      "coverage_gap": [
+        {
+          "path": "server/tests/test_media_stream_contracts.py",
+          "line": 155,
+          "end_line": 176
+        },
+        {
+          "path": "server/tests/test_media_stream_contracts.py",
+          "line": 259,
+          "end_line": 265
+        }
+      ],
+      "recommended_normal_regressions": [
+        "A normal fake model stream must include a valid successful terminal frame.",
+        "Nonempty EOF, malformed JSON, wrong-shape frames, explicit errors and length termination must not persist a completed analysis.",
+        "Verify release/connection cleanup and preserved disclaimer on valid completion."
+      ]
+    }
+  ],
+  "root_proof_references": {
+    "files_sha256": {
+      "/private/tmp/orb-security-assessment-20261012-hvm7u_vm/boundary-results.json": "b5d63d82e7aa6b744102969f8efa14dc9902d14c71dabf632257b014fe8b7fb2",
+      "/private/tmp/orb-security-assessment-20261012-hvm7u_vm/authorization-results.json": "309df54d2c117d8d5fadeddf8ff3946674313b33f0f69605dc0f19b42cb51f75"
+    },
+    "source_hash_drift": [],
+    "preservation_limit": "Raw root proof paths are owned temporary artifacts; root owns durable packaging and the combined review report. These notes do not claim permanent log retention of those temporary paths."
+  },
+  "source_sha256": {
+    "package-lock.json": "99e2763745d6d410f6b14edbd042d3d340f7e0389ee47ea8c82a6fe1f468f740",
+    "package.json": "92a0084188b170f518c960e46221c67fe431611e8beaa1c4332f94e1a0db1c21",
+    "run-orb.sh": "2660694fbe18e2c14522629fa01d291ee3549ec3caf00d46d11ea5adfb4f45ee",
+    "scripts/standby-restore.sh": "85208ce2a127f8477d89a3243a973e7d1e1e7ce19c7173e379ccd02a666367cf",
+    "server/config.py": "cb841588f721ea5290ca86aafcbf4f4524c457f26aa9dbc463ccf4c2c4b2240f",
+    "server/constraints-security.txt": "040dd45f2301a6ca7ed70ee693bdba6414396e763599ba692427030c68678aa7",
+    "server/request_limits.py": "3edd9d3e3dc1ba9659c794622b2974f9da5a87720e266541294d153da25199a6",
+    "server/requirements-dev.txt": "6816f760acc92a785e332e80f32ce7e036d721aad286bdb3f4128818d95af293",
+    "server/requirements.txt": "e0b4425934e40efc27abfeac99be2d6e78ed4ae96ace50978a16ba1378a88cf4",
+    "server/routes/lens_routes.py": "03818e2df360879fc424d8acc1380e8a6d7ec5e59c6fa47f90a83b4b2734f200",
+    "server/routes/scribe_routes.py": "922acf0366e1cc28cb8d7de354c5ac4c4ea2ad06a8b67a2401417eb399332f59",
+    "server/routes/vigil_routes.py": "65c6a0e7e527dd95435f857eb0e394b71224191ebbacba1d2495acc74b506820",
+    "server/scripts/convert_to_coreml.py": "aca86ecb4a51e5dc5fbbe5ed289eafbf590d9a5a485993d67850823c1a47f7b0",
+    "server/scripts/transcribe_worker.py": "0fddf36d2f952228c8e8b615d9c2e570e6998e06ea5c557d84bdee23633abac5",
+    "server/services/ai_governance.py": "9e4742c35ac5bbb3c933bc534c1fbc056ce1232100f50dd65ba514639dcdeda6",
+    "server/services/crypto_service.py": "3af8edce93b69e74cc2963ff10cb578784769e5548593c15c05720cc9c36a2bb",
+    "server/services/discharge_service.py": "3d3406f2c43c57701f7802342c035b3b9bc8b70919983d636212fb73dd687b97",
+    "server/services/lens_service.py": "509f0a2cb45a8632d416de5aebc01a1a2592e6d7b64c7d0e4f04836d35d937e4",
+    "server/services/llm_providers.py": "13b39ac2a3cd6216486967ddf219a1a16bf4cd144f16994ea9b06590c7436d02",
+    "server/services/local_transformers.py": "b5777652fb29de126e05eabf35312846fa1ebac108162b83d684993936ccbeca",
+    "server/services/ollama_gateway.py": "77f8f47495448ad1425ca3950606983b3af7fa87ca9885d7a40a71f1a74566ad",
+    "server/services/scribe_providers.py": "e9f9d205f681f55079ff0824d66c919b0d667b0bf99e3b02fbd3be30a9114358",
+    "server/services/scribe_service.py": "ff85b4c3baaf70515e5cd386092076949b1fe9a0859e8460e0e883a43274809b",
+    "server/tests/test_discharge_qr_backend.py": "8800e2b2af8fe7fab1e4fef312804722673c2525b1f0552aa2357684c5de5b51",
+    "server/tests/test_media_stream_contracts.py": "3c187e451280b10a9984526f65c58576ec86acb0445dddd09df5ca3096791a40",
+    "server/tests/test_media_upload_errors.py": "cbbfca3328360ea5d631cb848c500ecb1ba466a3974e67d828f8ea50d35622a4",
+    "server/tests/test_upload_patient_scope.py": "de814351cc1a8282868accbc61e09bc597167d3fa74884fa41ff4575b8180bc5",
+    "server/tests/test_warm_standby.py": "260ecc81c2a65a70caa7375ee959e52606b70c0e9042c7d975f029b45b381fab"
+  },
+  "defenses_observed": [
+    {
+      "source": {
+        "path": "server/main.py",
+        "line": 1258,
+        "end_line": 1286
+      },
+      "control": "Uploaded media resolves under the configured root and registered patient-linked media gets canonical patient authorization; this does not certify the separately reviewed unfiled-owner branch."
+    },
+    {
+      "source": {
+        "path": "server/main.py",
+        "line": 1288,
+        "end_line": 1326
+      },
+      "control": "Media reads require durable fail-closed PHI audit and return non-executable attachment/octet-stream handling."
+    },
+    {
+      "source": {
+        "path": "server/services/crypto_service.py",
+        "line": 148,
+        "end_line": 173
+      },
+      "control": "Encrypted media publication stages privately, flushes/fsyncs, atomically replaces and cleans failed staging; existing symlink destination is replaced rather than followed."
+    },
+    {
+      "source": {
+        "path": "server/request_limits.py",
+        "line": 12,
+        "end_line": 17
+      },
+      "control": "Declared file ceilings and actual received-byte counting bound individual requests; this is not a disk quota or cross-request cleanup guarantee."
+    },
+    {
+      "source": {
+        "path": "server/services/local_transformers.py",
+        "line": 36,
+        "end_line": 57
+      },
+      "control": "Runtime dense/reranker adapter selects existing local weights with local_files_only, no remote custom code and weights_only=True."
+    },
+    {
+      "source": {
+        "path": "server/scripts/convert_to_coreml.py",
+        "line": 41
+      },
+      "control": "Reviewed CoreML checkpoint loader uses weights_only=True. No model payload or deserialization was executed."
+    }
+  ],
+  "delegated_review": "Scribe mutation/revision authorization, shared-ward downtime disclosure, tablet revocation parity and unfiled-media ownership were sent to the backend reviewer/root. Root authorization proof records cover several of these; they are not re-counted as additional independent findings in this six-item storage/operations note.",
+  "dated_dependency_evidence": {
+    "fresh_registry_queries_in_this_review": false,
+    "python": {
+      "manifest": "docs/audit-2026-10/ml-security-verification.json",
+      "manifest_sha256": "5d8f8ee2d8fb9772b3bb8b2fbe68c46ab46959ab473930bacd4ad45edbeb3495",
+      "date": "2026-10-12",
+      "actual_fresh_candidate_installed_tree": {
+        "packages": 70,
+        "skipped": 0,
+        "exit_code": 0,
+        "report": "docs/audit-2026-10/python-ml-resolved-runtime-20261012.json"
+      },
+      "apple_production": {
+        "packages": 76,
+        "exit_code": 0,
+        "report": "docs/audit-2026-10/python-apple-production-resolved-20261012.json",
+        "scope": "Complete resolved metadata, including Mac speech dependencies; not proof that native speech packages ran or were installed in the slim test environment."
+      }
+    },
+    "javascript": {
+      "manifest": "docs/audit-2026-10/frontend-build-security-final-20261012.json",
+      "manifest_sha256": "cea440215aa886d022847399140596bcfbf171cca19627b2e4d21d219b1150f3",
+      "date": "2026-10-12",
+      "packages": 752,
+      "vulnerabilities": {
+        "info": 0,
+        "low": 0,
+        "moderate": 0,
+        "high": 0,
+        "critical": 0,
+        "total": 0
+      },
+      "exit_code": 0,
+      "package_and_bundle_recorded_hash_drift": [],
+      "scope": "Prior npm lockfile metadata advisory query; not a new installed package scan."
+    },
+    "limits": [
+      "Advisory results are previously recorded known-vulnerability snapshots, not a fresh review-time registry check or proof of absence of vulnerabilities.",
+      "No shared/live environment was inspected or upgraded; existing old environments may retain historical vulnerable packages.",
+      "Hosted Linux CI and native Mac speech execution are separate acceptance boundaries."
+    ]
+  },
+  "limits": [
+    "Severity depends on the explicitly stated actor/configuration/operator prerequisite; no anonymous remote archive attack is claimed.",
+    "Storage retention is distinct from encryption: the root Lens denial retained encrypted0600 content.",
+    "Root isolated checks establish only their recorded seam/command behavior; untested hypotheses and complete operational pipelines are not promoted to verified outcomes.",
+    "No application source, existing evidence manifest, clinical policy or deployment setting was modified."
+  ]
+}

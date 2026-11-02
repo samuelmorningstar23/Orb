@@ -1,0 +1,198 @@
+{
+  "schema": "orb.security.assessment-evidence/1",
+  "recorded_at_utc": "2026-10-12T11:09:01.395386+00:00",
+  "assessment_date": "2026-10-12",
+  "repository": "/Users/samuelmorningstar/Documents/Projects/Orb",
+  "original_work_directory": "/private/tmp/orb-security-assessment-20261012-hvm7u_vm",
+  "scope": "Defensive, bounded, synthetic-only assessment. No application fixes, native network probes, inference, model loading, or live configuration/DB/media/key reads.",
+  "commands": [
+    {
+      "command": "/private/tmp/orb-ml-upgrade-20261012/bin/python /private/tmp/orb-security-assessment-20261012-hvm7u_vm/verify_boundaries.py",
+      "exit_code": 0
+    },
+    {
+      "command": "/private/tmp/orb-ml-upgrade-20261012/bin/python /private/tmp/orb-security-assessment-20261012-hvm7u_vm/verify_authorization.py",
+      "exit_code": 0
+    },
+    {
+      "command": "/private/tmp/orb-ml-upgrade-20261012/bin/python /private/tmp/orb-security-assessment-20261012-hvm7u_vm/verify_realtime.py",
+      "exit_code": 0
+    }
+  ],
+  "runtime": "Python 3.12 in /private/tmp/orb-ml-upgrade-20261012; FastAPI/Starlette TestClient; actual Engine.IO/Socket.IO polling in process; SQLite owned temporary DB.",
+  "source_comparisons": [
+    {
+      "path": "scripts/standby-restore.sh",
+      "sha256": "85208ce2a127f8477d89a3243a973e7d1e1e7ce19c7173e379ccd02a666367cf",
+      "copied_source_sha256": null,
+      "matches_repository": true,
+      "scope": "source-reviewed extraction command only"
+    },
+    {
+      "path": "server/auth.py",
+      "sha256": "6dac23105b16a070d81fd6e0c397bed525a2db3638c9415d34b0e9a54d6045d5",
+      "copied_source_sha256": "6dac23105b16a070d81fd6e0c397bed525a2db3638c9415d34b0e9a54d6045d5",
+      "matches_repository": true,
+      "scope": "copied Python source matches repository"
+    },
+    {
+      "path": "server/database.py",
+      "sha256": "23ab4bd0bce5f8f2c94efc440ad5e2c36e61d50127445b0ef9dc182e9b92dabb",
+      "copied_source_sha256": "23ab4bd0bce5f8f2c94efc440ad5e2c36e61d50127445b0ef9dc182e9b92dabb",
+      "matches_repository": true,
+      "scope": "copied Python source matches repository"
+    },
+    {
+      "path": "server/routes/auth_routes.py",
+      "sha256": "e15371d1bc53761aa21c16dc1f04e765d2fb6675d0c4e577ef090412675d6709",
+      "copied_source_sha256": "e15371d1bc53761aa21c16dc1f04e765d2fb6675d0c4e577ef090412675d6709",
+      "matches_repository": true,
+      "scope": "copied Python source matches repository"
+    },
+    {
+      "path": "server/routes/downtime_routes.py",
+      "sha256": "dcdc98d68a263ceeca81725e9b658f1897ebd74785947792231a53e4058098c6",
+      "copied_source_sha256": "dcdc98d68a263ceeca81725e9b658f1897ebd74785947792231a53e4058098c6",
+      "matches_repository": true,
+      "scope": "copied Python source matches repository"
+    },
+    {
+      "path": "server/routes/lens_routes.py",
+      "sha256": "03818e2df360879fc424d8acc1380e8a6d7ec5e59c6fa47f90a83b4b2734f200",
+      "copied_source_sha256": "03818e2df360879fc424d8acc1380e8a6d7ec5e59c6fa47f90a83b4b2734f200",
+      "matches_repository": true,
+      "scope": "copied Python source matches repository"
+    },
+    {
+      "path": "server/routes/scribe_routes.py",
+      "sha256": "922acf0366e1cc28cb8d7de354c5ac4c4ea2ad06a8b67a2401417eb399332f59",
+      "copied_source_sha256": "922acf0366e1cc28cb8d7de354c5ac4c4ea2ad06a8b67a2401417eb399332f59",
+      "matches_repository": true,
+      "scope": "copied Python source matches repository"
+    },
+    {
+      "path": "server/services/crypto_service.py",
+      "sha256": "3af8edce93b69e74cc2963ff10cb578784769e5548593c15c05720cc9c36a2bb",
+      "copied_source_sha256": "3af8edce93b69e74cc2963ff10cb578784769e5548593c15c05720cc9c36a2bb",
+      "matches_repository": true,
+      "scope": "copied Python source matches repository"
+    },
+    {
+      "path": "server/services/discharge_service.py",
+      "sha256": "3d3406f2c43c57701f7802342c035b3b9bc8b70919983d636212fb73dd687b97",
+      "copied_source_sha256": "3d3406f2c43c57701f7802342c035b3b9bc8b70919983d636212fb73dd687b97",
+      "matches_repository": true,
+      "scope": "copied Python source matches repository"
+    },
+    {
+      "path": "server/services/downtime_service.py",
+      "sha256": "9cefb6fd0663d7ff1aa7ef93bd53ecd926bb028f86db4d7f1600005a96e31156",
+      "copied_source_sha256": "9cefb6fd0663d7ff1aa7ef93bd53ecd926bb028f86db4d7f1600005a96e31156",
+      "matches_repository": true,
+      "scope": "copied Python source matches repository"
+    },
+    {
+      "path": "server/services/scribe_service.py",
+      "sha256": "ff85b4c3baaf70515e5cd386092076949b1fe9a0859e8460e0e883a43274809b",
+      "copied_source_sha256": "ff85b4c3baaf70515e5cd386092076949b1fe9a0859e8460e0e883a43274809b",
+      "matches_repository": true,
+      "scope": "copied Python source matches repository"
+    },
+    {
+      "path": "server/ws/realtime.py",
+      "sha256": "16f85cf28a97266262d219bef0388e358cf79d29ad4e1dc97f43ec16007c510f",
+      "copied_source_sha256": "16f85cf28a97266262d219bef0388e358cf79d29ad4e1dc97f43ec16007c510f",
+      "matches_repository": true,
+      "scope": "copied Python source matches repository"
+    },
+    {
+      "path": "server/ws/scribe_stream.py",
+      "sha256": "017482e72f942e737ed2781439cf12f167a32c9d1b85338ca09a66fcbdc9bdd1",
+      "copied_source_sha256": "017482e72f942e737ed2781439cf12f167a32c9d1b85338ca09a66fcbdc9bdd1",
+      "matches_repository": true,
+      "scope": "copied Python source matches repository"
+    }
+  ],
+  "verification_limits": [
+    "ASGI HTTP routes exercised against a source copy and owned DB, without entering application startup lifespan.",
+    "Engine.IO/Socket.IO protocol exercised directly in process, without outer main HostGate; no origin/host bypass claimed.",
+    "Revoked device proof creates a synthetic correctly signed device-bound token; complete PIN issuance is not exercised, and real previously issued PIN tokens normally have a 15-minute lifetime.",
+    "TOTP concurrency controls scheduling after the actual SELECT; actual verification/update/commit remain unchanged, but complete concurrent HTTP logins were not exercised.",
+    "Lens inference failure uses a controlled local generator seam; no model/inference called.",
+    "Restore extraction uses only the exact tar command and a harmless owned sibling member; full standby restore and its guards not invoked.",
+    "Raw authorization result key foreign_department_name_present means foreign PATIENT name was present; raw historical evidence retained unchanged.",
+    "Dependency scans referenced elsewhere are dated prior Oct12 snapshots, not a new registry scan."
+  ],
+  "cleanup": "HTTP tests own no listening ports. Both Socket.IO namespaces/Engine.IO sessions explicitly closed and socket service tasks stopped. Temporary fixture retained for forensic reproducibility; no process remains from the three commands.",
+  "excluded_from_durable_bundle": [
+    "copied source tree",
+    "synthetic database",
+    "upload files",
+    "synthetic archive",
+    "restore fixture",
+    "private home",
+    "synthetic ephemeral credential material"
+  ],
+  "artifacts": [
+    {
+      "path": "README.md",
+      "bytes": 4285,
+      "sha256": "9c6bc186b1de04dcb3f7fa3d1965c487fed1f81b168dd01529ac5337428f1f93"
+    },
+    {
+      "path": "application-parity.json",
+      "bytes": 975,
+      "sha256": "a08fe73d64e1f4ff4b6759ef693a84d9e9e3bd7776a4da22621496f7c7bb8304"
+    },
+    {
+      "path": "authorization-probes.log",
+      "bytes": 4113,
+      "sha256": "2f06114b25deabb17b6654211c28891b75b1992e6c8b2d08ff4b5134b6c08eaa"
+    },
+    {
+      "path": "authorization-results.json",
+      "bytes": 2178,
+      "sha256": "309df54d2c117d8d5fadeddf8ff3946674313b33f0f69605dc0f19b42cb51f75"
+    },
+    {
+      "path": "boundary-probes.log",
+      "bytes": 4267,
+      "sha256": "1ffa83261e63ef62a45d62a8fb100c5cda07dae41a2411b89916d3c6631621ba"
+    },
+    {
+      "path": "boundary-results.json",
+      "bytes": 1704,
+      "sha256": "b5d63d82e7aa6b744102969f8efa14dc9902d14c71dabf632257b014fe8b7fb2"
+    },
+    {
+      "path": "realtime-probes.log",
+      "bytes": 5142,
+      "sha256": "f108d51614d601a23ca15db24b7efbd800cae51314e8e5d7f277b828d6a9e678"
+    },
+    {
+      "path": "realtime-results.json",
+      "bytes": 2167,
+      "sha256": "eeb579069a1c8bd37de6fd857dbdadd0fd46eb44985385f73ea49b934b330c48"
+    },
+    {
+      "path": "verify_authorization.py",
+      "bytes": 7650,
+      "sha256": "486a373a306438ecb9a979ff6d02426b7e0fc2ab0c17520d59b77daf39257c95"
+    },
+    {
+      "path": "verify_boundaries.py",
+      "bytes": 6792,
+      "sha256": "40d8a0001be4d29a24639fb11f91afb2cbc22f517df26d543adea942f955dcdd"
+    },
+    {
+      "path": "verify_realtime.py",
+      "bytes": 7231,
+      "sha256": "5fbbe50cdaa6859627ce3afb48aa703958f28b962c94b4a5c3f2a7ded7b0f4a7"
+    },
+    {
+      "path": "work.json",
+      "bytes": 283,
+      "sha256": "9b46a0a70e14f70796a5767068a567cdafa6888cc2c0b75454af548a7ee90bde"
+    }
+  ]
+}

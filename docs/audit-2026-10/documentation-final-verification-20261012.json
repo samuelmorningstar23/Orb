@@ -1,0 +1,314 @@
+{
+  "schema": "orb.audit.final-documentation-validation/1",
+  "date": "2026-10-12",
+  "command": "/private/tmp/orb-ml-upgrade-20261012/bin/python scripts/check-doc-citations.py",
+  "exit_code": 0,
+  "citations": {
+    "resolved": 9020,
+    "total": 9020
+  },
+  "symbol_anchors": {
+    "correct": 490,
+    "total": 490
+  },
+  "log": "/private/tmp/orb-doc-citations-post-browser-final-20261012.log",
+  "log_sha256": "2bd4bba351a0f68bd6416e71dca72b1f746b1f0900a7ae341e04f5e855e62dfa",
+  "documentation_changes": [
+    "Sage select_provider call and adjacent info.update anchors match frozen source.",
+    "Discharge QR location/import/factory anchors match explicit PyPNGImage path.",
+    "Vigil guide describes current explicit weights_only=True loader and safe failure, while preserving held clinical-promotion and feature-definition limits."
+  ],
+  "documentation_hashes": {
+    "docs/guide/07-vigil.md": "909a63a1164de44b901888d8b3d2c5412520cd7da75b0202842a4819c0d482b2",
+    "docs/guide/21-admissions-discharge.md": "66f1f0fa93cebee161692c5af6fbb2e36305af375ef0f1fef7ecaf60dc212618",
+    "docs/guide/41-thinking-mode.md": "2efabe2393bbd0e26f7919fd027aedb152be9311d508cb3676265dc47bae22ed"
+  },
+  "manifest_source_checks": {
+    "ml-security-verification.json": {
+      "source_hashes_checked": 9,
+      "mismatches": []
+    },
+    "scope-inventory-verification-20261012.json": {
+      "source_hashes_checked": 9,
+      "mismatches": []
+    },
+    "restore-inventory-verification-20261012.json": {
+      "source_hashes_checked": 6,
+      "mismatches": []
+    },
+    "shared-model-context-verification-20261012.json": {
+      "source_hashes_checked": 3,
+      "mismatches": []
+    },
+    "orders-terminology-fixture-verification-20261012.json": {
+      "source_hashes_checked": 1,
+      "mismatches": []
+    },
+    "ml-runtime-verification.json": {
+      "source_hashes_checked": 15,
+      "mismatches": [],
+      "includes": "14 adapter/caller/config/fixture hashes plus current department scope isolation fixture"
+    }
+  },
+  "audit_reports": [
+    {
+      "report": "/Users/samuelmorningstar/Documents/Projects/Orb/docs/audit-2026-10/python-ml-resolved-runtime-20261012.json",
+      "packages": 70,
+      "advisory_matches": 0,
+      "skipped": 0,
+      "matches_raw_semantically": true,
+      "raw_report": "/private/tmp/orb-ml-resolved-audit-final-20261012.json",
+      "raw_sha256": "ce9fc3c2be90f3e4c8a1b4a64adf133bf7b7c1bd003e4102cf28b3103d0560c8",
+      "durable_report_sha256": "777145424f251a5d27fc83d3f76e9356e1452ecb9f741a4801e3cbf212924a4c"
+    },
+    {
+      "report": "/Users/samuelmorningstar/Documents/Projects/Orb/docs/audit-2026-10/python-apple-production-resolved-20261012.json",
+      "packages": 76,
+      "advisory_matches": 0,
+      "skipped": 0,
+      "matches_raw_semantically": true,
+      "raw_report": "/private/tmp/orb-ml-production-resolved-audit-20261012.json",
+      "raw_sha256": "ff0ba0780b60b95ff781bbdf537dd4dfbb73b5e83a1b553d0e3f0b5217bfa773",
+      "durable_report_sha256": "0e45fca3fc0874a6a14175ee4d083ec9cecdaeb47be74d2b623e58fe1a7c3187"
+    }
+  ],
+  "current_installed_runtime_matches_audit": {
+    "packages": 70,
+    "version_mismatches": [],
+    "method": "importlib.metadata only; no model import or advisory network query"
+  },
+  "git_diff_check": "passed",
+  "scope_result_revalidated": "268 passed in 5.86s remains accurate and all nine recorded test/helper source hashes match. No tests rerun in this documentation-only check.",
+  "full_suite": {
+    "status": "passed",
+    "evidence": "docs/audit-2026-10/backend-acceptance-final-20261012/results.json",
+    "evidence_sha256": "b1be03803b58ddff3e83d421be7657b6c40abde81f05d647613f5369bcd3189b",
+    "source_hash_manifest": "docs/audit-2026-10/backend-acceptance-final-20261012/source-sha256.json",
+    "source_hash_manifest_sha256": "cd1f4d8e6eeec0bdc542a53c22485c77e440e6d5058c5bf9d844bc1330af136a",
+    "manifest": "/private/tmp/orb-ml-backend-shards-20261012-v6/manifest.json",
+    "manifest_sha256": "821758c149bf84cf2157a7314b732a773ffa4e36bbc49b430711f42b6753dd0e",
+    "collected_as_reported": 16031,
+    "collected_files": 511,
+    "passed": 16023,
+    "skipped": 8,
+    "failed": 0,
+    "errors": 0,
+    "elapsed_wall_seconds": 327.39,
+    "whole_file_partitions": 6,
+    "duplicate_file_memberships": 0,
+    "partition_expected_sum": 16031,
+    "verified_log_hashes": 6,
+    "current_gateway_and_isolation_fixtures_match_frozen_source": true,
+    "separate_process_cleanup": {
+      "file": "server/tests/test_e2e_process_cleanup.py",
+      "passed": 7,
+      "failed": 0,
+      "evidence": "docs/audit-2026-10/sage-browser-harness-verification.json",
+      "note": "Within the separate 32-test launcher/process selection; other25 launcher tests overlap the full suite."
+    },
+    "intermediate_v5_failure_evidence": "docs/audit-2026-10/backend-pre-isolation-20261012/results.json",
+    "limits": "Eight explicit skip reasons remain in the authoritative results; real inference, native Apple ASR, hosted CI and browser timing are separate acceptance boundaries. Focused selections are overlapping evidence and are not added to this total."
+  },
+  "limits": [
+    "Existing checker tests citation resolution/ranges and conservative symbol anchors, not all documentation prose semantics.",
+    "Advisory results remain timestamped snapshots; 70-package scan is actual fresh macOS runtime, 76-package Apple production scan is resolved metadata only. Hosted Linux/Apple CI was not executed.",
+    "Raw versus durable JSON hashes differ solely by formatting; parsed content equality was verified.",
+    "Only documentation/evidence was changed in this final pass. No application, test or script source, runtime environment, model weights, private data or deployment was changed. Authoritative v6 results and original intermediate failures are preserved separately."
+  ],
+  "restore_manifest_consistency": {
+    "groups": 47,
+    "tables": 199,
+    "added_tables": 45,
+    "new_groups": 13,
+    "matches_frozen_module_tables": true,
+    "focused_result": "103 passed, 1 existing opt-in skip in 21.49s",
+    "evidence": "docs/audit-2026-10/restore-inventory-verification-20261012.json",
+    "known_unchanged_policy_boundary": "A newer-than-checkout backup schema still warns under schema-policy=fail; this pre-existing behavior was not changed or accepted as cross-version compatibility."
+  },
+  "supplemental_runtime_source_checks": {
+    "sage_scope_and_prefetch": {
+      "source_hashes_checked": 4,
+      "mismatches": []
+    },
+    "current_stay_test_fixture_followup": {
+      "source_hashes_checked": 3,
+      "mismatches": []
+    },
+    "discharge_png_backend": {
+      "source_hashes_checked": 1,
+      "mismatches": []
+    }
+  },
+  "total_recorded_source_hashes_checked": 51,
+  "fixture_followups": {
+    "orders": {
+      "evidence": "docs/audit-2026-10/orders-terminology-fixture-verification-20261012.json",
+      "passed": 17,
+      "seconds": 3.04,
+      "exact_contamination_pair": "2 passed in3.09s; overlaps17-case selection"
+    },
+    "department_scope": {
+      "evidence": "docs/audit-2026-10/ml-runtime-verification.json#department_scope_fixture_followup",
+      "passed": 186,
+      "seconds": 2.85,
+      "original_database_and_two_contaminants_restored": true
+    },
+    "behavior": "Both modules use the existing fresh module database fixture. Original assertions and runtime/clinical/resolver behavior are unchanged; original v5 failures remain durable historical evidence."
+  },
+  "gateway_context_followup": {
+    "evidence": "docs/audit-2026-10/shared-model-context-verification-20261012.json",
+    "passed": 51,
+    "seconds": 8.87,
+    "new_collected_cases": 28,
+    "limit": "Synthetic dispatch/gate checks; actual latency measurements recorded separately."
+  },
+  "post_browser_and_negative_batch_final_check": {
+    "checked_at_utc": "2026-10-12T00:05:23.139033+00:00",
+    "scope": "Documentation, durable evidence, installed package metadata and hashes only. No tests, model/browser calls, source edits, package operations or network scans.",
+    "documentation_citations": {
+      "resolved": 9020,
+      "total": 9020,
+      "symbol_anchors": 490,
+      "total_symbol_anchors": 490,
+      "exit_code": 0
+    },
+    "git_diff_check": "passed",
+    "recursive_audit_json_files_parsed": 60,
+    "json_parse_errors": [],
+    "recorded_source_hash_checks": {
+      "ml_security": {
+        "recorded_hashes_checked": 9,
+        "mismatches": []
+      },
+      "scope_inventory": {
+        "recorded_hashes_checked": 9,
+        "mismatches": []
+      },
+      "restore_inventory": {
+        "recorded_hashes_checked": 6,
+        "mismatches": []
+      },
+      "shared_model_context": {
+        "recorded_hashes_checked": 3,
+        "mismatches": []
+      },
+      "orders_fixture": {
+        "recorded_hashes_checked": 1,
+        "mismatches": []
+      },
+      "ml_adapter": {
+        "recorded_hashes_checked": 15,
+        "mismatches": []
+      },
+      "sage_scope_and_prefetch": {
+        "recorded_hashes_checked": 4,
+        "mismatches": []
+      },
+      "current_stay_fixtures": {
+        "recorded_hashes_checked": 3,
+        "mismatches": []
+      },
+      "discharge_png": {
+        "recorded_hashes_checked": 1,
+        "mismatches": []
+      },
+      "department_scope_fixture": {
+        "recorded_hashes_checked": 1,
+        "mismatches": []
+      },
+      "batch_diagnostic": {
+        "recorded_hashes_checked": 9,
+        "mismatches": []
+      },
+      "post_context_browser": {
+        "recorded_hashes_checked": 11,
+        "mismatches": []
+      },
+      "frontend_bundle_manifest_lock": {
+        "recorded_hashes_checked": 3,
+        "mismatches": []
+      },
+      "full_v6_non_documentation": {
+        "recorded_hashes_checked": 1945,
+        "mismatches": []
+      }
+    },
+    "durable_artifact_hash_checks": {
+      "batch": {
+        "files_checked": 4,
+        "mismatches": []
+      },
+      "post_context_browser": {
+        "files_checked": 30,
+        "mismatches": []
+      }
+    },
+    "report": {
+      "path": "docs/ML_SECURITY_AND_SAGE_LATENCY_2026-10.md",
+      "sha256": "3ed2fb42c7e2a43b60eefa43fbe657df2de96a467933f7fec31ab000b313c080",
+      "local_links_checked": 16,
+      "missing_local_links": []
+    },
+    "audit_reports": [
+      {
+        "report": "docs/audit-2026-10/python-ml-resolved-runtime-20261012.json",
+        "packages": 70,
+        "advisory_matches": 0,
+        "skipped": 0,
+        "raw_semantic_match": true,
+        "durable_sha256": "777145424f251a5d27fc83d3f76e9356e1452ecb9f741a4801e3cbf212924a4c",
+        "raw_sha256": "ce9fc3c2be90f3e4c8a1b4a64adf133bf7b7c1bd003e4102cf28b3103d0560c8"
+      },
+      {
+        "report": "docs/audit-2026-10/python-apple-production-resolved-20261012.json",
+        "packages": 76,
+        "advisory_matches": 0,
+        "skipped": 0,
+        "raw_semantic_match": true,
+        "durable_sha256": "0e45fca3fc0874a6a14175ee4d083ec9cecdaeb47be74d2b623e58fe1a7c3187",
+        "raw_sha256": "ff0ba0780b60b95ff781bbdf537dd4dfbb73b5e83a1b553d0e3f0b5217bfa773"
+      }
+    ],
+    "full_backend_acceptance": {
+      "evidence": "docs/audit-2026-10/backend-acceptance-final-20261012/results.json",
+      "sha256": "b1be03803b58ddff3e83d421be7657b6c40abde81f05d647613f5369bcd3189b",
+      "source_manifest_sha256": "cd1f4d8e6eeec0bdc542a53c22485c77e440e6d5058c5bf9d844bc1330af136a",
+      "collected": 16031,
+      "passed": 16023,
+      "skipped": 8,
+      "failed": 0,
+      "errors": 0,
+      "elapsed_wall_seconds": 327.39,
+      "verified_shard_log_hashes": 6
+    },
+    "post_context_browser": {
+      "evidence": "docs/audit-2026-10/browser-evidence/sage-timing/post-context-20261012/evidence-manifest.json",
+      "sha256": "09f052dcb4c50ca798680885302283813d97e1d61e0755faf3eff5a047eff6ab",
+      "bundle_sha256": "c7a759ed29e706bb547eae838157a4de3919393fd8c88d521d13054d2a7577d2",
+      "functional_journeys_passed": 11,
+      "successful_warm_answers": 9,
+      "warm_targets_met": 4,
+      "warm_targets_missed": 5,
+      "latency_acceptance": "failed",
+      "raw_harness_exit_code": 1,
+      "safety_posture_and_terminal_checks_all_true": true
+    },
+    "negative_batch_diagnostic": {
+      "evidence": "docs/audit-2026-10/ollama-batch-diagnostic-20261012.json",
+      "sha256": "64aa58826ef903937ea60a1b523474fb926fda3b152434594e7a8e875df24a7d",
+      "diagnostic_calls": 18,
+      "restoration_calls": 1,
+      "median_prefill_gain_ms": {
+        "general": 85.941,
+        "patient": 31.766
+      },
+      "decision": "Retain AUTO; no application/configuration change. One-token diagnostics are not answer/SLA acceptance.",
+      "restoration": "AUTO omitted; effective context8192/parallel1/batch512/microbatch512."
+    },
+    "boundaries": [
+      "Native Apple ASR installation/inference and hosted CI are unverified. Apple production security is resolved metadata only; fresh70-package runtime security is installed-tree evidence.",
+      "Final browser latency acceptance remains FAILED despite full backend and11 functional browser journeys passing.",
+      "Historical failed snapshots remain durable. Focused and browser evidence are not added to full backend counts."
+    ]
+  }
+}

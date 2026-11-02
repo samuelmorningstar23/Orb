@@ -1,0 +1,1339 @@
+{
+  "startedAt": "2026-10-11T22:03:37.196Z",
+  "output": "/private/tmp/orb-sage-browser-repeats-20261012",
+  "qualification": "idle synthetic local inference; not busy-ward acceptance",
+  "targets": {
+    "interpretation": "strict submit-to-first-readable-visible-answer; successful completion required",
+    "milliseconds": {
+      "general": 3000,
+      "patient": 5000,
+      "department": 10000
+    },
+    "readableDefinition": "newest visible answer bubble; at least12characters and2letter-or-number words; sampled with requestAnimationFrame",
+    "coldStartPolicy": "initial observed residency diagnostic recorded separately; SLA applies to subsequent resident-model turns"
+  },
+  "python": "3.12.13 (main, Jul 23 2026, 14:33:47) [Clang 22.1.3 ]",
+  "hardware": {
+    "platform": "darwin",
+    "architecture": "arm64",
+    "cpu": "Apple M2 Max",
+    "logicalCpus": 12,
+    "memoryBytes": 68719476736
+  },
+  "bundleSha256": "c7a759ed29e706bb547eae838157a4de3919393fd8c88d521d13054d2a7577d2",
+  "modelService": {
+    "origin": "http://127.0.0.1:11434",
+    "tags": {
+      "models": [
+        {
+          "name": "qwen3.6:35b-a3b",
+          "model": "qwen3.6:35b-a3b",
+          "modified_at": "2026-09-28T21:41:29.006588323+05:30",
+          "size": 22621314381,
+          "digest": "096fdbd02fe620fc10cbeb6537e080f8041aece851e5d696aed024d4f70f2e47",
+          "details": {
+            "parent_model": "qwen3.6-source:35b-a3b-mtp-q4_K_M-20260824",
+            "format": "gguf",
+            "family": "qwen35moe",
+            "families": [
+              "qwen35moe"
+            ],
+            "parameter_size": "35.5B",
+            "quantization_level": "Q4_K_M",
+            "context_length": 262144,
+            "embedding_length": 2048
+          },
+          "capabilities": [
+            "completion",
+            "vision",
+            "tools",
+            "thinking"
+          ]
+        },
+        {
+          "name": "medgemma:1.5-4b",
+          "model": "medgemma:1.5-4b",
+          "modified_at": "2026-09-07T12:46:36.962891785+05:30",
+          "size": 3341148231,
+          "digest": "c50f9c29d740f96ec94893ae6fe01db1d5cacd42621c569418355ebadd509950",
+          "details": {
+            "parent_model": "",
+            "format": "gguf",
+            "family": "gemma3",
+            "families": [
+              "gemma3"
+            ],
+            "parameter_size": "3.88B",
+            "quantization_level": "Q4_K_M",
+            "context_length": 131072,
+            "embedding_length": 2560
+          },
+          "capabilities": [
+            "completion",
+            "vision"
+          ]
+        },
+        {
+          "name": "medgemma:27b",
+          "model": "medgemma:27b",
+          "modified_at": "2026-07-29T12:23:18.78795949+05:30",
+          "size": 17397224125,
+          "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+          "details": {
+            "parent_model": "",
+            "format": "gguf",
+            "family": "gemma3",
+            "families": [
+              "gemma3"
+            ],
+            "parameter_size": "27.4B",
+            "quantization_level": "Q4_K_M",
+            "context_length": 131072,
+            "embedding_length": 5376
+          },
+          "capabilities": [
+            "completion",
+            "vision"
+          ]
+        },
+        {
+          "name": "medgemma:4b",
+          "model": "medgemma:4b",
+          "modified_at": "2026-07-29T12:06:03.391691172+05:30",
+          "size": 3338942556,
+          "digest": "9fe4e9a6c9bda2d007bb595515550eafbc8e226622adff9257f3241eba334c4d",
+          "details": {
+            "parent_model": "",
+            "format": "gguf",
+            "family": "gemma3",
+            "families": [
+              "gemma3"
+            ],
+            "parameter_size": "4.3B",
+            "quantization_level": "Q4_K_M",
+            "context_length": 131072,
+            "embedding_length": 2560
+          },
+          "capabilities": [
+            "completion",
+            "vision"
+          ]
+        },
+        {
+          "name": "gemma3:1b",
+          "model": "gemma3:1b",
+          "modified_at": "2026-07-29T12:03:07.412150731+05:30",
+          "size": 815319791,
+          "digest": "8648f39daa8fbf5b18c7b4e6a8fb4990c692751d49917417b8842ca5758e7ffc",
+          "details": {
+            "parent_model": "",
+            "format": "gguf",
+            "family": "gemma3",
+            "families": [
+              "gemma3"
+            ],
+            "parameter_size": "999.89M",
+            "quantization_level": "Q4_K_M",
+            "context_length": 32768,
+            "embedding_length": 1152
+          },
+          "capabilities": [
+            "completion"
+          ]
+        }
+      ]
+    },
+    "version": {
+      "version": "0.35.1"
+    },
+    "residencyAtStart": {
+      "models": [
+        {
+          "name": "medgemma:27b",
+          "model": "medgemma:27b",
+          "size": 17498898431,
+          "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+          "details": {
+            "parent_model": "",
+            "format": "gguf",
+            "family": "gemma3",
+            "families": [
+              "gemma3"
+            ],
+            "parameter_size": "27.4B",
+            "quantization_level": "Q4_K_M"
+          },
+          "expires_at": "2026-10-12T04:28:14.903734+05:30",
+          "size_vram": 17498898431,
+          "context_length": 8192
+        }
+      ]
+    }
+  },
+  "retrieval": "explicit installed embedder/reranker snapshots; real corpus initialized in disposable DB; isolated worker",
+  "turns": [
+    {
+      "index": 0,
+      "category": "general",
+      "query": "What does oxygen saturation measure? Answer briefly.",
+      "startedAt": "2026-10-11T22:03:55.562Z",
+      "residencyBefore": {
+        "models": [
+          {
+            "name": "medgemma:27b",
+            "model": "medgemma:27b",
+            "size": 17498898431,
+            "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+            "details": {
+              "parent_model": "",
+              "format": "gguf",
+              "family": "gemma3",
+              "families": [
+                "gemma3"
+              ],
+              "parameter_size": "27.4B",
+              "quantization_level": "Q4_K_M"
+            },
+            "expires_at": "2026-10-12T04:28:14.903734+05:30",
+            "size_vram": 17498898431,
+            "context_length": 8192
+          }
+        ]
+      },
+      "residency": "resident/warm runner",
+      "request": {
+        "query": "What does oxygen saturation measure? Answer briefly.",
+        "thinking": true,
+        "view_context": {
+          "tab": "sage"
+        },
+        "conversation_id": "c-mv4defju-4629a58bfabe"
+      },
+      "httpStatus": 200,
+      "stream": {
+        "done": true,
+        "errors": [],
+        "content": " Oxygen saturation measures the percentage of hemoglobin in red blood cells that is saturated with oxygen. It reflects how well oxygen is being transported from the lungs to the body tissues. Low levels can indicate respiratory or circulatory problems.\n\n",
+        "metadata": {
+          "action_state": null,
+          "sources": [],
+          "citation_basis": "none",
+          "cited_count": 0,
+          "attributed_count": 0,
+          "attributed_sources": [],
+          "confidence": "low",
+          "confidence_basis": "citation_not_in_retrieval",
+          "escalation": "",
+          "display_mode": "detailed",
+          "query_scope": "GENERAL_MEDICAL",
+          "patient_context_used": false,
+          "patient_id": null,
+          "patient_name": null,
+          "patient_source": null,
+          "data_completeness": null,
+          "local_policy_found": false,
+          "provider": {
+            "thinking": true,
+            "thinking_requested": true,
+            "thinking_tier": "careful",
+            "thinking_model": "medgemma:27b",
+            "thinking_available": true,
+            "thinking_reason": "Thinking mode on, answered by the careful model.",
+            "safety_floor": false,
+            "safety_floor_rules": [],
+            "safety_floor_enabled": true,
+            "safety_floor_unsatisfied": false,
+            "lane": "local",
+            "provider": "ollama",
+            "model": "medgemma:27b",
+            "downgraded": false,
+            "preferred_model": "medgemma:27b",
+            "marker_asserted": false
+          },
+          "timing": {
+            "retrieval_ms": 10460,
+            "ttft_ms": 18260,
+            "first_content_ms": 18453,
+            "total_ms": 22836
+          }
+        },
+        "structured": {
+          "action_intent": "None.",
+          "concise_answer": "Oxygen saturation measures the percentage of hemoglobin in red blood cells that is saturated with oxygen. It reflects how well oxygen is being transported from the lungs to the body tissues. Low levels can indicate respiratory or circulatory problems.",
+          "display_mode": "",
+          "patient_facts_summary": "",
+          "local_policy_guidance": "",
+          "external_guidance": "",
+          "clinical_assessment": "",
+          "caveats": "",
+          "escalation": "",
+          "cited_sources": []
+        },
+        "stages": [
+          "retrieving",
+          "generating"
+        ],
+        "invalid": []
+      },
+      "wireComplete": true,
+      "browserTiming": {
+        "submittedAt": 2335.900000035763,
+        "firstVisibleMs": 18531.5,
+        "completedVisibleMs": 22864.5,
+        "streamingSeen": true
+      },
+      "visibleAnswer": "Oxygen saturation measures the percentage of hemoglobin in red blood cells that is saturated with oxygen. It reflects how well oxygen is being transported from the lungs to the body tissues. Low levels can indicate respiratory or circulatory problems.",
+      "screenshot": "00-general.png",
+      "assessment": {
+        "success": true,
+        "failures": [],
+        "targetMs": 3000,
+        "targetMet": false,
+        "completionWithinSameTarget": false
+      },
+      "residencyAfter": {
+        "models": [
+          {
+            "name": "medgemma:27b",
+            "model": "medgemma:27b",
+            "size": 17498898431,
+            "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+            "details": {
+              "parent_model": "",
+              "format": "gguf",
+              "family": "gemma3",
+              "families": [
+                "gemma3"
+              ],
+              "parameter_size": "27.4B",
+              "quantization_level": "Q4_K_M"
+            },
+            "expires_at": "2026-10-12T04:34:18.45275+05:30",
+            "size_vram": 17498898431,
+            "context_length": 8192
+          }
+        ]
+      },
+      "phase": "initial residency diagnostic; excluded from warm SLA"
+    },
+    {
+      "index": 1,
+      "category": "general",
+      "query": "What does oxygen saturation measure? Answer briefly.",
+      "startedAt": "2026-10-11T22:04:18.682Z",
+      "residencyBefore": {
+        "models": [
+          {
+            "name": "medgemma:27b",
+            "model": "medgemma:27b",
+            "size": 17498898431,
+            "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+            "details": {
+              "parent_model": "",
+              "format": "gguf",
+              "family": "gemma3",
+              "families": [
+                "gemma3"
+              ],
+              "parameter_size": "27.4B",
+              "quantization_level": "Q4_K_M"
+            },
+            "expires_at": "2026-10-12T04:34:18.45275+05:30",
+            "size_vram": 17498898431,
+            "context_length": 8192
+          }
+        ]
+      },
+      "residency": "resident/warm runner",
+      "request": {
+        "query": "What does oxygen saturation measure? Answer briefly.",
+        "thinking": true,
+        "view_context": {
+          "tab": "sage"
+        },
+        "conversation_id": "c-mv4dexe8-bf16592fc45c"
+      },
+      "httpStatus": 200,
+      "stream": {
+        "done": true,
+        "errors": [],
+        "content": " Oxygen saturation measures the percentage of hemoglobin in red blood cells that is saturated with oxygen. It reflects how well oxygen is being carried from the lungs to the tissues. Low levels can indicate respiratory or circulatory problems.\n\n",
+        "metadata": {
+          "action_state": null,
+          "sources": [],
+          "citation_basis": "none",
+          "cited_count": 0,
+          "attributed_count": 0,
+          "attributed_sources": [],
+          "confidence": "low",
+          "confidence_basis": "citation_not_in_retrieval",
+          "escalation": "",
+          "display_mode": "detailed",
+          "query_scope": "GENERAL_MEDICAL",
+          "patient_context_used": false,
+          "patient_id": null,
+          "patient_name": null,
+          "patient_source": null,
+          "data_completeness": null,
+          "local_policy_found": false,
+          "provider": {
+            "thinking": true,
+            "thinking_requested": true,
+            "thinking_tier": "careful",
+            "thinking_model": "medgemma:27b",
+            "thinking_available": true,
+            "thinking_reason": "Thinking mode on, answered by the careful model.",
+            "safety_floor": false,
+            "safety_floor_rules": [],
+            "safety_floor_enabled": true,
+            "safety_floor_unsatisfied": false,
+            "lane": "local",
+            "provider": "ollama",
+            "model": "medgemma:27b",
+            "downgraded": false,
+            "preferred_model": "medgemma:27b",
+            "marker_asserted": false
+          },
+          "timing": {
+            "retrieval_ms": 635,
+            "ttft_ms": 917,
+            "first_content_ms": 1110,
+            "total_ms": 5427
+          }
+        },
+        "structured": {
+          "action_intent": "None.",
+          "concise_answer": "Oxygen saturation measures the percentage of hemoglobin in red blood cells that is saturated with oxygen. It reflects how well oxygen is being carried from the lungs to the tissues. Low levels can indicate respiratory or circulatory problems.",
+          "display_mode": "",
+          "patient_facts_summary": "",
+          "local_policy_guidance": "",
+          "external_guidance": "",
+          "clinical_assessment": "",
+          "caveats": "",
+          "escalation": "",
+          "cited_sources": []
+        },
+        "stages": [
+          "retrieving",
+          "generating"
+        ],
+        "invalid": []
+      },
+      "wireComplete": true,
+      "browserTiming": {
+        "submittedAt": 25460.400000035763,
+        "firstVisibleMs": 1181.5,
+        "completedVisibleMs": 5439.899999976158,
+        "streamingSeen": true
+      },
+      "visibleAnswer": "Oxygen saturation measures the percentage of hemoglobin in red blood cells that is saturated with oxygen. It reflects how well oxygen is being carried from the lungs to the tissues. Low levels can indicate respiratory or circulatory problems.",
+      "screenshot": "01-general.png",
+      "assessment": {
+        "success": true,
+        "failures": [],
+        "targetMs": 3000,
+        "targetMet": true,
+        "completionWithinSameTarget": false
+      },
+      "residencyAfter": {
+        "models": [
+          {
+            "name": "medgemma:27b",
+            "model": "medgemma:27b",
+            "size": 17498898431,
+            "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+            "details": {
+              "parent_model": "",
+              "format": "gguf",
+              "family": "gemma3",
+              "families": [
+                "gemma3"
+              ],
+              "parameter_size": "27.4B",
+              "quantization_level": "Q4_K_M"
+            },
+            "expires_at": "2026-10-12T04:34:24.1602+05:30",
+            "size_vram": 17498898431,
+            "context_length": 8192
+          }
+        ]
+      },
+      "repeat": 1,
+      "phase": "warm SLA"
+    },
+    {
+      "index": 2,
+      "category": "patient",
+      "query": "Summarize Ananya Kapoor's current chart and the recorded facts that need clinician review. Answer briefly.",
+      "startedAt": "2026-10-11T22:04:24.354Z",
+      "residencyBefore": {
+        "models": [
+          {
+            "name": "medgemma:27b",
+            "model": "medgemma:27b",
+            "size": 17498898431,
+            "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+            "details": {
+              "parent_model": "",
+              "format": "gguf",
+              "family": "gemma3",
+              "families": [
+                "gemma3"
+              ],
+              "parameter_size": "27.4B",
+              "quantization_level": "Q4_K_M"
+            },
+            "expires_at": "2026-10-12T04:34:24.1602+05:30",
+            "size_vram": 17498898431,
+            "context_length": 8192
+          }
+        ]
+      },
+      "residency": "resident/warm runner",
+      "request": {
+        "query": "Summarize Ananya Kapoor's current chart and the recorded facts that need clinician review. Answer briefly.",
+        "thinking": true,
+        "view_context": {
+          "tab": "sage"
+        },
+        "conversation_id": "c-mv4df1rn-b3a4a20d7423"
+      },
+      "httpStatus": 200,
+      "stream": {
+        "done": true,
+        "errors": [],
+        "content": "\nAnanya Kapoor is a 34-year-old female admitted to GM-1 for diabetic ketoacidosis. Her vital signs are HR 118, BP 100/65, SpO2 97%, Temp 37.2\u00b0C, RR 28. She is currently receiving an insulin infusion at 0.1 U/kg/hr and normal saline 1 L/hr with added potassium chloride 20 mEq/L. Her trajectory shows stability with improving oxygen saturation and respiratory rate, but slightly increasing temperature. There is no recent lab data or scribe notes available in Orb.\n\n",
+        "metadata": {
+          "action_state": null,
+          "sources": [],
+          "citation_basis": "none",
+          "cited_count": 0,
+          "attributed_count": 0,
+          "attributed_sources": [],
+          "confidence": "low",
+          "confidence_basis": "citation_not_in_retrieval",
+          "escalation": true,
+          "display_mode": "detailed",
+          "query_scope": "PATIENT_SPECIFIC",
+          "patient_context_used": true,
+          "patient_id": "PAT-D758ED53",
+          "patient_name": "Ananya Kapoor",
+          "patient_source": "admitted",
+          "data_completeness": {
+            "has_vitals": true,
+            "has_meds": true,
+            "has_labs": false,
+            "has_imaging": false,
+            "has_notes": false,
+            "has_risk_score": false,
+            "missing": [
+              "No recent labs",
+              "No signed Scribe notes",
+              "No recent imaging"
+            ]
+          },
+          "local_policy_found": false,
+          "provider": {
+            "thinking": true,
+            "thinking_requested": true,
+            "thinking_tier": "careful",
+            "thinking_model": "medgemma:27b",
+            "thinking_available": true,
+            "thinking_reason": "Thinking mode on, answered by the careful model.",
+            "safety_floor": false,
+            "safety_floor_rules": [],
+            "safety_floor_enabled": true,
+            "safety_floor_unsatisfied": false,
+            "lane": "local",
+            "provider": "ollama",
+            "model": "medgemma:27b",
+            "downgraded": false,
+            "preferred_model": "medgemma:27b",
+            "marker_asserted": false
+          },
+          "timing": {
+            "retrieval_ms": 325,
+            "ttft_ms": 3203,
+            "first_content_ms": 3404,
+            "total_ms": 36279
+          }
+        },
+        "structured": {
+          "action_intent": "None.",
+          "concise_answer": "Ananya Kapoor is a 34-year-old female admitted to GM-1 for diabetic ketoacidosis. Her vital signs are HR 118, BP 100/65, SpO2 97%, Temp 37.2\u00b0C, RR 28. She is currently receiving an insulin infusion at 0.1 U/kg/hr and normal saline 1 L/hr with added potassium chloride 20 mEq/L. Her trajectory shows stability with improving oxygen saturation and respiratory rate, but slightly increasing temperature. There is no recent lab data or scribe notes available in Orb.",
+          "display_mode": "concise",
+          "patient_facts_summary": "34y/F, GM-1, DKA. Vitals: HR 118, BP 100/65, SpO2 97%, T 37.2\u00b0C, RR 28. Meds: Insulin infn 0.1U/kg/hr IV, NS 1L/hr + KCl 20mEq/L IV. Stable trajectory (improving spo2/RR, rising temp). No recent labs/notes.",
+          "local_policy_guidance": "None.",
+          "external_guidance": "None.",
+          "clinical_assessment": "Patient has DKA, currently stable on treatment. Key parameters to monitor include glucose levels, electrolytes (especially K+), anion gap, venous pH, and fluid balance. The slight rise in temperature warrants attention. Vital signs are borderline concerning for hypotension (SBP 100) and tachycardia (HR 118).",
+          "caveats": "Missing lab data prevents a full assessment of DKA resolution or complications. Lack of scribe notes means no detailed clinical narrative is available.",
+          "escalation": "Consider escalation if vital signs deteriorate further, especially SBP < 90 mmHg, HR > 120 bpm, significant respiratory distress, altered mental status, or persistent hyperglycemia despite insulin infusion. Given the missing data, close monitoring is crucial.",
+          "cited_sources": []
+        },
+        "stages": [
+          "retrieving",
+          "generating"
+        ],
+        "invalid": []
+      },
+      "wireComplete": true,
+      "browserTiming": {
+        "submittedAt": 31127.600000023842,
+        "firstVisibleMs": 3664.5,
+        "completedVisibleMs": 36298.39999997616,
+        "streamingSeen": true
+      },
+      "visibleAnswer": "Ananya Kapoor is a 34-year-old female admitted to GM-1 for diabetic ketoacidosis. Her vital signs are HR 118, BP 100/65, SpO2 97%, Temp 37.2\u00b0C, RR 28. She is currently receiving an insulin infusion at 0.1 U/kg/hr and normal saline 1 L/hr with added potassium chloride 20 mEq/L. Her trajectory shows stability with improving oxygen saturation and respiratory rate, but slightly increasing temperature. There is no recent lab data or scribe notes available in Orb.",
+      "screenshot": "02-patient.png",
+      "assessment": {
+        "success": true,
+        "failures": [],
+        "targetMs": 5000,
+        "targetMet": true,
+        "completionWithinSameTarget": false
+      },
+      "residencyAfter": {
+        "models": [
+          {
+            "name": "medgemma:27b",
+            "model": "medgemma:27b",
+            "size": 17498898431,
+            "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+            "details": {
+              "parent_model": "",
+              "format": "gguf",
+              "family": "gemma3",
+              "families": [
+                "gemma3"
+              ],
+              "parameter_size": "27.4B",
+              "quantization_level": "Q4_K_M"
+            },
+            "expires_at": "2026-10-12T04:35:00.679425+05:30",
+            "size_vram": 17498898431,
+            "context_length": 8192
+          }
+        ]
+      },
+      "repeat": 1,
+      "phase": "warm SLA"
+    },
+    {
+      "index": 3,
+      "category": "department",
+      "query": "Give a concise overview of my department's admitted patients and identify recorded concerns for clinician review.",
+      "startedAt": "2026-10-11T22:05:00.948Z",
+      "residencyBefore": {
+        "models": [
+          {
+            "name": "medgemma:27b",
+            "model": "medgemma:27b",
+            "size": 17498898431,
+            "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+            "details": {
+              "parent_model": "",
+              "format": "gguf",
+              "family": "gemma3",
+              "families": [
+                "gemma3"
+              ],
+              "parameter_size": "27.4B",
+              "quantization_level": "Q4_K_M"
+            },
+            "expires_at": "2026-10-12T04:35:00.679425+05:30",
+            "size_vram": 17498898431,
+            "context_length": 8192
+          }
+        ]
+      },
+      "residency": "resident/warm runner",
+      "request": {
+        "query": "Give a concise overview of my department's admitted patients and identify recorded concerns for clinician review.",
+        "thinking": true,
+        "view_context": {
+          "tab": "sage"
+        },
+        "conversation_id": "c-mv4dfu0c-b22e76a3ecf0"
+      },
+      "httpStatus": 200,
+      "stream": {
+        "done": false,
+        "errors": [
+          {
+            "error": "Sage could not complete this answer. Please retry.",
+            "code": "SAGE_STREAM_FAILED"
+          }
+        ],
+        "content": "",
+        "metadata": {},
+        "structured": null,
+        "stages": [
+          "retrieving",
+          "generating"
+        ],
+        "invalid": []
+      },
+      "wireComplete": true,
+      "browserTiming": {
+        "submittedAt": 67727.80000001192,
+        "firstVisibleMs": null,
+        "completedVisibleMs": null,
+        "streamingSeen": true
+      },
+      "visibleAnswer": "Connection failed. Ensure local models are running and responsive.",
+      "screenshot": "03-department.png",
+      "assessment": {
+        "success": false,
+        "failures": [
+          "explicit successful Sage done frame missing",
+          "Sage reported a stream error",
+          "nonempty model answer missing",
+          "successful visible answer missing",
+          "first visible answer time missing",
+          "completed visible answer time missing",
+          "actual query scope differs from scenario",
+          "careful27b provenance missing or downgraded"
+        ],
+        "targetMs": 10000,
+        "targetMet": false,
+        "completionWithinSameTarget": false
+      },
+      "residencyAfter": {
+        "models": [
+          {
+            "name": "medgemma:27b",
+            "model": "medgemma:27b",
+            "size": 17498898431,
+            "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+            "details": {
+              "parent_model": "",
+              "format": "gguf",
+              "family": "gemma3",
+              "families": [
+                "gemma3"
+              ],
+              "parameter_size": "27.4B",
+              "quantization_level": "Q4_K_M"
+            },
+            "expires_at": "2026-10-12T04:35:39.553188+05:30",
+            "size_vram": 17498898431,
+            "context_length": 8192
+          }
+        ]
+      },
+      "repeat": 1,
+      "phase": "warm SLA"
+    },
+    {
+      "index": 4,
+      "category": "general",
+      "query": "What does oxygen saturation measure? Answer briefly.",
+      "startedAt": "2026-10-11T22:05:39.742Z",
+      "residencyBefore": {
+        "models": [
+          {
+            "name": "medgemma:27b",
+            "model": "medgemma:27b",
+            "size": 17498898431,
+            "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+            "details": {
+              "parent_model": "",
+              "format": "gguf",
+              "family": "gemma3",
+              "families": [
+                "gemma3"
+              ],
+              "parameter_size": "27.4B",
+              "quantization_level": "Q4_K_M"
+            },
+            "expires_at": "2026-10-12T04:35:39.553188+05:30",
+            "size_vram": 17498898431,
+            "context_length": 8192
+          }
+        ]
+      },
+      "residency": "resident/warm runner",
+      "request": {
+        "query": "What does oxygen saturation measure? Answer briefly.",
+        "thinking": true,
+        "view_context": {
+          "tab": "sage"
+        },
+        "conversation_id": "c-mv4dgnxw-97e417a4b3ef"
+      },
+      "httpStatus": 200,
+      "stream": {
+        "done": true,
+        "errors": [],
+        "content": " Oxygen saturation measures the percentage of hemoglobin in red blood cells that is saturated with oxygen. It reflects how well oxygen is being carried from the lungs to the tissues. Low levels can indicate respiratory or circulatory problems.\n\n",
+        "metadata": {
+          "action_state": null,
+          "sources": [],
+          "citation_basis": "none",
+          "cited_count": 0,
+          "attributed_count": 0,
+          "attributed_sources": [],
+          "confidence": "low",
+          "confidence_basis": "citation_not_in_retrieval",
+          "escalation": "",
+          "display_mode": "detailed",
+          "query_scope": "GENERAL_MEDICAL",
+          "patient_context_used": false,
+          "patient_id": null,
+          "patient_name": null,
+          "patient_source": null,
+          "data_completeness": null,
+          "local_policy_found": false,
+          "provider": {
+            "thinking": true,
+            "thinking_requested": true,
+            "thinking_tier": "careful",
+            "thinking_model": "medgemma:27b",
+            "thinking_available": true,
+            "thinking_reason": "Thinking mode on, answered by the careful model.",
+            "safety_floor": false,
+            "safety_floor_rules": [],
+            "safety_floor_enabled": true,
+            "safety_floor_unsatisfied": false,
+            "lane": "local",
+            "provider": "ollama",
+            "model": "medgemma:27b",
+            "downgraded": false,
+            "preferred_model": "medgemma:27b",
+            "marker_asserted": false
+          },
+          "timing": {
+            "retrieval_ms": 294,
+            "ttft_ms": 2301,
+            "first_content_ms": 2502,
+            "total_ms": 7510
+          }
+        },
+        "structured": {
+          "action_intent": "None.",
+          "concise_answer": "Oxygen saturation measures the percentage of hemoglobin in red blood cells that is saturated with oxygen. It reflects how well oxygen is being carried from the lungs to the tissues. Low levels can indicate respiratory or circulatory problems.",
+          "display_mode": "",
+          "patient_facts_summary": "",
+          "local_policy_guidance": "",
+          "external_guidance": "",
+          "clinical_assessment": "",
+          "caveats": "",
+          "escalation": "",
+          "cited_sources": []
+        },
+        "stages": [
+          "retrieving",
+          "generating"
+        ],
+        "invalid": []
+      },
+      "wireComplete": true,
+      "browserTiming": {
+        "submittedAt": 106519,
+        "firstVisibleMs": 2581,
+        "completedVisibleMs": 7522.699999988079,
+        "streamingSeen": true
+      },
+      "visibleAnswer": "Oxygen saturation measures the percentage of hemoglobin in red blood cells that is saturated with oxygen. It reflects how well oxygen is being carried from the lungs to the tissues. Low levels can indicate respiratory or circulatory problems.",
+      "screenshot": "04-general.png",
+      "assessment": {
+        "success": true,
+        "failures": [],
+        "targetMs": 3000,
+        "targetMet": true,
+        "completionWithinSameTarget": false
+      },
+      "residencyAfter": {
+        "models": [
+          {
+            "name": "medgemma:27b",
+            "model": "medgemma:27b",
+            "size": 17498898431,
+            "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+            "details": {
+              "parent_model": "",
+              "format": "gguf",
+              "family": "gemma3",
+              "families": [
+                "gemma3"
+              ],
+              "parameter_size": "27.4B",
+              "quantization_level": "Q4_K_M"
+            },
+            "expires_at": "2026-10-12T04:35:47.302894+05:30",
+            "size_vram": 17498898431,
+            "context_length": 8192
+          }
+        ]
+      },
+      "repeat": 2,
+      "phase": "warm SLA"
+    },
+    {
+      "index": 5,
+      "category": "patient",
+      "query": "Summarize Ananya Kapoor's current chart and the recorded facts that need clinician review. Answer briefly.",
+      "startedAt": "2026-10-11T22:05:47.500Z",
+      "residencyBefore": {
+        "models": [
+          {
+            "name": "medgemma:27b",
+            "model": "medgemma:27b",
+            "size": 17498898431,
+            "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+            "details": {
+              "parent_model": "",
+              "format": "gguf",
+              "family": "gemma3",
+              "families": [
+                "gemma3"
+              ],
+              "parameter_size": "27.4B",
+              "quantization_level": "Q4_K_M"
+            },
+            "expires_at": "2026-10-12T04:35:47.302894+05:30",
+            "size_vram": 17498898431,
+            "context_length": 8192
+          }
+        ]
+      },
+      "residency": "resident/warm runner",
+      "request": {
+        "query": "Summarize Ananya Kapoor's current chart and the recorded facts that need clinician review. Answer briefly.",
+        "thinking": true,
+        "view_context": {
+          "tab": "sage"
+        },
+        "conversation_id": "c-mv4dgtxd-c3396063f077"
+      },
+      "httpStatus": 200,
+      "stream": {
+        "done": true,
+        "errors": [],
+        "content": " Ananya Kapoor is a 34-year-old female admitted for diabetic ketoacidosis in bed GM-101 on GM-1 ward. Her vitals are HR 118, BP 100/65, SpO2 97%, Temp 37.2\u00b0C, RR 28. She is currently receiving an insulin infusion at 0.1 U/kg/hr and normal saline at 1 L/hr with added potassium chloride. Her trajectory appears stable, though some parameters like temperature and respiratory rate have slightly changed recently. There is no recent lab data or scribe notes available.\n\n",
+        "metadata": {
+          "action_state": null,
+          "sources": [],
+          "citation_basis": "none",
+          "cited_count": 0,
+          "attributed_count": 0,
+          "attributed_sources": [],
+          "confidence": "low",
+          "confidence_basis": "no_evidence_retrieved",
+          "escalation": true,
+          "display_mode": "detailed",
+          "query_scope": "PATIENT_SPECIFIC",
+          "patient_context_used": true,
+          "patient_id": "PAT-D758ED53",
+          "patient_name": "Ananya Kapoor",
+          "patient_source": "admitted",
+          "data_completeness": {
+            "has_vitals": true,
+            "has_meds": true,
+            "has_labs": false,
+            "has_imaging": false,
+            "has_notes": false,
+            "has_risk_score": false,
+            "missing": [
+              "No recent labs",
+              "No signed Scribe notes",
+              "No recent imaging"
+            ]
+          },
+          "local_policy_found": false,
+          "provider": {
+            "thinking": true,
+            "thinking_requested": true,
+            "thinking_tier": "careful",
+            "thinking_model": "medgemma:27b",
+            "thinking_available": true,
+            "thinking_reason": "Thinking mode on, answered by the careful model.",
+            "safety_floor": false,
+            "safety_floor_rules": [],
+            "safety_floor_enabled": true,
+            "safety_floor_unsatisfied": false,
+            "lane": "local",
+            "provider": "ollama",
+            "model": "medgemma:27b",
+            "downgraded": false,
+            "preferred_model": "medgemma:27b",
+            "marker_asserted": false
+          },
+          "timing": {
+            "retrieval_ms": 290,
+            "ttft_ms": 3364,
+            "first_content_ms": 3557,
+            "total_ms": 52884
+          }
+        },
+        "structured": {
+          "action_intent": "None.",
+          "concise_answer": "Ananya Kapoor is a 34-year-old female admitted for diabetic ketoacidosis in bed GM-101 on GM-1 ward. Her vitals are HR 118, BP 100/65, SpO2 97%, Temp 37.2\u00b0C, RR 28. She is currently receiving an insulin infusion at 0.1 U/kg/hr and normal saline at 1 L/hr with added potassium chloride. Her trajectory appears stable, though some parameters like temperature and respiratory rate have slightly changed recently. There is no recent lab data or scribe notes available.",
+          "display_mode": "concise",
+          "patient_facts_summary": "Ananya Kapoor, 34y/F, diagnosed with Diabetic Ketoacidosis (DKA), located in Bed GM-101 on Ward GM-1. Current vital signs: HR 118 bpm, BP 100/65 mmHg, SpO2 97% on room air, Temperature 37.2\u00b0C, Respiratory Rate 28 breaths/min. Active treatments include Insulin infusion at 0.1 U/kg/hr IV continuously and Normal Saline 1L/hr IV continuously with KCl 20mEq/L additive. Trajectory noted as 'stable' but shows slight changes (SpO2 rising from 96.1 to 97.0%, RR falling from 29.0 to 28.0, Temp rising from 37.1 to 37.2). Missing information includes recent labs and scribe notes.",
+          "local_policy_guidance": "None.",
+          "external_guidance": "None.",
+          "clinical_assessment": "The patient is being treated for DKA with insulin and fluids. Vitals show tachycardia (HR 118) and tachypnea (RR 28), which can be expected in DKA or its treatment phase. Blood pressure is borderline low (100/65). Oxygen saturation is adequate (97%). The trajectory is marked stable, though some vital signs are fluctuating slightly. Key missing data points are current electrolytes (especially potassium), glucose levels, venous blood gas (VBG)/arterial blood gas (ABG) results (anion gap, bicarbonate), and renal function tests, all crucial for monitoring DKA management.",
+          "caveats": "This assessment is based solely on the provided limited clinical context. A full evaluation requires access to complete medical records, including laboratory values and clinician's notes. The 'stable' status should be interpreted cautiously given the ongoing need for intensive therapy (insulin infusion, IV fluids).",
+          "escalation": "Given the potential instability associated with DKA management (e.g., electrolyte shifts, hypoglycemia, fluid overload), close monitoring and frequent reassessment by a clinician are essential. If there were concerns about deterioration or uncertainty regarding management, escalation to senior clinicians would be appropriate.",
+          "cited_sources": []
+        },
+        "stages": [
+          "retrieving",
+          "generating"
+        ],
+        "invalid": []
+      },
+      "wireComplete": true,
+      "browserTiming": {
+        "submittedAt": 114276.40000003576,
+        "firstVisibleMs": 3765.199999988079,
+        "completedVisibleMs": 52903.09999996424,
+        "streamingSeen": true
+      },
+      "visibleAnswer": "Ananya Kapoor is a 34-year-old female admitted for diabetic ketoacidosis in bed GM-101 on GM-1 ward. Her vitals are HR 118, BP 100/65, SpO2 97%, Temp 37.2\u00b0C, RR 28. She is currently receiving an insulin infusion at 0.1 U/kg/hr and normal saline at 1 L/hr with added potassium chloride. Her trajectory appears stable, though some parameters like temperature and respiratory rate have slightly changed recently. There is no recent lab data or scribe notes available.",
+      "screenshot": "05-patient.png",
+      "assessment": {
+        "success": true,
+        "failures": [],
+        "targetMs": 5000,
+        "targetMet": true,
+        "completionWithinSameTarget": false
+      },
+      "residencyAfter": {
+        "models": [
+          {
+            "name": "medgemma:27b",
+            "model": "medgemma:27b",
+            "size": 17498898431,
+            "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+            "details": {
+              "parent_model": "",
+              "format": "gguf",
+              "family": "gemma3",
+              "families": [
+                "gemma3"
+              ],
+              "parameter_size": "27.4B",
+              "quantization_level": "Q4_K_M"
+            },
+            "expires_at": "2026-10-12T04:36:40.434916+05:30",
+            "size_vram": 17498898431,
+            "context_length": 8192
+          }
+        ]
+      },
+      "repeat": 2,
+      "phase": "warm SLA"
+    },
+    {
+      "index": 6,
+      "category": "department",
+      "query": "Give a concise overview of my department's admitted patients and identify recorded concerns for clinician review.",
+      "startedAt": "2026-10-11T22:06:40.708Z",
+      "residencyBefore": {
+        "models": [
+          {
+            "name": "medgemma:27b",
+            "model": "medgemma:27b",
+            "size": 17498898431,
+            "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+            "details": {
+              "parent_model": "",
+              "format": "gguf",
+              "family": "gemma3",
+              "families": [
+                "gemma3"
+              ],
+              "parameter_size": "27.4B",
+              "quantization_level": "Q4_K_M"
+            },
+            "expires_at": "2026-10-12T04:36:40.434916+05:30",
+            "size_vram": 17498898431,
+            "context_length": 8192
+          }
+        ]
+      },
+      "residency": "resident/warm runner",
+      "request": {
+        "query": "Give a concise overview of my department's admitted patients and identify recorded concerns for clinician review.",
+        "thinking": true,
+        "view_context": {
+          "tab": "sage"
+        },
+        "conversation_id": "c-mv4dhyzb-ccb03e0a6561"
+      },
+      "httpStatus": 200,
+      "stream": {
+        "done": false,
+        "errors": [
+          {
+            "error": "Sage could not complete this answer. Please retry.",
+            "code": "SAGE_STREAM_FAILED"
+          }
+        ],
+        "content": "",
+        "metadata": {},
+        "structured": null,
+        "stages": [
+          "retrieving",
+          "generating"
+        ],
+        "invalid": []
+      },
+      "wireComplete": true,
+      "browserTiming": {
+        "submittedAt": 167481.19999998808,
+        "firstVisibleMs": null,
+        "completedVisibleMs": null,
+        "streamingSeen": true
+      },
+      "visibleAnswer": "Connection failed. Ensure local models are running and responsive.",
+      "screenshot": "06-department.png",
+      "assessment": {
+        "success": false,
+        "failures": [
+          "explicit successful Sage done frame missing",
+          "Sage reported a stream error",
+          "nonempty model answer missing",
+          "successful visible answer missing",
+          "first visible answer time missing",
+          "completed visible answer time missing",
+          "actual query scope differs from scenario",
+          "careful27b provenance missing or downgraded"
+        ],
+        "targetMs": 10000,
+        "targetMet": false,
+        "completionWithinSameTarget": false
+      },
+      "residencyAfter": {
+        "models": [
+          {
+            "name": "medgemma:27b",
+            "model": "medgemma:27b",
+            "size": 17498898431,
+            "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+            "details": {
+              "parent_model": "",
+              "format": "gguf",
+              "family": "gemma3",
+              "families": [
+                "gemma3"
+              ],
+              "parameter_size": "27.4B",
+              "quantization_level": "Q4_K_M"
+            },
+            "expires_at": "2026-10-12T04:37:18.341879+05:30",
+            "size_vram": 17498898431,
+            "context_length": 8192
+          }
+        ]
+      },
+      "repeat": 2,
+      "phase": "warm SLA"
+    },
+    {
+      "index": 7,
+      "category": "general",
+      "query": "What does oxygen saturation measure? Answer briefly.",
+      "startedAt": "2026-10-11T22:07:18.560Z",
+      "residencyBefore": {
+        "models": [
+          {
+            "name": "medgemma:27b",
+            "model": "medgemma:27b",
+            "size": 17498898431,
+            "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+            "details": {
+              "parent_model": "",
+              "format": "gguf",
+              "family": "gemma3",
+              "families": [
+                "gemma3"
+              ],
+              "parameter_size": "27.4B",
+              "quantization_level": "Q4_K_M"
+            },
+            "expires_at": "2026-10-12T04:37:18.341879+05:30",
+            "size_vram": 17498898431,
+            "context_length": 8192
+          }
+        ]
+      },
+      "residency": "resident/warm runner",
+      "request": {
+        "query": "What does oxygen saturation measure? Answer briefly.",
+        "thinking": true,
+        "view_context": {
+          "tab": "sage"
+        },
+        "conversation_id": "c-mv4dis6o-4f54bb10b95c"
+      },
+      "httpStatus": 200,
+      "stream": {
+        "done": true,
+        "errors": [],
+        "content": " Oxygen saturation measures the percentage of hemoglobin in red blood cells that is saturated with oxygen. It reflects how well oxygen is being transported from the lungs to the body tissues. Low saturation can indicate respiratory or circulatory problems.\n\n",
+        "metadata": {
+          "action_state": null,
+          "sources": [],
+          "citation_basis": "none",
+          "cited_count": 0,
+          "attributed_count": 0,
+          "attributed_sources": [],
+          "confidence": "low",
+          "confidence_basis": "citation_not_in_retrieval",
+          "escalation": "",
+          "display_mode": "detailed",
+          "query_scope": "GENERAL_MEDICAL",
+          "patient_context_used": false,
+          "patient_id": null,
+          "patient_name": null,
+          "patient_source": null,
+          "data_completeness": null,
+          "local_policy_found": false,
+          "provider": {
+            "thinking": true,
+            "thinking_requested": true,
+            "thinking_tier": "careful",
+            "thinking_model": "medgemma:27b",
+            "thinking_available": true,
+            "thinking_reason": "Thinking mode on, answered by the careful model.",
+            "safety_floor": false,
+            "safety_floor_rules": [],
+            "safety_floor_enabled": true,
+            "safety_floor_unsatisfied": false,
+            "lane": "local",
+            "provider": "ollama",
+            "model": "medgemma:27b",
+            "downgraded": false,
+            "preferred_model": "medgemma:27b",
+            "marker_asserted": false
+          },
+          "timing": {
+            "retrieval_ms": 379,
+            "ttft_ms": 2428,
+            "first_content_ms": 2623,
+            "total_ms": 7041
+          }
+        },
+        "structured": {
+          "action_intent": "None.",
+          "concise_answer": "Oxygen saturation measures the percentage of hemoglobin in red blood cells that is saturated with oxygen. It reflects how well oxygen is being transported from the lungs to the body tissues. Low saturation can indicate respiratory or circulatory problems.",
+          "display_mode": "",
+          "patient_facts_summary": "",
+          "local_policy_guidance": "",
+          "external_guidance": "",
+          "clinical_assessment": "",
+          "caveats": "",
+          "escalation": "",
+          "cited_sources": []
+        },
+        "stages": [
+          "retrieving",
+          "generating"
+        ],
+        "invalid": []
+      },
+      "wireComplete": true,
+      "browserTiming": {
+        "submittedAt": 205330.5,
+        "firstVisibleMs": 2698,
+        "completedVisibleMs": 7057.199999988079,
+        "streamingSeen": true
+      },
+      "visibleAnswer": "Oxygen saturation measures the percentage of hemoglobin in red blood cells that is saturated with oxygen. It reflects how well oxygen is being transported from the lungs to the body tissues. Low saturation can indicate respiratory or circulatory problems.",
+      "screenshot": "07-general.png",
+      "assessment": {
+        "success": true,
+        "failures": [],
+        "targetMs": 3000,
+        "targetMet": true,
+        "completionWithinSameTarget": false
+      },
+      "residencyAfter": {
+        "models": [
+          {
+            "name": "medgemma:27b",
+            "model": "medgemma:27b",
+            "size": 17498898431,
+            "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+            "details": {
+              "parent_model": "",
+              "format": "gguf",
+              "family": "gemma3",
+              "families": [
+                "gemma3"
+              ],
+              "parameter_size": "27.4B",
+              "quantization_level": "Q4_K_M"
+            },
+            "expires_at": "2026-10-12T04:37:25.646178+05:30",
+            "size_vram": 17498898431,
+            "context_length": 8192
+          }
+        ]
+      },
+      "repeat": 3,
+      "phase": "warm SLA"
+    }
+  ],
+  "blockedExternalRequests": [],
+  "pageErrors": [],
+  "consoleErrors": [],
+  "backend": {
+    "url": "http://127.0.0.1:11434",
+    "model": {
+      "name": "medgemma:27b",
+      "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+      "size": 17397224125,
+      "details": {
+        "parent_model": "",
+        "format": "gguf",
+        "family": "gemma3",
+        "families": [
+          "gemma3"
+        ],
+        "parameter_size": "27.4B",
+        "quantization_level": "Q4_K_M",
+        "context_length": 131072,
+        "embedding_length": 5376
+      }
+    },
+    "background_model_jobs": false,
+    "thinking": true,
+    "safety_floor": true,
+    "model_fallback": false,
+    "scope": "idle synthetic qualification",
+    "embedding_snapshot": "/Users/samuelmorningstar/.cache/huggingface/hub/models--BAAI--bge-m3/snapshots/5617a9f61b028005a4858fdac845db406aefb181",
+    "reranker_snapshot": "/Users/samuelmorningstar/.cache/huggingface/hub/models--BAAI--bge-reranker-v2-m3/snapshots/953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e",
+    "retrieval": "installed snapshots with a new synthetic corpus"
+  },
+  "knowledgeCorpus": {
+    "sources": 19,
+    "vectors": 19,
+    "fingerprint": "e85261d5dc762d793b10470056b9cfcec365d679d3bda7a3ba0c208d8ef7ded2"
+  },
+  "base": "http://127.0.0.1:18120",
+  "browserVersion": "149.0.7827.55",
+  "actor": {
+    "id": "DOC001",
+    "role": "doctor",
+    "department": "General Medicine"
+  },
+  "syntheticPatient": {
+    "id": "PAT-D758ED53",
+    "name": "Ananya Kapoor",
+    "department": "General Medicine"
+  },
+  "aiPosture": {
+    "local_model": "medgemma:27b",
+    "local_asr_available": false
+  },
+  "error": "page.evaluate: Target page, context or browser has been closed",
+  "finishedAt": "2026-10-11T22:07:57.429Z",
+  "passed": false,
+  "evidence_status": "Superseded partial run before informational-give routing fix; interrupted intentionally after repeated failed department turns. Not latency acceptance.",
+  "interruption_context": "Third patient turn interrupted; eight completed observations retained. Department query incorrectly routed through mutation/simple512. A subsequent production fix preserves this exact query and restores BROAD routing; fresh qualification is pending.",
+  "source_report": "/private/tmp/orb-sage-browser-repeats-20261012/timings.json"
+}

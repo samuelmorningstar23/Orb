@@ -1,0 +1,120 @@
+{
+  "schema": "orb.audit.ollama-cache-profile-acceptance/1",
+  "date": "2026-10-12",
+  "status": "passed",
+  "source_frozen": true,
+  "runtime": "/private/tmp/orb-ml-upgrade-20261012/bin/python",
+  "python_version": "3.12.13",
+  "command": [
+    "/private/tmp/orb-ml-upgrade-20261012/bin/python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/test_ollama_launcher.py",
+    "tests/test_run_orb_launcher.py",
+    "tests/test_install_script.py",
+    "tests/test_ops_health.py"
+  ],
+  "cwd": "/private/tmp/orb-one-slot-verification-20261012-vt2033oc/source/server",
+  "immutable_test_source": "/private/tmp/orb-one-slot-verification-20261012-vt2033oc/source",
+  "results": {
+    "passed": 160,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": 110.14,
+    "new_parameterized_cases": 50,
+    "membership": {
+      "server/tests/test_ollama_launcher.py": 100,
+      "server/tests/test_run_orb_launcher.py": 20,
+      "server/tests/test_install_script.py": 15,
+      "server/tests/test_ops_health.py": 25
+    }
+  },
+  "checks": {
+    "bash_n_exit": 0,
+    "git_diff_check_exit": 0,
+    "independent_review": "No material defect; original config boundaries, cache guards, parser precedence, separate KV and parallel1 reviewed by backend_audit."
+  },
+  "source_sha256": {
+    "scripts/serve-ollama.sh": "3f0dddbf51af4ae5475b5ef1634d69e16244c7f7c2a3769d2ef191a3f22f6985",
+    "config/ollama-xdg/llama.cpp/config.ini": "c8807fc49c7a03431fa38f8b4c0fcbce1cd612ccba2b97a2521515eac274a4c0",
+    "server/tests/test_ollama_launcher.py": "57d1dee08dbda8d80ae6893509408b4ce72872e79da23d147b0a643e40d4956d",
+    "server/tests/test_run_orb_launcher.py": "07da44592b89639f6cbfcd69b8760a69fc115858b04b25e597f7e1acb09cd7df",
+    "setup-mac.sh": "0f1b033f2743c160b12e142ccbb29f350e9c5c03023c55818a803ab71641ae18",
+    "run-orb.sh": "2660694fbe18e2c14522629fa01d291ee3549ec3caf00d46d11ea5adfb4f45ee",
+    "server/services/ops_health_service.py": "fe3dca11f7ffc76c26b4c21be4a2d83db7cc2438a94c65b04207c173393ab811",
+    ".env.example": "8c855091eb5ae5bb7137e3f52258fd2113b658a4442f1a958f005912389e5cbc",
+    "docs/SETUP.md": "d2e73be1210024fd32018bf1ebdd8f0a5568a30e3aae08e6b89faf56f639f26e"
+  },
+  "delta_from_v8": [
+    "scripts/serve-ollama.sh",
+    "config/ollama-xdg/llama.cpp/config.ini",
+    "server/tests/test_ollama_launcher.py",
+    "server/tests/test_run_orb_launcher.py",
+    ".env.example",
+    "docs/SETUP.md"
+  ],
+  "unchanged_entrypoints": [
+    "setup-mac.sh",
+    "run-orb.sh",
+    "server/services/ops_health_service.py"
+  ],
+  "profile": {
+    "qualification": "Ollama exactly0.35.1, Darwin arm64, at least64GiB; enabled full-SWA profile only",
+    "parallel": 1,
+    "kv_unified": false,
+    "ram_cache_limit_mib": 8192,
+    "slot_prompt_similarity": 0.6,
+    "orb_interactive_context_tokens": 8192,
+    "owned_xdg_config": "config/ollama-xdg/llama.cpp/config.ini",
+    "original_config_boundary": "Existing user/system configs, dangling config symlinks, relative/missing roots or uninspectable directories: auto skips optimized profile; explicit on refuses. Off/unqualified profiles preserve original cache/config environment.",
+    "explicit_conflicts": "Enabled profile rejects unified=true/malformed and non8192/empty/malformed RAM cache.",
+    "quality_unchanged": [
+      "model",
+      "prompt",
+      "answer budget",
+      "attention mask",
+      "app queues",
+      "daemon parallel1",
+      "automatic batch policy",
+      "clinical safety gates"
+    ]
+  },
+  "isolation": {
+    "source": "Owned v8 source copy plus exact four launcher/config/test delta files; no live env/site.toml/data/models copied.",
+    "database": "/private/tmp/orb-one-slot-verification-20261012-vt2033oc/orb_test_cache_profile.db",
+    "hf": "Empty owned cache +offline; model URL closed loopbackport9.",
+    "fixtures": "Fake executables; private HOME and synthetic system-config path; no actual Ollama daemon/model calls."
+  },
+  "initial_preflight": {
+    "status": "refused_before_test_assertions",
+    "reason": "Owned scratch DB filename synthetic.db lacked required orb_test_ marker. Conftest safety guard refused every case; rerun used fresh compliant owned DB filename with no source change.",
+    "setup_errors": 160,
+    "seconds": 3.61,
+    "log": "docs/audit-2026-10/ollama-cache-profile-acceptance-20261012/preflight-db-refusal.log",
+    "sha256": "dee3e301358724d99907ca5476ab8f5a10e3e10a14d2504de61399b274bcec9d"
+  },
+  "log": {
+    "path": "docs/audit-2026-10/ollama-cache-profile-acceptance-20261012/pytest.log",
+    "sha256": "d0cd0218a90cc137104608db19d8310438e4cd0cc1397eb30f44e34a536787fa"
+  },
+  "rejected_two_slot_candidate": {
+    "status": "rejected_not_promoted",
+    "reason": "Independent interactive/background lanes require daemon parallel1; parallel2 could allow inference overlap. Fake-only104passed establishes mechanics, not concurrency safety.",
+    "verification": "docs/audit-2026-10/ollama-cache-profile-acceptance-20261012/rejected-two-slot/verification.json",
+    "sha256": "fafad7709680fd97faca109bbd05e31b66685cac75f4d83aaca50704bbbd70a6",
+    "patch_sha256": "10ffe3c19666a0743ee995471c89ab80bc683ed9ad331a8e53d15bb0aa0978ac"
+  },
+  "related_evidence": {
+    "native_causal_pilot": "docs/audit-2026-10/sage-cache-save-control-20261012.json",
+    "application_full_acceptance": "docs/audit-2026-10/backend-sage-speed-acceptance-20261012/results.json",
+    "historical_entrypoint_stage": "docs/audit-2026-10/ollama-entrypoints-acceptance-20261012/verification.json"
+  },
+  "limits": [
+    "Focused160 overlaps earlier110 and fullv8; counts are not added to a synthetic aggregate.",
+    "No latency/SLA acceptance is claimed by synthetic tests. Final canonical native/browser evidence is separate.",
+    "Existing daemons are reused unchanged; launcher settings apply only to the daemon it starts.",
+    "No model weights, live database, private configuration contents, or external integrations were accessed."
+  ]
+}

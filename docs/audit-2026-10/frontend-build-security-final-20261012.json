@@ -1,0 +1,146 @@
+{
+  "schema": "orb.audit.frontend-final-build-security/1",
+  "date": "2026-10-12",
+  "timezone": "Asia/Kolkata",
+  "scope": "Final production frontend build, existing lint ratchet, committed lockfile-only advisory query and existing documentation citation checker. No new application/runtime edits.",
+  "runtime": {
+    "node": "24.19.0",
+    "npm": "11.21.0",
+    "node_path": "node",
+    "npm_path": "/private/tmp/orb-pnpm-tool-cache/pnpm/dlx/0ba9370fbe57e4db60bf2bbb06136b81/pkg/node_modules/npm/bin/npm-cli.js",
+    "tool_installations": 0
+  },
+  "checks": [
+    {
+      "check": "build",
+      "command": [
+        "node",
+        "/private/tmp/orb-pnpm-tool-cache/pnpm/dlx/0ba9370fbe57e4db60bf2bbb06136b81/pkg/node_modules/npm/bin/npm-cli.js",
+        "--offline",
+        "run",
+        "build"
+      ],
+      "cwd": "/Users/samuelmorningstar/Documents/Projects/Orb",
+      "exit_code": 0,
+      "seconds": 19.401,
+      "log": "/private/tmp/orb-frontend-build-final-20261012.log",
+      "log_sha256": "d0d6bf10afe9a10e928ae8cd0a9998102df56e425d1c156265dc9d39b6cb2a8b"
+    },
+    {
+      "check": "lint-ratchet",
+      "command": [
+        "node",
+        "scripts/lint-ratchet.mjs"
+      ],
+      "cwd": "/Users/samuelmorningstar/Documents/Projects/Orb",
+      "exit_code": 0,
+      "seconds": 65.244,
+      "log": "/private/tmp/orb-frontend-lint-ratchet-final-20261012.log",
+      "log_sha256": "28ceaf35fd4a6d4751f3e829efd72e0b6beceb009903b5268a2708bbd3d1cc2b",
+      "problems": 8,
+      "baseline_problems": 8,
+      "baseline": {
+        "total": 8,
+        "errors": 0,
+        "warnings": 8,
+        "updated": "2026-10-11T18:22:05.697Z"
+      }
+    }
+  ],
+  "bundle_provenance": {
+    "before": {
+      "dist/index.html": "c7a759ed29e706bb547eae838157a4de3919393fd8c88d521d13054d2a7577d2",
+      "package.json": "92a0084188b170f518c960e46221c67fe431611e8beaa1c4332f94e1a0db1c21",
+      "package-lock.json": "99e2763745d6d410f6b14edbd042d3d340f7e0389ee47ea8c82a6fe1f468f740"
+    },
+    "after": {
+      "dist/index.html": "c7a759ed29e706bb547eae838157a4de3919393fd8c88d521d13054d2a7577d2",
+      "package.json": "92a0084188b170f518c960e46221c67fe431611e8beaa1c4332f94e1a0db1c21",
+      "package-lock.json": "99e2763745d6d410f6b14edbd042d3d340f7e0389ee47ea8c82a6fe1f468f740"
+    },
+    "all_recorded_hashes_unchanged": true,
+    "meaning": "The production index and package manifest/lock hashes are unchanged by this final build. Browser screenshot/latency evidence and full test counts remain reported separately."
+  },
+  "lint_limit": "Existing lint ratchet passes at 8 warnings and 0 errors, with no baseline update or warning suppressions. This is debt containment rather than zero-warning whole-repository lint.",
+  "security": {
+    "command": "node <cached npm 11.21.0 npm-cli.js> audit --package-lock-only --audit-level=high --ignore-scripts --registry=https://registry.npmjs.org --cache=/private/tmp/orb-npm-cache --json",
+    "cwd": "/Users/samuelmorningstar/Documents/Projects/Orb",
+    "exit_code": 0,
+    "packages_reported_by_lockfile_audit": 752,
+    "lock_package_entries_including_root": 753,
+    "vulnerable_package_entries": 0,
+    "raw_report": "/private/tmp/orb-npm-audit-final-20261012.json",
+    "raw_report_sha256": "3e6b32f07b06f8c777dc53a84d077387ac3d2b1b3f09158aa62bb7d4a3a8c1a6",
+    "raw_audit": {
+      "auditReportVersion": 2,
+      "vulnerabilities": {},
+      "metadata": {
+        "vulnerabilities": {
+          "info": 0,
+          "low": 0,
+          "moderate": 0,
+          "high": 0,
+          "critical": 0,
+          "total": 0
+        },
+        "dependencies": {
+          "prod": 170,
+          "dev": 583,
+          "optional": 59,
+          "peer": 8,
+          "peerOptional": 0,
+          "total": 752
+        }
+      }
+    },
+    "limit": "Lockfile metadata query, no package install/fix/scripts. npm category counts overlap and are not summed; previous current-platform installed audit counts are different scopes."
+  },
+  "citations": {
+    "command": "/private/tmp/orb-ml-upgrade-20261012/bin/python scripts/check-doc-citations.py",
+    "exit_code": 0,
+    "citations_resolved": 9020,
+    "citations_total": 9020,
+    "symbol_anchors_correct": 490,
+    "symbol_anchors_total": 490,
+    "log": "/private/tmp/orb-doc-citations-ml-final-20261012.log",
+    "log_sha256": "2bd4bba351a0f68bd6416e71dca72b1f746b1f0900a7ae341e04f5e855e62dfa",
+    "anchor_only_edits": [
+      {
+        "file": "docs/guide/03-auth-rbac.md",
+        "symbol": "get_me",
+        "target": "server/main.py",
+        "before": 1323,
+        "after": 1330
+      },
+      {
+        "file": "docs/guide/41-thinking-mode.md",
+        "symbol": "select_provider call in query_ollama",
+        "target": "server/services/sage_service.py",
+        "before": 1946,
+        "after": 1955
+      },
+      {
+        "file": "docs/guide/41-thinking-mode.md",
+        "symbol": "info.update range",
+        "before": "1948-1957",
+        "after": "1957-1966"
+      }
+    ],
+    "limit": "Existing checker scope is docs/guide, guide/screen-map and MANUAL_PLAIN_ENGLISH. It checks citation resolution/ranges and conservative symbol anchors, not all documentation prose semantics."
+  },
+  "independent_inference_review": {
+    "scope": "Read-only query_ollama local provider outcome and teardown review",
+    "outcome": "Root-owned fix initializes error and promotes served only after natural provider completion, preserving queue release and fail-soft audit scheduling. A related bare async-for closure gap was reported with a stdlib reproducer and root applied the existing Scribe aclosing pattern before releasing the queue.",
+    "runtime_edits_by_this_agent": 0,
+    "focused_tests": "Owned and reported separately by root; not rerun or counted here."
+  },
+  "static_validation": {
+    "git_diff_check": "passed"
+  },
+  "limits": [
+    "CPU-heavy build/lint checks began only after the lead agent released the real-model timing window.",
+    "No model/app network calls, package installations, live data reads or deployments were performed by these checks. npm queried the official advisory registry only.",
+    "No full frontend test or browser outcome is inferred from build/lint/advisory/citation checks. Their evidence is owned separately.",
+    "Hosted GitHub Actions were not run."
+  ]
+}

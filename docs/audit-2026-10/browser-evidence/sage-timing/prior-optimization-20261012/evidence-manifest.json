@@ -1,0 +1,53 @@
+{
+  "status": "Superseded diagnostic before completion-timer correction and before any subsequent production optimization. Raw files are unchanged; this is not passing latency acceptance.",
+  "data": "Owned disposable seeded synthetic database only; no API/model mocks, live DB or downloads.",
+  "source_directory": "/private/tmp/orb-sage-browser-final-20261012",
+  "raw_overall_passed": false,
+  "raw_warm_gate_passes": 7,
+  "raw_warm_observations": 9,
+  "retained_failures": [
+    "General repeat3 first-readable3,048.9ms is a strict miss of<3,000ms.",
+    "Patient repeat3 wire completes successfully but old timer incorrectly requires viewport visibility at final completion; completedVisibleMs is null and raw assessment fails. Do not invent a recovered browser timestamp.",
+    "Separate real-chart case has no confirmed prefix warm; Timeline occupies background lane, prewarm times out, submit-to-readable13,914.1ms/open-to-readable39,798.4ms. Same27b model configured for both interactive8192 and ambient4096 context; retained as single-tier diagnostic."
+  ],
+  "journeys": {
+    "exitCode": 0,
+    "stats": {
+      "startTime": "2026-10-11T22:47:28.324Z",
+      "duration": 28221.264,
+      "expected": 11,
+      "skipped": 0,
+      "unexpected": 0,
+      "flaky": 0
+    },
+    "report": "journeys.json",
+    "artifacts": "journey-artifacts"
+  },
+  "cleanup": "Owned backend and knowledge worker exited gracefully; no cleanupFailure.",
+  "screenshots": {
+    "07-general.png": "8e8bc1a16622c4ccea8fea3bd830b3ec35973e18a86ad4642f9f8525da709415",
+    "02-patient.png": "1805af19aed3db43f1d7bfaa2a1b42e754d8031df824fe31abcbdf87a4f4622e",
+    "03-department.png": "a27b5c273d31b7b336bd50423008c5b2511d0c548a5d5777f3beed743fc268ed",
+    "08-patient.png": "0550b3badf35aabb6feb48aff6f194805e6b6f072a40e400c9c804bc2e3f6163",
+    "01-general.png": "24b1ece5197c539c91da393d1ae311c8f2d2338d87e0d0ce86b004cd0be57e5e",
+    "09-department.png": "115f624e32e21c32089a13246307e58e0d0900012ade29547201a2f48d9881b5",
+    "06-department.png": "697f875e4ae1bbbc3596326047b61ab6dec3107b65afee59ed6eb246153955b7",
+    "prewarmed-patient-chart.png": "64be9d1fd3c865a321009070a7f31b2144866f6047d6a552721acad3267eb439",
+    "04-general.png": "846917c9b1b3ddd3deb2a719c301088741b66e1d3056e30bec5ea84e508a0700",
+    "chart-prewarm-patient.png": "e742ada5088b652ec8a74e6de7c19731d08b1805d726bb5dd258096353a9bd32",
+    "05-patient.png": "dd8ec16727bf98e1b0a94ebb9592ba9fdf6afd92ec295bb646cfe3899c15383a",
+    "00-general.png": "6fc2ff8f3f9e79ad28a651ec9d042bb357c15aa6ade0c6074769ee68bf4ddcc3",
+    "journey-artifacts/06-offline-workflows-all-t-899a6-nst-real-authenticated-APIs-chromium/real-infection-surveillance.png": "71f09ebd41862d1da762723db6023595c210adcb13773dd1a371ca4e52aa0e8e",
+    "journey-artifacts/06-offline-workflows-saved-949e8--previewed-synthetic-cohort-chromium/real-reporting-preview.png": "d8c55a395a620ddeb10ee0d76e548a1ab20e2ca7ab2e9a79045a1cb70cfbaad5",
+    "journey-artifacts/06-offline-workflows-radio-4bd72-appends-an-audited-addendum-chromium/real-radiology-signed.png": "e602d5c948624b62a7159cad5f46f3a4575c25d98e14f2424b097735928f9327",
+    "journey-artifacts/06-offline-workflows-care--fcac2-me-and-reopens-from-storage-chromium/real-care-plan-persisted.png": "89e9a1faee8f4c91ba37aeda18342027c31d8bbc3796affc4db25b900b504b42",
+    "journey-artifacts/06-offline-workflows-compl-c897d-load-with-immutable-history-chromium/real-feedback-persisted.png": "cb13193a33154d5545382f9bdbd3e8398cb2a634c9c04ce9ee2c013312190c90",
+    "journey-artifacts/06-offline-workflows-all-t-899a6-nst-real-authenticated-APIs-chromium/attachments/real-infection-surveillance-a37dca949b743752f1a9cd30ea3fae3b4e63783c.png": "71f09ebd41862d1da762723db6023595c210adcb13773dd1a371ca4e52aa0e8e",
+    "journey-artifacts/06-offline-workflows-saved-949e8--previewed-synthetic-cohort-chromium/attachments/real-reporting-preview-928b9a70c4bee193b7057c35a444d210ab0fbd3c.png": "d8c55a395a620ddeb10ee0d76e548a1ab20e2ca7ab2e9a79045a1cb70cfbaad5",
+    "journey-artifacts/06-offline-workflows-radio-4bd72-appends-an-audited-addendum-chromium/attachments/real-radiology-signed-3720fcdbe78baa120494842fc3b59a6c7ead27c8.png": "e602d5c948624b62a7159cad5f46f3a4575c25d98e14f2424b097735928f9327",
+    "journey-artifacts/06-offline-workflows-care--fcac2-me-and-reopens-from-storage-chromium/attachments/real-care-plan-persisted-f4f846399686c5a4d005937124c1d460e3ee2982.png": "89e9a1faee8f4c91ba37aeda18342027c31d8bbc3796affc4db25b900b504b42",
+    "journey-artifacts/06-offline-workflows-compl-c897d-load-with-immutable-history-chromium/attachments/real-feedback-persisted-63b19a221fb0822a5fa7c11951b2863f410861d6.png": "cb13193a33154d5545382f9bdbd3e8398cb2a634c9c04ce9ee2c013312190c90"
+  },
+  "raw_report_sha256": "f3fbb6bc58370da48e7412b72560d9bf61c8cb7906128840a8352face126e57c",
+  "backend_log_sha256": "194bf22db317aff2a4e03c3fc9253fdddeb5e0806076240c7b7fc2cc924b81ae"
+}

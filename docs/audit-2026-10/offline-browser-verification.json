@@ -1,0 +1,859 @@
+{
+  "generated_at": "2026-10-11T18:26:18.263Z",
+  "scope": "Synthetic browser verification of all 13 new offline modules against a frozen production build; not clinical acceptance or an authorization/server-persistence proof.",
+  "surface": {
+    "kind": "Vite production preview",
+    "url": "http://127.0.0.1:15175",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "dist_index_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787",
+    "build_log": null,
+    "build_log_note": "The root build-log path was reused for the final rebuild. The initial bundle SHA was recorded before that rebuild."
+  },
+  "commands": {
+    "sweep": "ORB_BASE_URL=http://127.0.0.1:15175 node tests/visual/driver.cjs --filter=offline/ --out=tests/visual/offline-2026-10/verified",
+    "gate": "node tests/visual/ci-gate.cjs --in=tests/visual/offline-2026-10/verified",
+    "permanent_regressions": "node --test tests/visual/checks-regression.cjs tests/visual/driver-regression.cjs tests/visual/offline-fixtures-regression.cjs"
+  },
+  "run": {
+    "output": "tests/visual/offline-2026-10/verified",
+    "log": "/private/tmp/orb-offline-visual-verified.log",
+    "elapsed_seconds": 181,
+    "scenarios": 13,
+    "states": 78,
+    "captures": 156,
+    "findings": 0,
+    "gate_exit_code": 0,
+    "gate": {
+      "captures": 156,
+      "gating": 0,
+      "allowlisted": 0,
+      "visualVerify": 0,
+      "info": 0,
+      "gate": []
+    },
+    "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787",
+    "note": "Complete initial strict 156-capture run; its14 infection captures are superseded by final_followup in the effective partition."
+  },
+  "coverage": {
+    "expected": 156,
+    "actual": 156,
+    "missing": [],
+    "unexpected": [],
+    "duplicates": [],
+    "keys": [
+      "offline/care-plans--new-documentation-saved|dark",
+      "offline/care-plans--new-documentation-saved|light",
+      "offline/care-plans--new-patient-documentation-form|dark",
+      "offline/care-plans--new-patient-documentation-form|light",
+      "offline/care-plans--record-detail-history|dark",
+      "offline/care-plans--record-detail-history|light",
+      "offline/care-plans--revision-saved|dark",
+      "offline/care-plans--revision-saved|light",
+      "offline/care-plans|dark",
+      "offline/care-plans|light",
+      "offline/cssd--case-linked-custody-form|dark",
+      "offline/cssd--case-linked-custody-form|light",
+      "offline/cssd--checks-recorded|dark",
+      "offline/cssd--checks-recorded|light",
+      "offline/cssd--custody-issue-recorded|dark",
+      "offline/cssd--custody-issue-recorded|light",
+      "offline/cssd--cycle-checks|dark",
+      "offline/cssd--cycle-checks|light",
+      "offline/cssd--cycle-start-form|dark",
+      "offline/cssd--cycle-start-form|light",
+      "offline/cssd|dark",
+      "offline/cssd|light",
+      "offline/dialysis--new-documentation-saved|dark",
+      "offline/dialysis--new-documentation-saved|light",
+      "offline/dialysis--new-patient-documentation-form|dark",
+      "offline/dialysis--new-patient-documentation-form|light",
+      "offline/dialysis--record-detail-history|dark",
+      "offline/dialysis--record-detail-history|light",
+      "offline/dialysis--revision-saved|dark",
+      "offline/dialysis--revision-saved|light",
+      "offline/dialysis|dark",
+      "offline/dialysis|light",
+      "offline/emergency--new-documentation-saved|dark",
+      "offline/emergency--new-documentation-saved|light",
+      "offline/emergency--new-patient-documentation-form|dark",
+      "offline/emergency--new-patient-documentation-form|light",
+      "offline/emergency--record-detail-history|dark",
+      "offline/emergency--record-detail-history|light",
+      "offline/emergency--revision-saved|dark",
+      "offline/emergency--revision-saved|light",
+      "offline/emergency|dark",
+      "offline/emergency|light",
+      "offline/feedback--complaint-saved|dark",
+      "offline/feedback--complaint-saved|light",
+      "offline/feedback--new-complaint-form|dark",
+      "offline/feedback--new-complaint-form|light",
+      "offline/feedback--recorded-resolution|dark",
+      "offline/feedback--recorded-resolution|light",
+      "offline/feedback--resolution-form|dark",
+      "offline/feedback--resolution-form|light",
+      "offline/feedback--statement-and-history|dark",
+      "offline/feedback--statement-and-history|light",
+      "offline/feedback|dark",
+      "offline/feedback|light",
+      "offline/finance-tools--attribution-form|dark",
+      "offline/finance-tools--attribution-form|light",
+      "offline/finance-tools--balanced-journal-preview|dark",
+      "offline/finance-tools--balanced-journal-preview|light",
+      "offline/finance-tools--draft-statement|dark",
+      "offline/finance-tools--draft-statement|light",
+      "offline/finance-tools--explicit-account-form|dark",
+      "offline/finance-tools--explicit-account-form|light",
+      "offline/finance-tools--explicit-rule-form|dark",
+      "offline/finance-tools--explicit-rule-form|light",
+      "offline/finance-tools--mapping-saved|dark",
+      "offline/finance-tools--mapping-saved|light",
+      "offline/finance-tools--payment-attested|dark",
+      "offline/finance-tools--payment-attested|light",
+      "offline/finance-tools--payout-preview|dark",
+      "offline/finance-tools--payout-preview|light",
+      "offline/finance-tools--second-person-approval|dark",
+      "offline/finance-tools--second-person-approval|light",
+      "offline/finance-tools|dark",
+      "offline/finance-tools|light",
+      "offline/infection-surveillance--authored-isolation-end-form|dark",
+      "offline/infection-surveillance--authored-isolation-end-form|light",
+      "offline/infection-surveillance--case-classification-recorded|dark",
+      "offline/infection-surveillance--case-classification-recorded|light",
+      "offline/infection-surveillance--isolation-end-recorded|dark",
+      "offline/infection-surveillance--isolation-end-recorded|light",
+      "offline/infection-surveillance--manual-case-review|dark",
+      "offline/infection-surveillance--manual-case-review|light",
+      "offline/infection-surveillance--suppressed-reviewed-results|dark",
+      "offline/infection-surveillance--suppressed-reviewed-results|light",
+      "offline/infection-surveillance--validated-susceptibility-form|dark",
+      "offline/infection-surveillance--validated-susceptibility-form|light",
+      "offline/infection-surveillance|dark",
+      "offline/infection-surveillance|light",
+      "offline/mortuary--authorised-handover-form|dark",
+      "offline/mortuary--authorised-handover-form|light",
+      "offline/mortuary--custody-detail|dark",
+      "offline/mortuary--custody-detail|light",
+      "offline/mortuary--receipt-form|dark",
+      "offline/mortuary--receipt-form|light",
+      "offline/mortuary--receipt-saved|dark",
+      "offline/mortuary--receipt-saved|light",
+      "offline/mortuary--recorded-handover|dark",
+      "offline/mortuary--recorded-handover|light",
+      "offline/mortuary|dark",
+      "offline/mortuary|light",
+      "offline/perioperative--new-documentation-saved|dark",
+      "offline/perioperative--new-documentation-saved|light",
+      "offline/perioperative--new-patient-documentation-form|dark",
+      "offline/perioperative--new-patient-documentation-form|light",
+      "offline/perioperative--record-detail-history|dark",
+      "offline/perioperative--record-detail-history|light",
+      "offline/perioperative--revision-saved|dark",
+      "offline/perioperative--revision-saved|light",
+      "offline/perioperative|dark",
+      "offline/perioperative|light",
+      "offline/radiation-safety--officer-document-form|dark",
+      "offline/radiation-safety--officer-document-form|light",
+      "offline/radiation-safety--officer-evidence-saved|dark",
+      "offline/radiation-safety--officer-evidence-saved|light",
+      "offline/radiation-safety--source-evidence-detail|dark",
+      "offline/radiation-safety--source-evidence-detail|light",
+      "offline/radiation-safety--withdrawal-recorded|dark",
+      "offline/radiation-safety--withdrawal-recorded|light",
+      "offline/radiation-safety|dark",
+      "offline/radiation-safety|light",
+      "offline/radiology--new-documentation-saved|dark",
+      "offline/radiology--new-documentation-saved|light",
+      "offline/radiology--new-patient-documentation-form|dark",
+      "offline/radiology--new-patient-documentation-form|light",
+      "offline/radiology--record-detail-history|dark",
+      "offline/radiology--record-detail-history|light",
+      "offline/radiology--revision-saved|dark",
+      "offline/radiology--revision-saved|light",
+      "offline/radiology|dark",
+      "offline/radiology|light",
+      "offline/record-governance--file-custody|dark",
+      "offline/record-governance--file-custody|light",
+      "offline/record-governance--file-movement-recorded|dark",
+      "offline/record-governance--file-movement-recorded|light",
+      "offline/record-governance--hold-release-form|dark",
+      "offline/record-governance--hold-release-form|light",
+      "offline/record-governance--hold-released|dark",
+      "offline/record-governance--hold-released|light",
+      "offline/record-governance--patient-hold-detail|dark",
+      "offline/record-governance--patient-hold-detail|light",
+      "offline/record-governance--release-request-detail|dark",
+      "offline/record-governance--release-request-detail|light",
+      "offline/record-governance|dark",
+      "offline/record-governance|light",
+      "offline/reporting--csv-export|dark",
+      "offline/reporting--csv-export|light",
+      "offline/reporting--definition-saved|dark",
+      "offline/reporting--definition-saved|light",
+      "offline/reporting--filtered-query|dark",
+      "offline/reporting--filtered-query|light",
+      "offline/reporting--record-preview|dark",
+      "offline/reporting--record-preview|light",
+      "offline/reporting--summary-preview|dark",
+      "offline/reporting--summary-preview|light",
+      "offline/reporting|dark",
+      "offline/reporting|light"
+    ],
+    "modules": [
+      {
+        "module": "feedback",
+        "role": "admin",
+        "states": [
+          "default",
+          "statement-and-history",
+          "resolution-form",
+          "recorded-resolution",
+          "new-complaint-form",
+          "complaint-saved"
+        ],
+        "captures": 12
+      },
+      {
+        "module": "mortuary",
+        "role": "admin",
+        "states": [
+          "default",
+          "custody-detail",
+          "authorised-handover-form",
+          "recorded-handover",
+          "receipt-form",
+          "receipt-saved"
+        ],
+        "captures": 12
+      },
+      {
+        "module": "cssd",
+        "role": "admin",
+        "states": [
+          "default",
+          "cycle-checks",
+          "checks-recorded",
+          "case-linked-custody-form",
+          "custody-issue-recorded",
+          "cycle-start-form"
+        ],
+        "captures": 12
+      },
+      {
+        "module": "reporting",
+        "role": "admin",
+        "states": [
+          "default",
+          "filtered-query",
+          "record-preview",
+          "summary-preview",
+          "definition-saved",
+          "csv-export"
+        ],
+        "captures": 12
+      },
+      {
+        "module": "finance-tools",
+        "role": "admin",
+        "states": [
+          "default",
+          "balanced-journal-preview",
+          "explicit-account-form",
+          "mapping-saved",
+          "attribution-form",
+          "explicit-rule-form",
+          "payout-preview",
+          "draft-statement",
+          "second-person-approval",
+          "payment-attested"
+        ],
+        "captures": 20
+      },
+      {
+        "module": "record-governance",
+        "role": "admin",
+        "states": [
+          "default",
+          "patient-hold-detail",
+          "hold-release-form",
+          "hold-released",
+          "file-custody",
+          "file-movement-recorded",
+          "release-request-detail"
+        ],
+        "captures": 14
+      },
+      {
+        "module": "radiation-safety",
+        "role": "admin",
+        "states": [
+          "default",
+          "source-evidence-detail",
+          "officer-document-form",
+          "officer-evidence-saved",
+          "withdrawal-recorded"
+        ],
+        "captures": 10
+      },
+      {
+        "module": "infection-surveillance",
+        "role": "admin",
+        "states": [
+          "default",
+          "manual-case-review",
+          "case-classification-recorded",
+          "validated-susceptibility-form",
+          "suppressed-reviewed-results",
+          "authored-isolation-end-form",
+          "isolation-end-recorded"
+        ],
+        "captures": 14
+      },
+      {
+        "module": "radiology",
+        "role": "doctor",
+        "states": [
+          "default",
+          "record-detail-history",
+          "new-patient-documentation-form",
+          "new-documentation-saved",
+          "revision-saved"
+        ],
+        "captures": 10
+      },
+      {
+        "module": "care-plans",
+        "role": "doctor",
+        "states": [
+          "default",
+          "record-detail-history",
+          "new-patient-documentation-form",
+          "new-documentation-saved",
+          "revision-saved"
+        ],
+        "captures": 10
+      },
+      {
+        "module": "emergency",
+        "role": "doctor",
+        "states": [
+          "default",
+          "record-detail-history",
+          "new-patient-documentation-form",
+          "new-documentation-saved",
+          "revision-saved"
+        ],
+        "captures": 10
+      },
+      {
+        "module": "perioperative",
+        "role": "doctor",
+        "states": [
+          "default",
+          "record-detail-history",
+          "new-patient-documentation-form",
+          "new-documentation-saved",
+          "revision-saved"
+        ],
+        "captures": 10
+      },
+      {
+        "module": "dialysis",
+        "role": "doctor",
+        "states": [
+          "default",
+          "record-detail-history",
+          "new-patient-documentation-form",
+          "new-documentation-saved",
+          "revision-saved"
+        ],
+        "captures": 10
+      }
+    ],
+    "note": "Initial complete capture-key manifest; effective_offline_coverage and effective_partitions identify final-bundle replacements."
+  },
+  "fixture_guards": {
+    "unknown_get_and_mutation": "Unknown API fixture returns null, emits fixture-error, and fails the actual CI gate; no generic success fallback.",
+    "console": "Startup/action/pageerror and teardown failures are consumed exactly once; warnings do not gate.",
+    "isolation": "Fresh stateful synthetic fixture per browser context.",
+    "clinical_permissions": "Five clinical modules use doctor; admin clinical metadata remains read-only; nurse capabilities match current service."
+  },
+  "permanent_regressions": {
+    "passed": 13,
+    "failed": 0,
+    "skipped": 0,
+    "duration_ms": 6927.511667,
+    "log": "/private/tmp/orb-offline-visual-regressions-final.log"
+  },
+  "api_contract_review": "docs/audit-2026-10/offline-browser-api-contracts.json",
+  "focused_tests": {
+    "files": 3,
+    "passed": 18,
+    "log": "/private/tmp/orb-offline-workbench-contract-tests.log"
+  },
+  "inspected_screenshots": [
+    {
+      "module": "feedback",
+      "step": "recorded-resolution",
+      "theme": "dark",
+      "path": "docs/audit-2026-10/browser-evidence/offline-workflows/offline-feedback--recorded-resolution--dark.png",
+      "sha256": "eb6d3180e9ababa8c720fd8bdbba10066e4b3eba89a52d5b9adc733704d41040",
+      "source_output": "tests/visual/offline-2026-10/verified",
+      "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+    },
+    {
+      "module": "feedback",
+      "step": "recorded-resolution",
+      "theme": "light",
+      "path": "docs/audit-2026-10/browser-evidence/offline-workflows/offline-feedback--recorded-resolution--light.png",
+      "sha256": "2cdb32284c519854ea4008b5ed0d0da3d06334d9c4d914f282827c8dbaf39c27",
+      "source_output": "tests/visual/offline-2026-10/verified",
+      "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+    },
+    {
+      "module": "mortuary",
+      "step": "recorded-handover",
+      "theme": "dark",
+      "path": "docs/audit-2026-10/browser-evidence/offline-workflows/offline-mortuary--recorded-handover--dark.png",
+      "sha256": "98062b1706606e75d2e4aa88a61a426497aaf674ba4a90686ae3f8212900a3a6",
+      "source_output": "tests/visual/offline-2026-10/verified",
+      "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+    },
+    {
+      "module": "mortuary",
+      "step": "recorded-handover",
+      "theme": "light",
+      "path": "docs/audit-2026-10/browser-evidence/offline-workflows/offline-mortuary--recorded-handover--light.png",
+      "sha256": "fb9d6e147f5a98958bad97c79d65488d2876e8a9161b5e3fb5dd9c053db47587",
+      "source_output": "tests/visual/offline-2026-10/verified",
+      "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+    },
+    {
+      "module": "cssd",
+      "step": "custody-issue-recorded",
+      "theme": "dark",
+      "path": "docs/audit-2026-10/browser-evidence/offline-workflows/offline-cssd--custody-issue-recorded--dark.png",
+      "sha256": "c69533b767df2a5c1cbf8b177195c449b023ea0e5b14b9fff924889fa1c01450",
+      "source_output": "tests/visual/offline-2026-10/verified",
+      "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+    },
+    {
+      "module": "cssd",
+      "step": "custody-issue-recorded",
+      "theme": "light",
+      "path": "docs/audit-2026-10/browser-evidence/offline-workflows/offline-cssd--custody-issue-recorded--light.png",
+      "sha256": "806070d865b64bc8c6e89f303ed01de42c67fb29ffb9910352c26521c2a6170a",
+      "source_output": "tests/visual/offline-2026-10/verified",
+      "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+    },
+    {
+      "module": "reporting",
+      "step": "summary-preview",
+      "theme": "dark",
+      "path": "docs/audit-2026-10/browser-evidence/offline-workflows/offline-reporting--summary-preview--dark.png",
+      "sha256": "e23e63e01c84b9865e49858a152cfbb8a8093c1a716186a27b320f89b84909c2",
+      "source_output": "tests/visual/offline-2026-10/verified",
+      "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+    },
+    {
+      "module": "reporting",
+      "step": "summary-preview",
+      "theme": "light",
+      "path": "docs/audit-2026-10/browser-evidence/offline-workflows/offline-reporting--summary-preview--light.png",
+      "sha256": "cc1457e4213d8fb1d571a7c8cc5b8068139c0cd1f9bc5e1a7c62ab554d1291c7",
+      "source_output": "tests/visual/offline-2026-10/verified",
+      "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+    },
+    {
+      "module": "finance-tools",
+      "step": "payment-attested",
+      "theme": "dark",
+      "path": "docs/audit-2026-10/browser-evidence/offline-workflows/offline-finance-tools--payment-attested--dark.png",
+      "sha256": "2cbd339db8aaf4075d5b9c46d7b75825ec1bca9a5b53816dc7565830df5e967f",
+      "source_output": "tests/visual/offline-2026-10/verified",
+      "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+    },
+    {
+      "module": "finance-tools",
+      "step": "payment-attested",
+      "theme": "light",
+      "path": "docs/audit-2026-10/browser-evidence/offline-workflows/offline-finance-tools--payment-attested--light.png",
+      "sha256": "4cc335eeb98b9183c2900045dade6415b180e444e076a0a0afa03de9203078cc",
+      "source_output": "tests/visual/offline-2026-10/verified",
+      "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+    },
+    {
+      "module": "record-governance",
+      "step": "file-movement-recorded",
+      "theme": "dark",
+      "path": "docs/audit-2026-10/browser-evidence/offline-workflows/offline-record-governance--file-movement-recorded--dark.png",
+      "sha256": "35e82ef19cbb04c64800e67c65a9f5a8df7622924e9ff9747202c46414f15a60",
+      "source_output": "tests/visual/offline-2026-10/verified",
+      "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+    },
+    {
+      "module": "record-governance",
+      "step": "file-movement-recorded",
+      "theme": "light",
+      "path": "docs/audit-2026-10/browser-evidence/offline-workflows/offline-record-governance--file-movement-recorded--light.png",
+      "sha256": "707afd3966dbc2900109457214c098c7c83346bd448c8952f19e8c51e674f702",
+      "source_output": "tests/visual/offline-2026-10/verified",
+      "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+    },
+    {
+      "module": "radiation-safety",
+      "step": "officer-evidence-saved",
+      "theme": "dark",
+      "path": "docs/audit-2026-10/browser-evidence/offline-workflows/offline-radiation-safety--officer-evidence-saved--dark.png",
+      "sha256": "51f5d625d8f65d4b407a9f816fe2415ee82a41d71275dfc8bc69ac07a6783a9b",
+      "source_output": "tests/visual/offline-2026-10/verified",
+      "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+    },
+    {
+      "module": "radiation-safety",
+      "step": "officer-evidence-saved",
+      "theme": "light",
+      "path": "docs/audit-2026-10/browser-evidence/offline-workflows/offline-radiation-safety--officer-evidence-saved--light.png",
+      "sha256": "82260ed441198ecf429d239d1c8a574ccaf282f0e2fa6c580d7bff3c4f124968",
+      "source_output": "tests/visual/offline-2026-10/verified",
+      "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+    },
+    {
+      "module": "radiology",
+      "step": "record-detail-history",
+      "theme": "dark",
+      "path": "docs/audit-2026-10/browser-evidence/offline-workflows/offline-radiology--record-detail-history--dark.png",
+      "sha256": "8a9954cfedc9b98dd361c1b365341e220e4cec68d0011a12abdd078246869079",
+      "source_output": "tests/visual/offline-2026-10/verified",
+      "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+    },
+    {
+      "module": "radiology",
+      "step": "record-detail-history",
+      "theme": "light",
+      "path": "docs/audit-2026-10/browser-evidence/offline-workflows/offline-radiology--record-detail-history--light.png",
+      "sha256": "5dcb23c7fb95d70959c4b3f1ac5309d12de59b0166a5c9a2cb8ddda359b114db",
+      "source_output": "tests/visual/offline-2026-10/verified",
+      "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+    },
+    {
+      "module": "care-plans",
+      "step": "new-documentation-saved",
+      "theme": "dark",
+      "path": "docs/audit-2026-10/browser-evidence/offline-workflows/offline-care-plans--new-documentation-saved--dark.png",
+      "sha256": "84055a8d71d0f6a75cfe65dfd071034eb20d79f03daab9536117eb8376f65aea",
+      "source_output": "tests/visual/offline-2026-10/verified",
+      "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+    },
+    {
+      "module": "care-plans",
+      "step": "new-documentation-saved",
+      "theme": "light",
+      "path": "docs/audit-2026-10/browser-evidence/offline-workflows/offline-care-plans--new-documentation-saved--light.png",
+      "sha256": "70b1a1f2bde1ff72831cca19bc5a06bfe1ec8b3b71c6b3e3207c25d06cd0e6ba",
+      "source_output": "tests/visual/offline-2026-10/verified",
+      "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+    },
+    {
+      "module": "emergency",
+      "step": "new-documentation-saved",
+      "theme": "dark",
+      "path": "docs/audit-2026-10/browser-evidence/offline-workflows/offline-emergency--new-documentation-saved--dark.png",
+      "sha256": "0ac7e25cd894ca43c7adc331998f6c06896e60fdd8623186d0d66a61c114237c",
+      "source_output": "tests/visual/offline-2026-10/verified",
+      "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+    },
+    {
+      "module": "emergency",
+      "step": "new-documentation-saved",
+      "theme": "light",
+      "path": "docs/audit-2026-10/browser-evidence/offline-workflows/offline-emergency--new-documentation-saved--light.png",
+      "sha256": "fde46df37fef2d91d43b20cbbaf150453aa04900eb955341a08934593f0fcf70",
+      "source_output": "tests/visual/offline-2026-10/verified",
+      "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+    },
+    {
+      "module": "perioperative",
+      "step": "record-detail-history",
+      "theme": "dark",
+      "path": "docs/audit-2026-10/browser-evidence/offline-workflows/offline-perioperative--record-detail-history--dark.png",
+      "sha256": "052cac8a0dfcc5546694552e64ef1f4b26f6c17ed255a85695b17cae794fc916",
+      "source_output": "tests/visual/offline-2026-10/verified",
+      "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+    },
+    {
+      "module": "perioperative",
+      "step": "record-detail-history",
+      "theme": "light",
+      "path": "docs/audit-2026-10/browser-evidence/offline-workflows/offline-perioperative--record-detail-history--light.png",
+      "sha256": "834993d1369d5ae9472b88ff3a52a5503c6a262cc8045493f046e36d478ad9cd",
+      "source_output": "tests/visual/offline-2026-10/verified",
+      "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+    },
+    {
+      "module": "dialysis",
+      "step": "record-detail-history",
+      "theme": "dark",
+      "path": "docs/audit-2026-10/browser-evidence/offline-workflows/offline-dialysis--record-detail-history--dark.png",
+      "sha256": "16419be2c8a3dcb852fc46f71186f5c173675aec60d9a9ea194cf950d13666c2",
+      "source_output": "tests/visual/offline-2026-10/verified",
+      "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+    },
+    {
+      "module": "dialysis",
+      "step": "record-detail-history",
+      "theme": "light",
+      "path": "docs/audit-2026-10/browser-evidence/offline-workflows/offline-dialysis--record-detail-history--light.png",
+      "sha256": "b77748bfa097b84a168d4faa42068279858da24f0ce6bdfb89e992fee3367984",
+      "source_output": "tests/visual/offline-2026-10/verified",
+      "bundle_sha256": "a46b743f1f9257722be026fa28a93285aefc2ad115e0adc47d1cab5c93754787"
+    },
+    {
+      "module": "infection-surveillance",
+      "step": "suppressed-reviewed-results",
+      "theme": "dark",
+      "path": "docs/audit-2026-10/browser-evidence/offline-workflows-final/offline-infection-surveillance--suppressed-reviewed-results--dark.png",
+      "sha256": "6fa0d9c0a5cd55fe8ab01768a2ca9631926bdbd48f9a2f50716188918f2913e9",
+      "source_output": "tests/visual/offline-2026-10/final-followup",
+      "bundle_sha256": "c7a759ed29e706bb547eae838157a4de3919393fd8c88d521d13054d2a7577d2",
+      "inspection": "Hospital suppression remains explicit; actual result region scrolled to all three readable suppressed count columns."
+    },
+    {
+      "module": "infection-surveillance",
+      "step": "suppressed-reviewed-results",
+      "theme": "light",
+      "path": "docs/audit-2026-10/browser-evidence/offline-workflows-final/offline-infection-surveillance--suppressed-reviewed-results--light.png",
+      "sha256": "83058342fda307a3269f749de2a33b7fde2cba02834b1d971b8c057711617200",
+      "source_output": "tests/visual/offline-2026-10/final-followup",
+      "bundle_sha256": "c7a759ed29e706bb547eae838157a4de3919393fd8c88d521d13054d2a7577d2",
+      "inspection": "Hospital suppression remains explicit; actual result region scrolled to all three readable suppressed count columns."
+    }
+  ],
+  "fixes": [
+    "Unwrap reporting definitions and finance payout-statements response envelopes; preserve denial errors.",
+    "Reserve the common offline footer corner so pagination clears the floating Sage button.",
+    "Require explicit mutation fixtures and test unmatched GET and POST through the actual runner and gate.",
+    "Use role-accurate clinical fixtures and exact accessible selectors.",
+    "Provide keyboard-accessible horizontal scrolling for the susceptibility table, keeping suppression labels readable.",
+    "Add explicit non-generating Sage prefetch and disabled I-PASS prepare responses exposed by the strict legacy sweep."
+  ],
+  "pending_followup": null,
+  "source_sha256": {
+    "tests/visual/driver.cjs": "7e95b90f59809eb7035234a203b00c6204ec2f9b64affec49c568a16bfa9703c",
+    "tests/visual/fixtures.cjs": "c1f32f6606d762599d086ecac01d2bb79db97b7a00482c0a973ff4cd903f7167",
+    "tests/visual/offline-fixtures.cjs": "6ca94438e3fbb734ff48d4d73c2ff92972ee153a5bcc2bb1df78b1ef22ec5c93",
+    "tests/visual/offline-scenarios.cjs": "b3c78c2d802c88ef5d8f84dfa6c1dfe0a3a755915e887e82361f6861afebb4b3",
+    "tests/visual/driver-regression.cjs": "e8c8f43de8f345d2cf459691324f260aa4c2538d8dcad9fdf272411ac8f6f34d",
+    "tests/visual/offline-fixtures-regression.cjs": "eab6c8ec745f5f9347e9554182359201de26876ec56d2423b11fc4512ad6d22e"
+  },
+  "superseded_runs": [
+    {
+      "path": "tests/visual/offline-2026-10/initial",
+      "reason": "Aborted after obsolete exact-label selector."
+    },
+    {
+      "path": "tests/visual/offline-2026-10/contract-pass",
+      "reason": "Aborted after populated-textarea exact-label selector."
+    },
+    {
+      "path": "tests/visual/offline-2026-10/final",
+      "reason": "Full sweep superseded by strict unknown-mutation gating and corrected doctor/admin role contracts."
+    }
+  ],
+  "final_bundle_sha256": "c7a759ed29e706bb547eae838157a4de3919393fd8c88d521d13054d2a7577d2",
+  "superseded_inspected_screenshots": [
+    {
+      "module": "infection-surveillance",
+      "step": "suppressed-reviewed-results",
+      "theme": "dark",
+      "path": "docs/audit-2026-10/browser-evidence/offline-workflows/offline-infection-surveillance--suppressed-reviewed-results--dark.png",
+      "sha256": "69722f54bc79cc609668e591670b248564b3cb7cc87ce288814ea547bc55be65"
+    },
+    {
+      "module": "infection-surveillance",
+      "step": "suppressed-reviewed-results",
+      "theme": "light",
+      "path": "docs/audit-2026-10/browser-evidence/offline-workflows/offline-infection-surveillance--suppressed-reviewed-results--light.png",
+      "sha256": "80ea2a0102ebed586ce26ac5a0f9892afc4c8421f12d33ac48600209305758d3"
+    }
+  ],
+  "final_followup": {
+    "output": "tests/visual/offline-2026-10/final-followup",
+    "log": "/private/tmp/orb-offline-visual-final-followup.log",
+    "elapsed_seconds": 97,
+    "scenarios": 9,
+    "captures": 66,
+    "raw_findings": 41,
+    "gate_exit_code": 0,
+    "gate": {
+      "captures": 66,
+      "gating": 0,
+      "allowlisted": 1,
+      "visualVerify": 0,
+      "info": 40,
+      "gate": []
+    },
+    "bundle_sha256": "c7a759ed29e706bb547eae838157a4de3919393fd8c88d521d13054d2a7577d2",
+    "build_log": "/private/tmp/orb-rest-build-final.log",
+    "command": "ORB_BASE_URL=http://127.0.0.1:15175 node tests/visual/driver.cjs --filter=offline/infection-surveillance,doctor/vigil,doctor/patient-story,doctor/emar-safety,staff/handoff,night/doctor,sage/ --out=tests/visual/offline-2026-10/final-followup",
+    "source_sha256": {
+      "tests/visual/driver.cjs": "7e95b90f59809eb7035234a203b00c6204ec2f9b64affec49c568a16bfa9703c",
+      "tests/visual/fixtures.cjs": "da3b30bf38145998a9e9c2b127df787c6b107d0829d76a4592c4093700cbd3e6",
+      "tests/visual/offline-fixtures.cjs": "6ca94438e3fbb734ff48d4d73c2ff92972ee153a5bcc2bb1df78b1ef22ec5c93",
+      "tests/visual/offline-scenarios.cjs": "63caa6435c07d6803ce05a32cff713db70b8dafc02f46ba5ff2f885b8aeb4e0f"
+    }
+  },
+  "legacy_initial": {
+    "output": "tests/visual/offline-2026-10/legacy-strict",
+    "log": "/private/tmp/orb-offline-visual-legacy-strict.log",
+    "elapsed_seconds": 385,
+    "scenarios": 49,
+    "captures": 245,
+    "raw_findings": 183,
+    "gate_exit_code": 1,
+    "gate": {
+      "captures": 245,
+      "gating": 5,
+      "allowlisted": 15,
+      "visualVerify": 0,
+      "info": 163,
+      "gate": [
+        {
+          "scenario": "doctor/vigil",
+          "step": "detail",
+          "capture": "doctor/vigil--detail",
+          "theme": "dark",
+          "mode": "mocked",
+          "type": "console-error",
+          "severity": "major",
+          "selector": "",
+          "snippet": "",
+          "detail": "fixture-error: No visual fixture for POST /api/sage/prefetch"
+        },
+        {
+          "scenario": "doctor/patient-story",
+          "step": "news2-why",
+          "capture": "doctor/patient-story--news2-why",
+          "theme": "dark",
+          "mode": "mocked",
+          "type": "console-error",
+          "severity": "major",
+          "selector": "",
+          "snippet": "",
+          "detail": "fixture-error: No visual fixture for POST /api/sage/prefetch"
+        },
+        {
+          "scenario": "doctor/emar-safety",
+          "step": "administer-modal",
+          "capture": "doctor/emar-safety--administer-modal",
+          "theme": "dark",
+          "mode": "mocked",
+          "type": "console-error",
+          "severity": "major",
+          "selector": "",
+          "snippet": "",
+          "detail": "fixture-error: No visual fixture for POST /api/sage/prefetch"
+        },
+        {
+          "scenario": "staff/handoff",
+          "step": "default",
+          "capture": "staff/handoff",
+          "theme": "dark",
+          "mode": "mocked",
+          "type": "console-error",
+          "severity": "major",
+          "selector": "",
+          "snippet": "",
+          "detail": "fixture-error: No visual fixture for POST /api/ipass/PAT001/reasoned-assessment/prepare"
+        },
+        {
+          "scenario": "night/doctor",
+          "step": "detail",
+          "capture": "night/doctor--detail",
+          "theme": "night",
+          "mode": "mocked",
+          "type": "console-error",
+          "severity": "major",
+          "selector": "",
+          "snippet": "",
+          "detail": "fixture-error: No visual fixture for POST /api/sage/prefetch"
+        }
+      ]
+    },
+    "resolution": "Five gating findings were two missing known mutation contracts: Sage prefetch and I-PASS reasoned-assessment preparation. Explicit skipped/unavailable source contracts added; all five affected scenarios plus three Sage scenarios recaptured on the final bundle."
+  },
+  "effective_partitions": [
+    {
+      "output": "tests/visual/offline-2026-10/effective-offline",
+      "captures": 156,
+      "raw_findings": 0,
+      "retained_initial": 142,
+      "final_bundle_replacements": 14,
+      "replaced_scenarios": [
+        "offline/infection-surveillance"
+      ],
+      "missing": [],
+      "unexpected": [],
+      "duplicates": [],
+      "gate": {
+        "captures": 156,
+        "gating": 0,
+        "allowlisted": 0,
+        "visualVerify": 0,
+        "info": 0,
+        "gate": []
+      },
+      "gate_exit_code": 0,
+      "gate_log": "/private/tmp/orb-offline-visual-effective-offline-gate.log"
+    },
+    {
+      "output": "tests/visual/offline-2026-10/effective-legacy",
+      "captures": 245,
+      "raw_findings": 173,
+      "retained_initial": 193,
+      "final_bundle_replacements": 52,
+      "replaced_scenarios": [
+        "doctor/emar-safety",
+        "doctor/patient-story",
+        "doctor/vigil",
+        "night/doctor",
+        "sage/orb-omnipresence",
+        "sage/orb-text-only",
+        "sage/ward-brief-insights",
+        "staff/handoff"
+      ],
+      "missing": [],
+      "unexpected": [],
+      "duplicates": [],
+      "gate": {
+        "captures": 245,
+        "gating": 0,
+        "allowlisted": 10,
+        "visualVerify": 0,
+        "info": 163,
+        "gate": []
+      },
+      "gate_exit_code": 0,
+      "gate_log": "/private/tmp/orb-offline-visual-effective-legacy-gate.log"
+    }
+  ],
+  "effective_offline_coverage": {
+    "expected": 156,
+    "actual": 156,
+    "retained_initial_bundle": 142,
+    "final_bundle_replacements": 14,
+    "missing": [],
+    "unexpected": [],
+    "duplicates": [],
+    "note": "All 13 modules and both themes have complete coverage. 142 captures retain the earlier bundle; the 14 infection captures come from the final bundle. Shared transport and Sage changes are separately covered by the final scoped browser run and root real backend journeys."
+  },
+  "infection_readability_tests": {
+    "files": 1,
+    "passed": 6,
+    "failed": 0,
+    "log": "/private/tmp/orb-offline-infection-table-tests.log"
+  },
+  "preview_stopped": true
+}

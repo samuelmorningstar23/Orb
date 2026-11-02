@@ -1,0 +1,171 @@
+{
+  "schema": "orb.audit.restore-reader-inventory-verification/1",
+  "date": "2026-10-12",
+  "scope": "Bounded restore manifest completeness and static reader/typed-body inventory corrections; no clinical behavior or admission scope changes.",
+  "runtime": "/private/tmp/orb-ml-upgrade-20261012/bin/python",
+  "cwd": "/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb-inventory-final-20261012-2pbyebsl/source/server",
+  "source_copy_base": "/private/tmp/orb-ml-backend-shards-20261012-v3/source",
+  "overlaid_files": [
+    "server/tests/test_medorder_reader_registry.py",
+    "server/tests/test_opd_scope_drift.py",
+    "server/tests/test_ward_record_review.py",
+    "server/tests/test_bridge_current_stay.py",
+    "server/tests/test_warm_standby.py",
+    "scripts/lib/verify_restore.py"
+  ],
+  "command": [
+    "env",
+    "-u",
+    "ORB_DB_PATH",
+    "ORB_SKIP_KNOWLEDGE_BASE=1",
+    "HF_HUB_OFFLINE=1",
+    "TRANSFORMERS_OFFLINE=1",
+    "ORB_OLLAMA_HOST=http://127.0.0.1:9",
+    "ORB_SEPSIS_AUTOSTART=1",
+    "ORB_FHIR_EXPORT_DIR=/private/tmp/orb-inventory-final-exports",
+    "ORB_WATCHDOG_DIR=/private/tmp/orb-inventory-final-watchdog",
+    "/private/tmp/orb-ml-upgrade-20261012/bin/python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/test_medorder_reader_registry.py",
+    "tests/test_opd_scope_drift.py",
+    "tests/test_ward_record_review.py",
+    "tests/test_bridge_current_stay.py",
+    "tests/test_medorder_held_labels.py",
+    "tests/test_warm_standby.py"
+  ],
+  "result": {
+    "passed": 103,
+    "failed": 0,
+    "skipped": 1,
+    "seconds": 21.49,
+    "skip_reason": "Existing opt-in read-only real-appliance database check; not enabled."
+  },
+  "new_collected_cases": {
+    "total": 16,
+    "opd_public_annotation": 1,
+    "bound_vitals_filter": 1,
+    "warm_standby_generated_schema_and_missing_tables": 14
+  },
+  "source_hashes": {
+    "server/tests/test_medorder_reader_registry.py": "ea15cbf04371baf3a931e73db1bdbbd76277b15abe402657227214d216580073",
+    "server/tests/test_opd_scope_drift.py": "d3fde5d56fde84284a87c3c90eaa91781d0337418a2715adab46b5fb91666baf",
+    "server/tests/test_ward_record_review.py": "1b993429b6ff84f926045ab56dbc99173ffe0622c2a4314be97c7af6c5b90e91",
+    "server/tests/test_bridge_current_stay.py": "68004eaeb1bdcda6fd9d990312710bafb868f3ee9b3951349207ff6c05077a40",
+    "server/tests/test_warm_standby.py": "260ecc81c2a65a70caa7375ee959e52606b70c0e9042c7d975f029b45b381fab",
+    "scripts/lib/verify_restore.py": "26e8a8fdb2dafc1ade5d9fd48cd7c143003cd822bdec47cb6dbad2b095433058"
+  },
+  "log": "/private/tmp/orb-medorder-opd-restore-final-escalated-20261012.log",
+  "log_sha256": "25ca7701ad02d5fd74675c87daa5bf410f39db630b9cbb22963b7238340574b5",
+  "before": {
+    "medication_registry_and_opd_inventory": {
+      "failed": 4,
+      "passed": 13,
+      "log": "/private/tmp/orb-medorder-opd-inventory-before-20261012.log"
+    },
+    "voided_vitals_inventory": {
+      "failed": 1,
+      "log": "/private/tmp/orb-vitals-reader-inventory-before-20261012.log"
+    },
+    "sandbox_attempt": {
+      "failed": 20,
+      "passed": 83,
+      "skipped": 1,
+      "reason": "All20 failures are denied localhost socket binding in synthetic restore fixtures. Repeated identical selection with required local socket permission passed.",
+      "log": "/private/tmp/orb-medorder-opd-restore-final-20261012.log"
+    }
+  },
+  "restore_manifest": {
+    "tables": 199,
+    "groups": 47,
+    "added_tables": 45,
+    "new_groups": {
+      "feedback": [
+        "feedback_cases",
+        "feedback_events"
+      ],
+      "mortuary": [
+        "mortuary_slots",
+        "mortuary_cases",
+        "mortuary_events"
+      ],
+      "cssd": [
+        "cssd_sets",
+        "cssd_set_items",
+        "cssd_packs",
+        "cssd_cycles",
+        "cssd_cycle_packs",
+        "cssd_issues",
+        "cssd_events"
+      ],
+      "reporting": [
+        "report_definitions"
+      ],
+      "finance": [
+        "finance_account_mappings",
+        "finance_charge_attributions",
+        "finance_journal_exports",
+        "finance_journal_export_patients",
+        "finance_payout_rules",
+        "finance_payout_statements",
+        "finance_payout_lines",
+        "finance_payout_claims"
+      ],
+      "radiology": [
+        "ris_studies",
+        "ris_studies_events"
+      ],
+      "care plans": [
+        "care_plans",
+        "care_plans_events"
+      ],
+      "emergency": [
+        "emergency_visits",
+        "emergency_visits_events"
+      ],
+      "perioperative": [
+        "perioperative_records",
+        "perioperative_records_events"
+      ],
+      "dialysis": [
+        "dialysis_sessions",
+        "dialysis_sessions_events"
+      ],
+      "record governance": [
+        "record_legal_holds",
+        "mrd_files",
+        "mrd_release_requests",
+        "record_governance_events"
+      ],
+      "infection surveillance": [
+        "infection_definitions",
+        "infection_windows",
+        "infection_cases",
+        "infection_exposure_days",
+        "infection_susceptibility",
+        "infection_isolation_records",
+        "infection_events",
+        "infection_requests"
+      ],
+      "radiation safety": [
+        "radiation_safety_records",
+        "radiation_safety_events"
+      ]
+    },
+    "behavior": "All45 tables are required under restore/drill schema-policy=fail, even while the modules are disabled. Backup schema-policy=warn remains unchanged. Existing site-configured nonempty policy remains unchanged.",
+    "generated_schema_guard": "The reviewed m0083 generator executes only on a disposable in-memory SQLite schema and its actual5parents+5historytables are rederived; unknown dynamic DDL elsewhere still fails.",
+    "missing_table_regression": "Each of all45 tables is removed individually from an otherwise complete empty synthetic schema; the real verifier must fail, and must pass again after that table is recreated."
+  },
+  "inventory_corrections": [
+    "Move labelled medication reader registry entry from bridge_routes to bridge_stay, where the query moved. Both held_at and hold_reason remain mandatory in every labelled query; real portal held-status/privacy cases pass.",
+    "Replace removed private FastAPI ModelField.type_ access with resolved public endpoint type hints; retain actual body_field presence and exact outpatient arm call assertion, plus negative untyped/wrong-model/unresolved annotation cases.",
+    "Recognize only a directly interpolated statically bound WHERE predicate containing voided_at IS NULL; resets, conditional resets, OR appends and different variables are rejected. No unfiltered-vitals exception added. Real portal regression proves a newer voided observation cannot replace the current valid reading."
+  ],
+  "existing_policy_boundary": "check_schema_version intentionally warns rather than fails when backup schema is newer than the reading build, even under policy=fail, and instructs restoration onto that newer build. This pre-existing behavior was not changed or accepted as cross-version compatibility; newer-build restore compatibility is outside this bounded verification.",
+  "limits": [
+    "No live database, backups, uploads, model weights or external services accessed. Encrypted backup/restore cases use disposable fixtures only.",
+    "The104-case selection includes1 deliberately opt-in live-appliance skip. No all-green full-suite outcome is inferred; root owns the subsequent complete v4 run.",
+    "Static source inventories remain bounded source evidence; the existing real portal/scope and encrypted restore tests provide behavioral evidence."
+  ]
+}

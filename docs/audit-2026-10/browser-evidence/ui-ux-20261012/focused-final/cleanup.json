@@ -1,0 +1,9 @@
+{
+  "owned_app_port": 18122,
+  "connect_ex": 61,
+  "closed": true,
+  "browser_contexts_closed": true,
+  "owned_backends_completed_graceful_shutdown": true,
+  "model_inference_endpoint": "closedloopbackport9",
+  "shared_ollama_requests": false
+}

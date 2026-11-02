@@ -1,0 +1,5 @@
+{
+  "work": "/private/tmp/orb-security-assessment-20261012-hvm7u_vm",
+  "source": "/private/tmp/orb-security-assessment-20261012-hvm7u_vm/source",
+  "isolation": "Application/reference source and built assets only; no live env, DB, uploads, backups, model weights or keys copied."
+}

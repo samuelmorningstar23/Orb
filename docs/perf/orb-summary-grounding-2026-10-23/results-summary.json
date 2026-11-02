@@ -1,0 +1,975 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-10-23T09:33:35.051378+00:00",
+  "evidence_kind": "offline_synthetic_source_contract_and_capacity_not_clinical_validation",
+  "selected_runs": {
+    "Original native": "run-f-resident-serial-load",
+    "MLX": "run-d-mlx"
+  },
+  "summary_contract": "source-facts-v1",
+  "source_checker_is_exact_not_lexical": true,
+  "summary_behavior": "Model orders every supplied fact ID; server renders exact facts, provenance, unknowns and scope",
+  "fixture": {
+    "synthetic_patients": 100,
+    "populated_charts": 1,
+    "empty_charts": 99
+  },
+  "direct_speedup_comparison_to_2026_10_22_valid": false,
+  "targets_seconds": {
+    "general": 3.0,
+    "patient": 5.0,
+    "department": 15.0
+  },
+  "request_plan": {
+    "general": 67,
+    "patient": 67,
+    "department": 66
+  },
+  "selected_runs_are_exact_body_paired": false,
+  "clinical_equivalence_established": false,
+  "hardware_purchase_qualified": false,
+  "cpu_verification": {
+    "core_and_lease_disjoint_tests": 906,
+    "resident_harness_separate_tests": 8,
+    "serial_loader_worker_test_batch": 75,
+    "combined_test_total_claimed": false,
+    "clinical_cases": false,
+    "registry": "verification.json",
+    "earlier_overlapping_groups_added": false
+  },
+  "verification_registry": {
+    "core_regression_test_batches": [
+      {
+        "passed": 229,
+        "files": [
+          "server/tests/test_sage_cache_vitals_coherence.py",
+          "server/tests/test_sage_read_only_patient_summary.py",
+          "server/tests/test_summary_grounding.py",
+          "server/tests/test_patient_summary_snapshots.py",
+          "server/tests/test_sage_summary_evidence.py",
+          "server/tests/test_disconnect_stream.py",
+          "tests/test_capacity_answer_quality.py",
+          "tests/test_mlx_workflow_cleanup.py"
+        ]
+      },
+      {
+        "passed": 635,
+        "files": [
+          "server/tests/test_sage_department_scope.py",
+          "server/tests/test_sage_facility_locator.py",
+          "server/tests/test_sage_inference_outcome.py",
+          "server/tests/test_sage_sticky_anchor.py",
+          "server/tests/test_action_lane_gates.py",
+          "server/tests/test_sage_streaming.py",
+          "server/tests/test_sage_history_marker.py",
+          "server/tests/test_sage_turn_atomicity.py",
+          "server/tests/test_local_model_stream_contract.py"
+        ]
+      },
+      {
+        "passed": 42,
+        "files": [
+          "tests/test_benchmark_model_residency_lease.py"
+        ]
+      }
+    ],
+    "core_and_lease_tests_total_disjoint_files": 906,
+    "ruff_F_I": "passed_on_changed_core_and_benchmark_files",
+    "focused_mypy": "summary_grounding.py and patient_summary_service.py passed with follow-imports=skip; summary_grounding.py and disconnect_stream.py also passed follow-imports=silent",
+    "fake_model_smoke": {
+      "real_inference": false,
+      "http_successful": 6,
+      "http_total": 6,
+      "source_contract_patient_passed": 2,
+      "source_contract_patient_total": 2
+    },
+    "clinical_validation": false,
+    "capacity_qualification": false,
+    "resident_harness_cpu_tests_passed": 8,
+    "resident_harness_ruff": "passed",
+    "resident_harness_mypy": "passed",
+    "serial_loader_worker_test_batch": {
+      "passed": 75,
+      "scope": "CPU worker/memory and tiny complete XLMRoberta checkpoint bitwise equality; not a production-checkpoint clinical test",
+      "ruff_F_I": "passed",
+      "focused_mypy": "passed"
+    }
+  },
+  "loader_audit": {
+    "scope": "Installed-source audit and tiny synthetic CPU checkpoint equivalence; not production model memory, latency or clinical validation",
+    "installed_versions": {
+      "transformers": "5.19.0",
+      "torch": "2.14.1"
+    },
+    "findings": [
+      {
+        "source": "modeling_utils.py",
+        "lines": [
+          4098,
+          4100
+        ],
+        "finding": "low_cpu_mem_usage is explicitly popped as no longer used; adding True would be a no-op"
+      },
+      {
+        "source": "modeling_utils.py",
+        "lines": [
+          3734,
+          3761
+        ],
+        "finding": "Ordinary non-Deepspeed model construction already uses torch.device(meta)"
+      },
+      {
+        "source": "modeling_utils.py",
+        "lines": [
+          363,
+          366
+        ],
+        "finding": "Zip-format bin checkpoint loading already uses torch.load mmap=True"
+      },
+      {
+        "source": "modeling_utils.py",
+        "lines": [
+          4455,
+          4478
+        ],
+        "finding": "Safetensors CPU loading uses mmap-backed lazy get_slice materialization"
+      },
+      {
+        "source": "core_model_loading.py",
+        "lines": [
+          1233,
+          1271,
+          1624,
+          1636
+        ],
+        "finding": "Default up-to-four-thread eager parameter materialization is disabled by HF_DEACTIVATE_ASYNC_LOAD=1; the synchronous path returns deferred callables to avoid saturating CPU memory during conversion"
+      }
+    ],
+    "change": {
+      "file": "server/services/knowledge_worker.py",
+      "entrypoint": "_worker_init",
+      "setting": "HF_DEACTIVATE_ASYNC_LOAD=1 forced before Torch/HF imports",
+      "unchanged": [
+        "checkpoint files",
+        "dtype selection",
+        "dtype conversion",
+        "device placement",
+        "runtime precision",
+        "forward math",
+        "tokenization",
+        "batches",
+        "candidate counts",
+        "quality thresholds",
+        "memory guards"
+      ]
+    },
+    "verification": {
+      "file": "server/tests/test_knowledge_worker_serial_loading.py",
+      "architectures": [
+        "XLMRobertaModel",
+        "XLMRobertaForSequenceClassification"
+      ],
+      "fixture": "Complete tiny locally generated CPU float32 safetensors checkpoints; 1 layer, hidden size16, vocabulary32",
+      "assertions": [
+        "Async path actually creates its materialization pool while serial path creates none",
+        "Every loaded state_dict tensor has exact key/shape/dtype and bitwise-equal bytes against both the other loader and the original synthetic checkpoint",
+        "Nonpersistent buffers are bitwise equal",
+        "Embedding hidden states and pooled output, or classifier logits, are bitwise equal on fixed CPU inputs",
+        "Checkpoint SHA256 remains unchanged",
+        "Worker overrides incoming flag0 before Torch import",
+        "No model downloads or GPU inference"
+      ]
+    },
+    "limitations": [
+      "Synthetic tensor/output equivalence does not measure installed full BGE checkpoint peak memory or prove clinical quality",
+      "Serial loading may not materially reduce peak memory because checkpoint loading is already mapped/lazy",
+      "The subsequent whole-model CPU half conversion and MPS transfer remain unchanged",
+      "No production-model download, GPU test or memory-threshold relaxation was performed by this audit"
+    ],
+    "installed_source_sha256": {
+      "modeling_utils.py": "037ef3ca1d0fab4e080bae880adb5c24d68d191e0bd1fe0d626f14f0636ae448",
+      "core_model_loading.py": "c5b6bcdb6401a3cfdf825bc979d41ac3e7e075e09459021363dce5e68c54de22"
+    }
+  },
+  "final_integrity": {
+    "frozen_files": 71,
+    "source_changes_since_F": [],
+    "restoration_and_cleanup": [
+      {
+        "run": "run-a-native",
+        "restoration": "restored_and_verified"
+      },
+      {
+        "run": "run-b-native-retry",
+        "restoration": "restored_and_verified"
+      },
+      {
+        "run": "run-c-native-p1",
+        "restoration": "restored_and_verified"
+      },
+      {
+        "run": "run-d-mlx",
+        "restoration": "restored_and_verified"
+      },
+      {
+        "run": "run-e-resident-original",
+        "restoration": "restored_and_verified",
+        "owned_proxy_exit_observed": true
+      },
+      {
+        "run": "run-f-resident-serial-load",
+        "restoration": "restored_and_verified",
+        "owned_proxy_exit_observed": true
+      }
+    ]
+  },
+  "real_model_summary_validation_status": "blocked_by_host_memory_pressure",
+  "real_200_request_measurement_observed": false,
+  "no_200_burst_is_not_zero_of_200_measurement": true,
+  "all_saved_runs_restored": true,
+  "snapshots": [
+    {
+      "name": "sources",
+      "manifest": "sources/manifest.json",
+      "file_count": 68,
+      "snapshot_hash_mismatches": [],
+      "current_workspace_differences": [
+        "scripts/benchmark_model_residency_lease.py",
+        "server/services/knowledge_worker.py"
+      ]
+    },
+    {
+      "name": "sources-c-onward",
+      "manifest": "sources-c-onward/manifest.json",
+      "file_count": 68,
+      "snapshot_hash_mismatches": [],
+      "current_workspace_differences": [
+        "server/services/knowledge_worker.py"
+      ]
+    },
+    {
+      "name": "sources-e",
+      "manifest": "sources-e/manifest.json",
+      "file_count": 70,
+      "snapshot_hash_mismatches": [],
+      "current_workspace_differences": [
+        "server/services/knowledge_worker.py"
+      ]
+    },
+    {
+      "name": "sources-f",
+      "manifest": "sources-f/manifest.json",
+      "file_count": 71,
+      "snapshot_hash_mismatches": [],
+      "current_workspace_differences": []
+    }
+  ],
+  "runs": [
+    {
+      "run": "run-a-native",
+      "engine": "ollama",
+      "status": "aborted",
+      "report": "run-a-native/ollama-p2-full-rag/report.json",
+      "report_sha256": "d018fad87430d545ac54e7968c142cb4b6c8a236bedaa44c431ddb0119ad0437",
+      "abort_reason": "compression_growth_over_4_gib",
+      "resource_guard_trigger": {
+        "pressure_sample_index": 8,
+        "reason": "compression_growth_over_4_gib",
+        "evidence": "recorded_before_owned_termination",
+        "monitor_exception_observed": true,
+        "monitor_state": "completed"
+      },
+      "model": {
+        "model": "medgemma:27b",
+        "model_digest": "sha256:4b97da6b21a8fb1405a0d1efee462bfd6c4d3c46307bac8b34373835f07ca758",
+        "weight_bytes": 17397211520,
+        "manifest_sha256": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+        "quantization": "Q4_K_M",
+        "swa_full": "off",
+        "prefix_cache_mib": 0,
+        "idle_slot_prompt_cache": false,
+        "prompt_cache_requested": false,
+        "context_per_request": 8192,
+        "kv_type": "f16",
+        "memory_estimate_policy": "unchanged_conservative_4_gib_per_slot"
+      },
+      "parallel": 2,
+      "configuration_scope": "actual_Orb_full_RAG_synthetic_records_offline_candidate_comparison",
+      "owns_inference_engine": true,
+      "resident_attestation": null,
+      "memory_preflight": {
+        "available_bytes": 55662776156,
+        "required_bytes": 47461982592
+      },
+      "flags": {
+        "full_retrieval_integrity_verified": false,
+        "summary_task_regression_passed": false,
+        "strict_200_latency_targets_demonstrated": false,
+        "clinical_equivalence_qualified": false,
+        "production_purchase_gate_passed": false
+      },
+      "phases": [],
+      "retrieval_call_counters": null,
+      "initial_retrieval_call_counters": null,
+      "warmup": null,
+      "retrieval_output_reuse": null,
+      "retrieval_executor": null,
+      "retrieval_startup_proof": null,
+      "mps_unused_cache_release": null,
+      "system_pressure": {
+        "scope": "system_wide_not_daemon_rss_or_gpu_peak",
+        "samples": 11,
+        "minimum_os_free_percentage": 46,
+        "maximum_compressed_bytes": 15607611392,
+        "maximum_compression_growth_bytes": 7562149888,
+        "swapout_growth_bytes": 0
+      },
+      "native_storage_observations": {
+        "startup_candidate_admission": {
+          "required_bytes": 47461982592,
+          "available_bytes": 54975581388,
+          "memory_guard_passed": true
+        },
+        "observed_kv_buffers_mib": [],
+        "observed_total_kv_gib": null,
+        "observed_context_per_sequence": [],
+        "runner_confirmed_ram_prompt_cache_disabled": false,
+        "kv_is_active_generation_storage_not_optional_prompt_archive": true
+      },
+      "matching_snapshots": [
+        {
+          "name": "sources",
+          "covered_recorded_sources": 61,
+          "recorded_source_count": 61
+        },
+        {
+          "name": "sources-c-onward",
+          "covered_recorded_sources": 61,
+          "recorded_source_count": 61
+        },
+        {
+          "name": "sources-e",
+          "covered_recorded_sources": 61,
+          "recorded_source_count": 61
+        }
+      ],
+      "restoration": {
+        "lease_status": "experiment_finished",
+        "status": "restored_and_verified",
+        "all_original_residents_identity_and_context_verified": true,
+        "models": [
+          {
+            "name": "medgemma:4b",
+            "digest": "9fe4e9a6c9bda2d007bb595515550eafbc8e226622adff9257f3241eba334c4d",
+            "context_length": 4096,
+            "expires_at": "2319-02-02T14:19:35.353817807+05:30"
+          },
+          {
+            "name": "medgemma:27b",
+            "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+            "context_length": 8192,
+            "expires_at": "2319-02-02T14:19:32.441539807+05:30"
+          }
+        ],
+        "auto_reloaded_original_residents": [
+          {
+            "name": "medgemma:4b",
+            "digest": "9fe4e9a6c9bda2d007bb595515550eafbc8e226622adff9257f3241eba334c4d",
+            "context_length": 4096,
+            "indefinite_residency_verified": true
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-b-native-retry",
+      "engine": "ollama",
+      "status": "aborted",
+      "report": "run-b-native-retry/ollama-p2-full-rag/report.json",
+      "report_sha256": "a2624ba580e11d0941d1e5a5b0596393dfe879c4773583ed125d80ff2a239664",
+      "abort_reason": "Owned candidate exited during qualification.",
+      "resource_guard_trigger": null,
+      "model": {
+        "model": "medgemma:27b",
+        "model_digest": "sha256:4b97da6b21a8fb1405a0d1efee462bfd6c4d3c46307bac8b34373835f07ca758",
+        "weight_bytes": 17397211520,
+        "manifest_sha256": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+        "quantization": "Q4_K_M",
+        "swa_full": "off",
+        "prefix_cache_mib": 0,
+        "idle_slot_prompt_cache": false,
+        "prompt_cache_requested": false,
+        "context_per_request": 8192,
+        "kv_type": "f16",
+        "memory_estimate_policy": "unchanged_conservative_4_gib_per_slot"
+      },
+      "parallel": 2,
+      "configuration_scope": "actual_Orb_full_RAG_synthetic_records_offline_candidate_comparison",
+      "owns_inference_engine": true,
+      "resident_attestation": null,
+      "memory_preflight": {
+        "available_bytes": 48790828482,
+        "required_bytes": 47461982592
+      },
+      "flags": {
+        "full_retrieval_integrity_verified": false,
+        "summary_task_regression_passed": false,
+        "strict_200_latency_targets_demonstrated": false,
+        "clinical_equivalence_qualified": false,
+        "production_purchase_gate_passed": false
+      },
+      "phases": [],
+      "retrieval_call_counters": null,
+      "initial_retrieval_call_counters": null,
+      "warmup": null,
+      "retrieval_output_reuse": null,
+      "retrieval_executor": null,
+      "retrieval_startup_proof": null,
+      "mps_unused_cache_release": {
+        "observation_status": "numeric_events_only",
+        "total_records": 1,
+        "total_released_bytes": 1073741824,
+        "records_truncated": false,
+        "interpretation": "Cumulative bytes returned over repeated allocator releases; not peak RAM saved or freed capacity"
+      },
+      "system_pressure": {
+        "scope": "system_wide_not_daemon_rss_or_gpu_peak",
+        "samples": 10,
+        "minimum_os_free_percentage": 66,
+        "maximum_compressed_bytes": 12231360512,
+        "maximum_compression_growth_bytes": 1606975488,
+        "swapout_growth_bytes": 0
+      },
+      "native_storage_observations": {
+        "startup_candidate_admission": {
+          "required_bytes": 47461982592,
+          "available_bytes": 47416438947,
+          "memory_guard_passed": false
+        },
+        "observed_kv_buffers_mib": [],
+        "observed_total_kv_gib": null,
+        "observed_context_per_sequence": [],
+        "runner_confirmed_ram_prompt_cache_disabled": false,
+        "kv_is_active_generation_storage_not_optional_prompt_archive": true
+      },
+      "matching_snapshots": [
+        {
+          "name": "sources",
+          "covered_recorded_sources": 61,
+          "recorded_source_count": 61
+        },
+        {
+          "name": "sources-c-onward",
+          "covered_recorded_sources": 61,
+          "recorded_source_count": 61
+        },
+        {
+          "name": "sources-e",
+          "covered_recorded_sources": 61,
+          "recorded_source_count": 61
+        }
+      ],
+      "restoration": {
+        "lease_status": "experiment_finished",
+        "status": "restored_and_verified",
+        "all_original_residents_identity_and_context_verified": true,
+        "models": [
+          {
+            "name": "medgemma:27b",
+            "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+            "context_length": 8192,
+            "expires_at": "2319-02-02T14:20:40.272078807+05:30"
+          },
+          {
+            "name": "medgemma:4b",
+            "digest": "9fe4e9a6c9bda2d007bb595515550eafbc8e226622adff9257f3241eba334c4d",
+            "context_length": 4096,
+            "expires_at": "2319-02-02T14:19:35.353817807+05:30"
+          }
+        ],
+        "auto_reloaded_original_residents": []
+      }
+    },
+    {
+      "run": "run-c-native-p1",
+      "engine": "ollama",
+      "status": "aborted",
+      "report": "run-c-native-p1/ollama-p1-full-rag/report.json",
+      "report_sha256": "31d6f4e6976359462b49f80ce84830a997f79688bccfed4f05e51be796079395",
+      "abort_reason": "compression_growth_over_4_gib",
+      "resource_guard_trigger": {
+        "pressure_sample_index": 11,
+        "reason": "compression_growth_over_4_gib",
+        "evidence": "recorded_before_owned_termination",
+        "monitor_exception_observed": true,
+        "monitor_state": "completed"
+      },
+      "model": {
+        "model": "medgemma:27b",
+        "model_digest": "sha256:4b97da6b21a8fb1405a0d1efee462bfd6c4d3c46307bac8b34373835f07ca758",
+        "weight_bytes": 17397211520,
+        "manifest_sha256": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+        "quantization": "Q4_K_M",
+        "swa_full": "off",
+        "prefix_cache_mib": 0,
+        "idle_slot_prompt_cache": false,
+        "prompt_cache_requested": false,
+        "context_per_request": 8192,
+        "kv_type": "f16",
+        "memory_estimate_policy": "unchanged_conservative_4_gib_per_slot"
+      },
+      "parallel": 1,
+      "configuration_scope": "actual_Orb_full_RAG_synthetic_records_offline_candidate_comparison",
+      "owns_inference_engine": true,
+      "resident_attestation": null,
+      "memory_preflight": {
+        "available_bytes": 50165218017,
+        "required_bytes": 43167015296
+      },
+      "flags": {
+        "full_retrieval_integrity_verified": false,
+        "summary_task_regression_passed": false,
+        "strict_200_latency_targets_demonstrated": false,
+        "clinical_equivalence_qualified": false,
+        "production_purchase_gate_passed": false
+      },
+      "phases": [],
+      "retrieval_call_counters": null,
+      "initial_retrieval_call_counters": null,
+      "warmup": null,
+      "retrieval_output_reuse": null,
+      "retrieval_executor": null,
+      "retrieval_startup_proof": null,
+      "mps_unused_cache_release": null,
+      "system_pressure": {
+        "scope": "system_wide_not_daemon_rss_or_gpu_peak",
+        "samples": 14,
+        "minimum_os_free_percentage": 36,
+        "maximum_compressed_bytes": 18076450816,
+        "maximum_compression_growth_bytes": 5610078208,
+        "swapout_growth_bytes": 0
+      },
+      "native_storage_observations": {
+        "startup_candidate_admission": {
+          "required_bytes": 43167015296,
+          "available_bytes": 49478023249,
+          "memory_guard_passed": true
+        },
+        "observed_kv_buffers_mib": [
+          640.0,
+          624.0
+        ],
+        "observed_total_kv_gib": 1.234375,
+        "observed_context_per_sequence": [
+          8192
+        ],
+        "runner_confirmed_ram_prompt_cache_disabled": false,
+        "kv_is_active_generation_storage_not_optional_prompt_archive": true
+      },
+      "matching_snapshots": [
+        {
+          "name": "sources",
+          "covered_recorded_sources": 61,
+          "recorded_source_count": 61
+        },
+        {
+          "name": "sources-c-onward",
+          "covered_recorded_sources": 61,
+          "recorded_source_count": 61
+        },
+        {
+          "name": "sources-e",
+          "covered_recorded_sources": 61,
+          "recorded_source_count": 61
+        }
+      ],
+      "restoration": {
+        "lease_status": "experiment_finished",
+        "status": "restored_and_verified",
+        "all_original_residents_identity_and_context_verified": true,
+        "models": [
+          {
+            "name": "medgemma:27b",
+            "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+            "context_length": 8192,
+            "expires_at": "2319-02-02T14:23:52.588813807+05:30"
+          },
+          {
+            "name": "medgemma:4b",
+            "digest": "9fe4e9a6c9bda2d007bb595515550eafbc8e226622adff9257f3241eba334c4d",
+            "context_length": 4096,
+            "expires_at": "2319-02-02T14:19:35.353817807+05:30"
+          }
+        ],
+        "auto_reloaded_original_residents": []
+      }
+    },
+    {
+      "run": "run-d-mlx",
+      "engine": "mlx",
+      "status": "aborted",
+      "report": "run-d-mlx/mlx-p4-full-rag/report.json",
+      "report_sha256": "2fbafe7122b743914088adba831f7e2c51f6cd0daa461fbcc8cf45d7ced547cb",
+      "abort_reason": "compression_growth_over_4_gib",
+      "resource_guard_trigger": {
+        "pressure_sample_index": 11,
+        "reason": "compression_growth_over_4_gib",
+        "evidence": "recorded_before_owned_termination",
+        "monitor_exception_observed": true,
+        "monitor_state": "completed"
+      },
+      "model": {
+        "model": "medgemma:27b",
+        "kind": "same_source_separately_requantised_mlx_candidate",
+        "weights_bytes": 19478730384,
+        "kv_budget_bytes": 4429185024,
+        "kv_element_bytes": 2,
+        "activation_policy": "mixed_f32_residual_f16_projection",
+        "quantised_kv": false,
+        "clinical_equivalence": "not_qualified",
+        "loading_mode": "mixed-staged",
+        "checksum_io": {
+          "large_safetensors_uncached_fd_count": 435
+        },
+        "batching_enabled": true,
+        "prefix_cache_entry_limit": 0,
+        "prefix_cache_byte_limit": 8589934592,
+        "http_listen_backlog": 256,
+        "prefill_step_size": 256,
+        "mlx_allocator_cache_byte_limit": 1073741824,
+        "serving_admissions_per_decode_step": 8,
+        "request_scoped_disconnect_cancellation": true,
+        "source_gguf_sha256": "4b97da6b21a8fb1405a0d1efee462bfd6c4d3c46307bac8b34373835f07ca758",
+        "conversion_manifest_sha256": "2a6d9e1cd41375e54c614c0de05b2bd1715a2395ee0482b5ec979b22d7ae0206"
+      },
+      "parallel": 4,
+      "configuration_scope": "actual_Orb_full_RAG_synthetic_records_offline_candidate_comparison",
+      "owns_inference_engine": true,
+      "resident_attestation": null,
+      "memory_preflight": {
+        "available_bytes": 48790828482,
+        "required_bytes": 45382751888
+      },
+      "flags": {
+        "full_retrieval_integrity_verified": false,
+        "summary_task_regression_passed": false,
+        "strict_200_latency_targets_demonstrated": false,
+        "clinical_equivalence_qualified": false,
+        "production_purchase_gate_passed": false
+      },
+      "phases": [],
+      "retrieval_call_counters": null,
+      "initial_retrieval_call_counters": null,
+      "warmup": null,
+      "retrieval_output_reuse": null,
+      "retrieval_executor": null,
+      "retrieval_startup_proof": null,
+      "mps_unused_cache_release": null,
+      "system_pressure": {
+        "scope": "system_wide_not_daemon_rss_or_gpu_peak",
+        "samples": 14,
+        "minimum_os_free_percentage": 47,
+        "maximum_compressed_bytes": 31231852544,
+        "maximum_compression_growth_bytes": 17085333504,
+        "swapout_growth_bytes": 1114112
+      },
+      "native_storage_observations": null,
+      "matching_snapshots": [
+        {
+          "name": "sources",
+          "covered_recorded_sources": 61,
+          "recorded_source_count": 61
+        },
+        {
+          "name": "sources-c-onward",
+          "covered_recorded_sources": 61,
+          "recorded_source_count": 61
+        },
+        {
+          "name": "sources-e",
+          "covered_recorded_sources": 61,
+          "recorded_source_count": 61
+        }
+      ],
+      "restoration": {
+        "lease_status": "experiment_finished",
+        "status": "restored_and_verified",
+        "all_original_residents_identity_and_context_verified": true,
+        "models": [
+          {
+            "name": "medgemma:27b",
+            "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+            "context_length": 8192,
+            "expires_at": "2319-02-02T14:26:39.378747807+05:30"
+          },
+          {
+            "name": "medgemma:4b",
+            "digest": "9fe4e9a6c9bda2d007bb595515550eafbc8e226622adff9257f3241eba334c4d",
+            "context_length": 4096,
+            "expires_at": "2319-02-02T14:19:35.353817807+05:30"
+          }
+        ],
+        "auto_reloaded_original_residents": []
+      }
+    },
+    {
+      "run": "run-e-resident-original",
+      "engine": "ollama",
+      "status": "aborted",
+      "report": "run-e-resident-original/report.json",
+      "report_sha256": "02e565d2afb41e74483041a224d216579d2c1aeec1198971745892c4d87fc50c",
+      "abort_reason": "compression_growth_over_4_gib",
+      "resource_guard_trigger": {
+        "pressure_sample_index": 8,
+        "reason": "compression_growth_over_4_gib",
+        "evidence": "recorded_before_owned_termination",
+        "monitor_exception_observed": true,
+        "monitor_state": "completed"
+      },
+      "model": {
+        "model": "medgemma:27b",
+        "model_digest": "sha256:4b97da6b21a8fb1405a0d1efee462bfd6c4d3c46307bac8b34373835f07ca758",
+        "weight_bytes": 17397211520,
+        "manifest_sha256": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+        "quantization": "Q4_K_M"
+      },
+      "parallel": 1,
+      "configuration_scope": "already_resident_original_service_not_owned_engine_comparison",
+      "owns_inference_engine": false,
+      "resident_attestation": {
+        "identity_context_and_idle_verified": true,
+        "runner_idle_slots": 1,
+        "runner_configuration": {
+          "total_slots": 1,
+          "default_generation_settings": {
+            "n_ctx": 8192
+          }
+        },
+        "extra_headroom_policy": "12_gib_extra_headroom_for_real_retrieval_already_resident_weights"
+      },
+      "memory_preflight": {
+        "available_bytes": 50852412784,
+        "required_bytes": 12884901888
+      },
+      "flags": {
+        "full_retrieval_integrity_verified": false,
+        "summary_task_regression_passed": false,
+        "strict_200_latency_targets_demonstrated": false,
+        "clinical_equivalence_qualified": false,
+        "production_purchase_gate_passed": false
+      },
+      "phases": [],
+      "retrieval_call_counters": null,
+      "initial_retrieval_call_counters": null,
+      "warmup": null,
+      "retrieval_output_reuse": null,
+      "retrieval_executor": null,
+      "retrieval_startup_proof": null,
+      "mps_unused_cache_release": null,
+      "system_pressure": {
+        "scope": "system_wide_not_daemon_rss_or_gpu_peak",
+        "samples": 11,
+        "minimum_os_free_percentage": 33,
+        "maximum_compressed_bytes": 20747845632,
+        "maximum_compression_growth_bytes": 7785086976,
+        "swapout_growth_bytes": 0
+      },
+      "native_storage_observations": null,
+      "matching_snapshots": [
+        {
+          "name": "sources",
+          "covered_recorded_sources": 34,
+          "recorded_source_count": 35
+        },
+        {
+          "name": "sources-c-onward",
+          "covered_recorded_sources": 34,
+          "recorded_source_count": 35
+        },
+        {
+          "name": "sources-e",
+          "covered_recorded_sources": 35,
+          "recorded_source_count": 35
+        }
+      ],
+      "restoration": {
+        "lease_status": "aborted",
+        "status": "restored_and_verified",
+        "all_original_residents_identity_and_context_verified": true,
+        "models": [
+          {
+            "name": "medgemma:27b",
+            "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+            "context_length": 8192,
+            "expires_at": "2319-02-02T14:37:12.597122807+05:30"
+          },
+          {
+            "name": "medgemma:4b",
+            "digest": "9fe4e9a6c9bda2d007bb595515550eafbc8e226622adff9257f3241eba334c4d",
+            "context_length": 4096,
+            "expires_at": "2319-02-02T14:19:35.353817807+05:30"
+          }
+        ],
+        "auto_reloaded_original_residents": []
+      }
+    },
+    {
+      "run": "run-f-resident-serial-load",
+      "engine": "ollama",
+      "status": "aborted",
+      "report": "run-f-resident-serial-load/report.json",
+      "report_sha256": "5088b9b99efe5faebab0e3bb1222abc75ab40933948ab22e6fa0467e909e4453",
+      "abort_reason": "compression_growth_over_4_gib",
+      "resource_guard_trigger": {
+        "pressure_sample_index": 7,
+        "reason": "compression_growth_over_4_gib",
+        "evidence": "recorded_before_owned_termination",
+        "monitor_exception_observed": true,
+        "monitor_state": "completed"
+      },
+      "model": {
+        "model": "medgemma:27b",
+        "model_digest": "sha256:4b97da6b21a8fb1405a0d1efee462bfd6c4d3c46307bac8b34373835f07ca758",
+        "weight_bytes": 17397211520,
+        "manifest_sha256": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+        "quantization": "Q4_K_M"
+      },
+      "parallel": 1,
+      "configuration_scope": "already_resident_original_service_not_owned_engine_comparison",
+      "owns_inference_engine": false,
+      "resident_attestation": {
+        "identity_context_and_idle_verified": true,
+        "runner_idle_slots": 1,
+        "runner_configuration": {
+          "total_slots": 1,
+          "default_generation_settings": {
+            "n_ctx": 8192
+          }
+        },
+        "extra_headroom_policy": "12_gib_extra_headroom_for_real_retrieval_already_resident_weights"
+      },
+      "memory_preflight": {
+        "available_bytes": 48790828482,
+        "required_bytes": 12884901888
+      },
+      "flags": {
+        "full_retrieval_integrity_verified": false,
+        "summary_task_regression_passed": false,
+        "strict_200_latency_targets_demonstrated": false,
+        "clinical_equivalence_qualified": false,
+        "production_purchase_gate_passed": false
+      },
+      "phases": [
+        {
+          "name": "quality",
+          "status": "aborted_incomplete",
+          "total": null,
+          "completed_cases": null,
+          "successful": null,
+          "all_cases_passed": null,
+          "evidence": "Eight narrow synthetic factual-extraction fixtures; not clinical validation",
+          "planned_cases": 8,
+          "observed_cases": 2,
+          "missing_cases": 6,
+          "completed_cases_evidence": 0,
+          "clinical_correctness_assessed": false,
+          "distinct_case_ids": 2,
+          "case_error_types": {
+            "RemoteProtocolError": 1,
+            "ConnectError": 1
+          },
+          "completed_but_failed_validation": 0,
+          "completed_terminal_passed_cases": 0
+        }
+      ],
+      "retrieval_call_counters": null,
+      "initial_retrieval_call_counters": {
+        "embedding_calls": 0,
+        "embedding_completed": 0,
+        "embedding_failed": 0,
+        "rerank_calls": 0,
+        "rerank_completed": 0,
+        "rerank_failed": 0,
+        "results_cross_encoder": 0,
+        "results_lexical": 0,
+        "results_other": 0,
+        "embedding_elapsed_s": 0.0,
+        "embedding_max_s": 0.0,
+        "rerank_elapsed_s": 0.0,
+        "rerank_max_s": 0.0
+      },
+      "warmup": {
+        "wall_s": 1.624442790984176,
+        "counts_as_latency_or_quality_pass": false
+      },
+      "retrieval_output_reuse": null,
+      "retrieval_executor": null,
+      "retrieval_startup_proof": {
+        "embedding": {
+          "expected_model": "BAAI/bge-m3",
+          "architecture": "XLMRobertaModel",
+          "hidden_size": 1024,
+          "config_sha256": "26159e7ad065073448460117eb24b7a4572f6f4e78eadff65dc0a11c052449fa",
+          "snapshot_revision": "5617a9f61b028005a4858fdac845db406aefb181"
+        },
+        "reranker": {
+          "expected_model": "BAAI/bge-reranker-v2-m3",
+          "architecture": "XLMRobertaForSequenceClassification",
+          "hidden_size": 1024,
+          "config_sha256": "13dcd6c31d9fec9d1d8e158702072f62d7fa7d312a64b9fe057bec9a08cfe41a",
+          "snapshot_revision": "953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e"
+        },
+        "corpus_sources": 19,
+        "corpus_vectors": 19,
+        "corpus_fingerprint": "e85261d5dc762d793b10470056b9cfcec365d679d3bda7a3ba0c208d8ef7ded2",
+        "nonzero_corpus_vectors": 19,
+        "nonzero_embedding_probe": true,
+        "cross_encoder_probe": true,
+        "qualification_scope": "Installed full retrieval over the disposable seeded corpus; no clinical accuracy claim"
+      },
+      "mps_unused_cache_release": {
+        "observation_status": "numeric_events_only",
+        "total_records": 1,
+        "total_released_bytes": 1073741824,
+        "records_truncated": false,
+        "interpretation": "Cumulative bytes returned over repeated allocator releases; not peak RAM saved or freed capacity"
+      },
+      "system_pressure": {
+        "scope": "system_wide_not_daemon_rss_or_gpu_peak",
+        "samples": 10,
+        "minimum_os_free_percentage": 34,
+        "maximum_compressed_bytes": 19497041920,
+        "maximum_compression_growth_bytes": 5091524608,
+        "swapout_growth_bytes": 0
+      },
+      "native_storage_observations": null,
+      "matching_snapshots": [
+        {
+          "name": "sources-f",
+          "covered_recorded_sources": 35,
+          "recorded_source_count": 35
+        }
+      ],
+      "restoration": {
+        "lease_status": "aborted",
+        "status": "restored_and_verified",
+        "all_original_residents_identity_and_context_verified": true,
+        "models": [
+          {
+            "name": "medgemma:27b",
+            "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+            "context_length": 8192,
+            "expires_at": "2319-02-02T14:46:22.903115807+05:30"
+          },
+          {
+            "name": "medgemma:4b",
+            "digest": "9fe4e9a6c9bda2d007bb595515550eafbc8e226622adff9257f3241eba334c4d",
+            "context_length": 4096,
+            "expires_at": "2319-02-02T14:19:35.353817807+05:30"
+          }
+        ],
+        "auto_reloaded_original_residents": []
+      }
+    }
+  ]
+}

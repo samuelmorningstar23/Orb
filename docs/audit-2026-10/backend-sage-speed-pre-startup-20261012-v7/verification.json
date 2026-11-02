@@ -1,0 +1,179 @@
+{
+  "status": "failed_intermediate_not_final_acceptance",
+  "runtime": "/private/tmp/orb-ml-upgrade-20261012/bin/python",
+  "command": [
+    "/private/tmp/orb-ml-upgrade-20261012/bin/python",
+    "/private/tmp/orb_ml_backend_shards_20261012_v7.py"
+  ],
+  "immutable_source": "/private/tmp/orb-ml-backend-shards-20261012-v7/source",
+  "counts": {
+    "tests": 16091,
+    "passed": 16081,
+    "failures": 1,
+    "errors": 0,
+    "skipped": 9
+  },
+  "shards": [
+    {
+      "index": 1,
+      "tests": 2682,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 1,
+      "passed": 2681,
+      "xml_seconds": 288.658,
+      "skips": [
+        {
+          "test": "tests.test_phi_read_scope_gaps::test_the_ward_brief_is_audited",
+          "reason": "narrator snapshot has no watchlist in this run \u2014 nothing left"
+        }
+      ],
+      "failed_tests": []
+    },
+    {
+      "index": 2,
+      "tests": 2682,
+      "failures": 1,
+      "errors": 0,
+      "skipped": 0,
+      "passed": 2681,
+      "xml_seconds": 148.851,
+      "skips": [],
+      "failed_tests": [
+        {
+          "test": "tests.test_patient_specific_screen::test_the_prose_lexicon_contains_no_drug_name",
+          "message": "AssertionError: the prose lexicon treats ['units'] as ordinary English, so the guard no longer covers those drugs\nassert ['units'] == []\n  \n  Left contains one more item: 'units'\n  Use -v to get more diff"
+        }
+      ]
+    },
+    {
+      "index": 3,
+      "tests": 2682,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "passed": 2682,
+      "xml_seconds": 261.347,
+      "skips": [],
+      "failed_tests": []
+    },
+    {
+      "index": 4,
+      "tests": 2682,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 1,
+      "passed": 2681,
+      "xml_seconds": 299.945,
+      "skips": [
+        {
+          "test": "tests.test_warm_standby::test_real_encrypted_backup_verifies",
+          "reason": "needs the real ORB_DB_ENCRYPTION_KEY and a real backup on disk"
+        }
+      ],
+      "failed_tests": []
+    },
+    {
+      "index": 5,
+      "tests": 2682,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 6,
+      "passed": 2676,
+      "xml_seconds": 300.163,
+      "skips": [
+        {
+          "test": "tests.test_evidence_relevance::test_an_alert_retrieves_the_patients_own_guideline[DKA]",
+          "reason": "no cross-encoder on this machine \u2014 lexical relevance cannot separate alert-shaped queries, which is measured, not assumed"
+        },
+        {
+          "test": "tests.test_evidence_relevance::test_an_alert_retrieves_the_patients_own_guideline[dengue]",
+          "reason": "no cross-encoder on this machine \u2014 lexical relevance cannot separate alert-shaped queries, which is measured, not assumed"
+        },
+        {
+          "test": "tests.test_evidence_relevance::test_an_alert_retrieves_the_patients_own_guideline[sepsis_cap]",
+          "reason": "no cross-encoder on this machine \u2014 lexical relevance cannot separate alert-shaped queries, which is measured, not assumed"
+        },
+        {
+          "test": "tests.test_evidence_relevance::test_an_alert_retrieves_the_patients_own_guideline[UTI]",
+          "reason": "no cross-encoder on this machine \u2014 lexical relevance cannot separate alert-shaped queries, which is measured, not assumed"
+        },
+        {
+          "test": "tests.test_evidence_relevance::test_an_alert_retrieves_the_patients_own_guideline[COPD]",
+          "reason": "no cross-encoder on this machine \u2014 lexical relevance cannot separate alert-shaped queries, which is measured, not assumed"
+        },
+        {
+          "test": "tests.test_evidence_relevance::test_the_drivers_alone_are_what_used_to_fail",
+          "reason": "no cross-encoder on this machine \u2014 lexical relevance cannot separate alert-shaped queries, which is measured, not assumed"
+        }
+      ],
+      "failed_tests": []
+    },
+    {
+      "index": 6,
+      "tests": 2681,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 1,
+      "passed": 2680,
+      "xml_seconds": 225.174,
+      "skips": [
+        {
+          "test": "tests.test_relay_channel_scope::test_direct_messages_are_membership_scoped",
+          "reason": "no direct channels in this database"
+        }
+      ],
+      "failed_tests": []
+    }
+  ],
+  "exclusions": "7 process-cleanup tests excluded; previously verified independently, not rerun here",
+  "isolation": "Six independent owned source copies and synthetic DB/uploads/cache/export state; closed Ollama port9, offline HF, no live state or actual inference.",
+  "known_failure": "Catalogue fixture pollution from stock-rule brand Heparin Stockrule 5000 units/mL introduces units into the later closed-vocabulary test. Fixed by existing module-isolation fixture, no runtime lexicon/clinical changes.",
+  "not_qualified": "run-orb.sh canonical launcher integration was missing from this immutable snapshot; source subsequently changed. This run is preserved as intermediate only.",
+  "workspace_drift_at_packaging": [
+    {
+      "path": "docs/OPERATIONS.md",
+      "snapshot_sha256": "c56631feced36e8baafe7cc527cb7010acabdcab230be80bdf858ab868f794b3",
+      "current_sha256": "51fd4eab1e9daf0d4c50ee9aaa875fb814bc380c6bddc9e9cb4dd06caf629e86"
+    },
+    {
+      "path": "docs/SETUP.md",
+      "snapshot_sha256": "df3a63967ac076bc169a3f429cc7b8471e6b5b19e6ba0754a70159a63635ace4",
+      "current_sha256": "592d2460bc1c1fef0c5293e961dddd28ab4850bf28398f73351dea0662bf5d75"
+    },
+    {
+      "path": "run-orb.sh",
+      "snapshot_sha256": "b0ac00f606c6023799c749f8a0bd08b4ea74e5586678d7f55452972591397fd4",
+      "current_sha256": "2660694fbe18e2c14522629fa01d291ee3549ec3caf00d46d11ea5adfb4f45ee"
+    },
+    {
+      "path": "server/services/ops_health_service.py",
+      "snapshot_sha256": "a8caff6a38c939271a1355ec1ffc7706b5c76fd6f6f5fcc85ba3917090922302",
+      "current_sha256": "fe3dca11f7ffc76c26b4c21be4a2d83db7cc2438a94c65b04207c173393ab811"
+    },
+    {
+      "path": "server/tests/test_patient_specific_screen.py",
+      "snapshot_sha256": "c13b1bee835f215dda182ce754f33b049d725fa691db081f3818dcbb928fc0b9",
+      "current_sha256": "fd9a082afe67240e48068261290b7e14127f19f9c67e513a92031902dafb54de"
+    }
+  ],
+  "fixture_repair": {
+    "path": "server/tests/test_patient_specific_screen.py",
+    "sha256": "fd9a082afe67240e48068261290b7e14127f19f9c67e513a92031902dafb54de",
+    "new_permanent_cases": 0,
+    "pre": {
+      "failed": 1,
+      "passed": 1,
+      "elapsed_seconds": 1.29
+    },
+    "post": {
+      "passed": 115,
+      "elapsed_seconds": 1.99,
+      "permanent_existing_cases": 114,
+      "ephemeral_restoration_cases": 1
+    },
+    "restoration": "Original DB path, catalogue count, catalogue hash and contaminating brand IDs exactly unchanged after isolated module teardown.",
+    "proof_directory": "docs/audit-2026-10/backend-sage-speed-pre-startup-20261012-v7/catalogue-isolation-proof"
+  },
+  "acceptance_limit": "Counts from reproduction/focused followup overlap the full suite and must not be added as unique totals. Fresh final v8 acceptance is required after source freeze."
+}

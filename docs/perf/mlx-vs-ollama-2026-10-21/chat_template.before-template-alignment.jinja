@@ -1,0 +1,15 @@
+{{ bos_token }}{%- set ns = namespace(system='') -%}
+{%- if messages and messages[0]['role'] == 'system' -%}
+{%- set ns.system = messages[0]['content'] -%}{%- endif -%}
+{%- for message in messages -%}
+{%- if message['role'] == 'user' -%}
+{{ '<start_of_turn>user' }}
+{{- ns.system + '\n' + message['content'] if loop.index0 == 1 and ns.system else message['content'] -}}
+{{ '<end_of_turn>\n' }}
+{%- elif message['role'] == 'assistant' -%}
+{{ '<start_of_turn>model\n' + message['content'] + '<end_of_turn>\n' }}
+{%- elif message['role'] != 'system' or loop.index0 != 0 -%}
+{{ raise_exception('Only text user/assistant messages and one initial system message are qualified') }}
+{%- endif -%}
+{%- if loop.last -%}{{ '<start_of_turn>model\n' }}{%- endif -%}
+{%- endfor -%}

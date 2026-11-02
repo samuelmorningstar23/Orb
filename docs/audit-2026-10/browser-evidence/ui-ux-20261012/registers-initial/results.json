@@ -1,0 +1,2008 @@
+{
+  "schema": "orb.audit.real-browser-ux-followup/1",
+  "startedAt": "2026-10-12T11:03:34.880Z",
+  "base": "http://127.0.0.1:18122",
+  "bundleSha256": "c7a759ed29e706bb547eae838157a4de3919393fd8c88d521d13054d2a7577d2",
+  "harnessSha256": "8f518757418e51d842e5254c92d276dd055d40358aa1fc8c3682ff86d8bd529c",
+  "captures": [
+    {
+      "name": "record-governance",
+      "profile": {
+        "viewport": {
+          "width": 390,
+          "height": 844
+        },
+        "theme": "light",
+        "deviceScaleFactor": 1,
+        "touch": true
+      },
+      "steps": [
+        "Real admin login",
+        "Open record-governance",
+        "Wait for actual register heading and form"
+      ],
+      "screenshot": "screenshots/000-390-light-record-governance.png",
+      "viewportScreenshot": "screenshots/000-390-light-record-governance-viewport.png",
+      "geometry": {
+        "viewport": {
+          "width": 390,
+          "height": 844,
+          "devicePixelRatio": 1
+        },
+        "document": {
+          "width": 390,
+          "scrollWidth": 390,
+          "height": 844
+        },
+        "theme": "light",
+        "occludedControls": [
+          {
+            "selector": "#nav-appointments",
+            "text": "Appointments",
+            "rect": {
+              "x": 304.265625,
+              "y": 9,
+              "w": 80.28125,
+              "h": 49.3125
+            },
+            "cover": "#btn-logout"
+          }
+        ],
+        "scrollContainers": [
+          {
+            "selector": "div.shell__sidebar-top",
+            "width": 313,
+            "scrollWidth": 2260,
+            "rect": {
+              "x": 13,
+              "y": 9,
+              "w": 313,
+              "h": 49.3125
+            }
+          }
+        ],
+        "alerts": [],
+        "activeElement": {
+          "selector": "#nav-record-governance",
+          "text": "Medical records"
+        }
+      },
+      "layout": [
+        {
+          "selector": ".record-governance",
+          "text": "Medical records\n\nTrack file custody, documented legal holds and authorised record handovers.\n\nLegal holds\nFile custody\nR",
+          "rect": {
+            "x": 12,
+            "y": 263.8125,
+            "w": 366,
+            "h": 464.5
+          },
+          "minWidth": "auto",
+          "width": "366px",
+          "scrollWidth": 366,
+          "centerHit": {
+            "tag": "NAV",
+            "class": "",
+            "inside": true
+          },
+          "ancestors": [
+            {
+              "tag": "DIV",
+              "class": "shell__module-scroll",
+              "overflowX": "auto",
+              "overflowY": "auto",
+              "x": 12,
+              "y": 252.109375,
+              "width": 366,
+              "height": 575.890625,
+              "clientWidth": 366,
+              "scrollWidth": 366,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "SECTION",
+              "class": "shell__body",
+              "overflowX": "hidden",
+              "overflowY": "hidden",
+              "x": 0,
+              "y": 236.109375,
+              "width": 390,
+              "height": 607.890625,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "DIV",
+              "class": "shell",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "BODY",
+              "class": "",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "HTML",
+              "class": "",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            }
+          ]
+        },
+        {
+          "selector": ".record-governance input",
+          "text": "",
+          "rect": {
+            "x": 53,
+            "y": 638.9375,
+            "w": 209.78125,
+            "h": 48.375
+          },
+          "minWidth": "0px",
+          "width": "209.781px",
+          "scrollWidth": 208,
+          "centerHit": {
+            "tag": "INPUT",
+            "class": "",
+            "inside": true
+          },
+          "ancestors": [
+            {
+              "tag": "DIV",
+              "class": "shell__module-scroll",
+              "overflowX": "auto",
+              "overflowY": "auto",
+              "x": 12,
+              "y": 252.109375,
+              "width": 366,
+              "height": 575.890625,
+              "clientWidth": 366,
+              "scrollWidth": 366,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "SECTION",
+              "class": "shell__body",
+              "overflowX": "hidden",
+              "overflowY": "hidden",
+              "x": 0,
+              "y": 236.109375,
+              "width": 390,
+              "height": 607.890625,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "DIV",
+              "class": "shell",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "BODY",
+              "class": "",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "HTML",
+              "class": "",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            }
+          ]
+        },
+        {
+          "selector": ".record-governance button",
+          "text": "Legal holds",
+          "rect": {
+            "x": 36,
+            "y": 406.1875,
+            "w": 114.3125,
+            "h": 45.1875
+          },
+          "minWidth": "44px",
+          "width": "114.312px",
+          "scrollWidth": 112,
+          "centerHit": {
+            "tag": "BUTTON",
+            "class": "",
+            "inside": true
+          },
+          "ancestors": [
+            {
+              "tag": "DIV",
+              "class": "shell__module-scroll",
+              "overflowX": "auto",
+              "overflowY": "auto",
+              "x": 12,
+              "y": 252.109375,
+              "width": 366,
+              "height": 575.890625,
+              "clientWidth": 366,
+              "scrollWidth": 366,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "SECTION",
+              "class": "shell__body",
+              "overflowX": "hidden",
+              "overflowY": "hidden",
+              "x": 0,
+              "y": 236.109375,
+              "width": 390,
+              "height": 607.890625,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "DIV",
+              "class": "shell",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "BODY",
+              "class": "",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "HTML",
+              "class": "",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            }
+          ]
+        },
+        {
+          "selector": ".record-governance button",
+          "text": "File custody",
+          "rect": {
+            "x": 158.3125,
+            "y": 406.1875,
+            "w": 119.203125,
+            "h": 45.1875
+          },
+          "minWidth": "44px",
+          "width": "119.203px",
+          "scrollWidth": 117,
+          "centerHit": {
+            "tag": "BUTTON",
+            "class": "",
+            "inside": true
+          },
+          "ancestors": [
+            {
+              "tag": "DIV",
+              "class": "shell__module-scroll",
+              "overflowX": "auto",
+              "overflowY": "auto",
+              "x": 12,
+              "y": 252.109375,
+              "width": 366,
+              "height": 575.890625,
+              "clientWidth": 366,
+              "scrollWidth": 366,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "SECTION",
+              "class": "shell__body",
+              "overflowX": "hidden",
+              "overflowY": "hidden",
+              "x": 0,
+              "y": 236.109375,
+              "width": 390,
+              "height": 607.890625,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "DIV",
+              "class": "shell",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "BODY",
+              "class": "",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "HTML",
+              "class": "",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            }
+          ]
+        },
+        {
+          "selector": ".record-governance button",
+          "text": "Release requests",
+          "rect": {
+            "x": 36,
+            "y": 459.375,
+            "w": 157.25,
+            "h": 45.1875
+          },
+          "minWidth": "44px",
+          "width": "157.25px",
+          "scrollWidth": 155,
+          "centerHit": {
+            "tag": "BUTTON",
+            "class": "",
+            "inside": true
+          },
+          "ancestors": [
+            {
+              "tag": "DIV",
+              "class": "shell__module-scroll",
+              "overflowX": "auto",
+              "overflowY": "auto",
+              "x": 12,
+              "y": 252.109375,
+              "width": 366,
+              "height": 575.890625,
+              "clientWidth": 366,
+              "scrollWidth": 366,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "SECTION",
+              "class": "shell__body",
+              "overflowX": "hidden",
+              "overflowY": "hidden",
+              "x": 0,
+              "y": 236.109375,
+              "width": 390,
+              "height": 607.890625,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "DIV",
+              "class": "shell",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "BODY",
+              "class": "",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "HTML",
+              "class": "",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            }
+          ]
+        }
+      ],
+      "audit": []
+    },
+    {
+      "name": "record-governance-horizontal-pan-end",
+      "profile": {
+        "viewport": {
+          "width": 390,
+          "height": 844
+        },
+        "theme": "light",
+        "deviceScaleFactor": 1,
+        "touch": true
+      },
+      "steps": [
+        "Scroll actual record-governance container horizontally to its end"
+      ],
+      "screenshot": "screenshots/001-390-light-record-governance-horizontal-pan-end.png",
+      "viewportScreenshot": "screenshots/001-390-light-record-governance-horizontal-pan-end-viewport.png",
+      "geometry": {
+        "viewport": {
+          "width": 390,
+          "height": 844,
+          "devicePixelRatio": 1
+        },
+        "document": {
+          "width": 390,
+          "scrollWidth": 390,
+          "height": 844
+        },
+        "theme": "light",
+        "occludedControls": [
+          {
+            "selector": "#nav-appointments",
+            "text": "Appointments",
+            "rect": {
+              "x": 304.265625,
+              "y": 9,
+              "w": 80.28125,
+              "h": 49.3125
+            },
+            "cover": "#btn-logout"
+          }
+        ],
+        "scrollContainers": [
+          {
+            "selector": "div.shell__sidebar-top",
+            "width": 313,
+            "scrollWidth": 2260,
+            "rect": {
+              "x": 13,
+              "y": 9,
+              "w": 313,
+              "h": 49.3125
+            }
+          }
+        ],
+        "alerts": [],
+        "activeElement": {
+          "selector": "#nav-record-governance",
+          "text": "Medical records"
+        }
+      },
+      "layout": [
+        {
+          "selector": ".record-governance",
+          "text": "Medical records\n\nTrack file custody, documented legal holds and authorised record handovers.\n\nLegal holds\nFile custody\nR",
+          "rect": {
+            "x": 12,
+            "y": 263.8125,
+            "w": 366,
+            "h": 464.5
+          },
+          "minWidth": "auto",
+          "width": "366px",
+          "scrollWidth": 366,
+          "centerHit": {
+            "tag": "NAV",
+            "class": "",
+            "inside": true
+          },
+          "ancestors": [
+            {
+              "tag": "DIV",
+              "class": "shell__module-scroll",
+              "overflowX": "auto",
+              "overflowY": "auto",
+              "x": 12,
+              "y": 252.109375,
+              "width": 366,
+              "height": 575.890625,
+              "clientWidth": 366,
+              "scrollWidth": 366,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "SECTION",
+              "class": "shell__body",
+              "overflowX": "hidden",
+              "overflowY": "hidden",
+              "x": 0,
+              "y": 236.109375,
+              "width": 390,
+              "height": 607.890625,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "DIV",
+              "class": "shell",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "BODY",
+              "class": "",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "HTML",
+              "class": "",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            }
+          ]
+        },
+        {
+          "selector": ".record-governance input",
+          "text": "",
+          "rect": {
+            "x": 53,
+            "y": 638.9375,
+            "w": 209.78125,
+            "h": 48.375
+          },
+          "minWidth": "0px",
+          "width": "209.781px",
+          "scrollWidth": 208,
+          "centerHit": {
+            "tag": "INPUT",
+            "class": "",
+            "inside": true
+          },
+          "ancestors": [
+            {
+              "tag": "DIV",
+              "class": "shell__module-scroll",
+              "overflowX": "auto",
+              "overflowY": "auto",
+              "x": 12,
+              "y": 252.109375,
+              "width": 366,
+              "height": 575.890625,
+              "clientWidth": 366,
+              "scrollWidth": 366,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "SECTION",
+              "class": "shell__body",
+              "overflowX": "hidden",
+              "overflowY": "hidden",
+              "x": 0,
+              "y": 236.109375,
+              "width": 390,
+              "height": 607.890625,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "DIV",
+              "class": "shell",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "BODY",
+              "class": "",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "HTML",
+              "class": "",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            }
+          ]
+        },
+        {
+          "selector": ".record-governance button",
+          "text": "Legal holds",
+          "rect": {
+            "x": 36,
+            "y": 406.1875,
+            "w": 114.3125,
+            "h": 45.1875
+          },
+          "minWidth": "44px",
+          "width": "114.312px",
+          "scrollWidth": 112,
+          "centerHit": {
+            "tag": "BUTTON",
+            "class": "",
+            "inside": true
+          },
+          "ancestors": [
+            {
+              "tag": "DIV",
+              "class": "shell__module-scroll",
+              "overflowX": "auto",
+              "overflowY": "auto",
+              "x": 12,
+              "y": 252.109375,
+              "width": 366,
+              "height": 575.890625,
+              "clientWidth": 366,
+              "scrollWidth": 366,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "SECTION",
+              "class": "shell__body",
+              "overflowX": "hidden",
+              "overflowY": "hidden",
+              "x": 0,
+              "y": 236.109375,
+              "width": 390,
+              "height": 607.890625,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "DIV",
+              "class": "shell",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "BODY",
+              "class": "",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "HTML",
+              "class": "",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            }
+          ]
+        },
+        {
+          "selector": ".record-governance button",
+          "text": "File custody",
+          "rect": {
+            "x": 158.3125,
+            "y": 406.1875,
+            "w": 119.203125,
+            "h": 45.1875
+          },
+          "minWidth": "44px",
+          "width": "119.203px",
+          "scrollWidth": 117,
+          "centerHit": {
+            "tag": "BUTTON",
+            "class": "",
+            "inside": true
+          },
+          "ancestors": [
+            {
+              "tag": "DIV",
+              "class": "shell__module-scroll",
+              "overflowX": "auto",
+              "overflowY": "auto",
+              "x": 12,
+              "y": 252.109375,
+              "width": 366,
+              "height": 575.890625,
+              "clientWidth": 366,
+              "scrollWidth": 366,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "SECTION",
+              "class": "shell__body",
+              "overflowX": "hidden",
+              "overflowY": "hidden",
+              "x": 0,
+              "y": 236.109375,
+              "width": 390,
+              "height": 607.890625,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "DIV",
+              "class": "shell",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "BODY",
+              "class": "",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "HTML",
+              "class": "",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            }
+          ]
+        },
+        {
+          "selector": ".record-governance button",
+          "text": "Release requests",
+          "rect": {
+            "x": 36,
+            "y": 459.375,
+            "w": 157.25,
+            "h": 45.1875
+          },
+          "minWidth": "44px",
+          "width": "157.25px",
+          "scrollWidth": 155,
+          "centerHit": {
+            "tag": "BUTTON",
+            "class": "",
+            "inside": true
+          },
+          "ancestors": [
+            {
+              "tag": "DIV",
+              "class": "shell__module-scroll",
+              "overflowX": "auto",
+              "overflowY": "auto",
+              "x": 12,
+              "y": 252.109375,
+              "width": 366,
+              "height": 575.890625,
+              "clientWidth": 366,
+              "scrollWidth": 366,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "SECTION",
+              "class": "shell__body",
+              "overflowX": "hidden",
+              "overflowY": "hidden",
+              "x": 0,
+              "y": 236.109375,
+              "width": 390,
+              "height": 607.890625,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "DIV",
+              "class": "shell",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "BODY",
+              "class": "",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "HTML",
+              "class": "",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            }
+          ]
+        }
+      ],
+      "audit": []
+    },
+    {
+      "name": "record-governance",
+      "profile": {
+        "viewport": {
+          "width": 390,
+          "height": 844
+        },
+        "theme": "dark",
+        "deviceScaleFactor": 1,
+        "touch": true
+      },
+      "steps": [
+        "Real admin login",
+        "Open record-governance",
+        "Wait for actual register heading and form"
+      ],
+      "screenshot": "screenshots/002-390-dark-record-governance.png",
+      "viewportScreenshot": "screenshots/002-390-dark-record-governance-viewport.png",
+      "geometry": {
+        "viewport": {
+          "width": 390,
+          "height": 844,
+          "devicePixelRatio": 1
+        },
+        "document": {
+          "width": 390,
+          "scrollWidth": 390,
+          "height": 844
+        },
+        "theme": "dark",
+        "occludedControls": [
+          {
+            "selector": "#nav-appointments",
+            "text": "Appointments",
+            "rect": {
+              "x": 304.265625,
+              "y": 9,
+              "w": 80.28125,
+              "h": 49.3125
+            },
+            "cover": "#btn-logout"
+          }
+        ],
+        "scrollContainers": [
+          {
+            "selector": "div.shell__sidebar-top",
+            "width": 313,
+            "scrollWidth": 2260,
+            "rect": {
+              "x": 13,
+              "y": 9,
+              "w": 313,
+              "h": 49.3125
+            }
+          }
+        ],
+        "alerts": [],
+        "activeElement": {
+          "selector": "#nav-record-governance",
+          "text": "Medical records"
+        }
+      },
+      "layout": [
+        {
+          "selector": ".record-governance",
+          "text": "Medical records\n\nTrack file custody, documented legal holds and authorised record handovers.\n\nLegal holds\nFile custody\nR",
+          "rect": {
+            "x": 12,
+            "y": 263.8125,
+            "w": 366,
+            "h": 464.5
+          },
+          "minWidth": "auto",
+          "width": "366px",
+          "scrollWidth": 366,
+          "centerHit": {
+            "tag": "NAV",
+            "class": "",
+            "inside": true
+          },
+          "ancestors": [
+            {
+              "tag": "DIV",
+              "class": "shell__module-scroll",
+              "overflowX": "auto",
+              "overflowY": "auto",
+              "x": 12,
+              "y": 252.109375,
+              "width": 366,
+              "height": 575.890625,
+              "clientWidth": 366,
+              "scrollWidth": 366,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "SECTION",
+              "class": "shell__body",
+              "overflowX": "hidden",
+              "overflowY": "hidden",
+              "x": 0,
+              "y": 236.109375,
+              "width": 390,
+              "height": 607.890625,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "DIV",
+              "class": "shell",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "BODY",
+              "class": "",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "HTML",
+              "class": "",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            }
+          ]
+        },
+        {
+          "selector": ".record-governance input",
+          "text": "",
+          "rect": {
+            "x": 53,
+            "y": 638.9375,
+            "w": 209.78125,
+            "h": 48.375
+          },
+          "minWidth": "0px",
+          "width": "209.781px",
+          "scrollWidth": 208,
+          "centerHit": {
+            "tag": "INPUT",
+            "class": "",
+            "inside": true
+          },
+          "ancestors": [
+            {
+              "tag": "DIV",
+              "class": "shell__module-scroll",
+              "overflowX": "auto",
+              "overflowY": "auto",
+              "x": 12,
+              "y": 252.109375,
+              "width": 366,
+              "height": 575.890625,
+              "clientWidth": 366,
+              "scrollWidth": 366,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "SECTION",
+              "class": "shell__body",
+              "overflowX": "hidden",
+              "overflowY": "hidden",
+              "x": 0,
+              "y": 236.109375,
+              "width": 390,
+              "height": 607.890625,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "DIV",
+              "class": "shell",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "BODY",
+              "class": "",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "HTML",
+              "class": "",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            }
+          ]
+        },
+        {
+          "selector": ".record-governance button",
+          "text": "Legal holds",
+          "rect": {
+            "x": 36,
+            "y": 406.1875,
+            "w": 114.3125,
+            "h": 45.1875
+          },
+          "minWidth": "44px",
+          "width": "114.312px",
+          "scrollWidth": 112,
+          "centerHit": {
+            "tag": "BUTTON",
+            "class": "",
+            "inside": true
+          },
+          "ancestors": [
+            {
+              "tag": "DIV",
+              "class": "shell__module-scroll",
+              "overflowX": "auto",
+              "overflowY": "auto",
+              "x": 12,
+              "y": 252.109375,
+              "width": 366,
+              "height": 575.890625,
+              "clientWidth": 366,
+              "scrollWidth": 366,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "SECTION",
+              "class": "shell__body",
+              "overflowX": "hidden",
+              "overflowY": "hidden",
+              "x": 0,
+              "y": 236.109375,
+              "width": 390,
+              "height": 607.890625,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "DIV",
+              "class": "shell",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "BODY",
+              "class": "",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "HTML",
+              "class": "",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            }
+          ]
+        },
+        {
+          "selector": ".record-governance button",
+          "text": "File custody",
+          "rect": {
+            "x": 158.3125,
+            "y": 406.1875,
+            "w": 119.203125,
+            "h": 45.1875
+          },
+          "minWidth": "44px",
+          "width": "119.203px",
+          "scrollWidth": 117,
+          "centerHit": {
+            "tag": "BUTTON",
+            "class": "",
+            "inside": true
+          },
+          "ancestors": [
+            {
+              "tag": "DIV",
+              "class": "shell__module-scroll",
+              "overflowX": "auto",
+              "overflowY": "auto",
+              "x": 12,
+              "y": 252.109375,
+              "width": 366,
+              "height": 575.890625,
+              "clientWidth": 366,
+              "scrollWidth": 366,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "SECTION",
+              "class": "shell__body",
+              "overflowX": "hidden",
+              "overflowY": "hidden",
+              "x": 0,
+              "y": 236.109375,
+              "width": 390,
+              "height": 607.890625,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "DIV",
+              "class": "shell",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "BODY",
+              "class": "",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "HTML",
+              "class": "",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            }
+          ]
+        },
+        {
+          "selector": ".record-governance button",
+          "text": "Release requests",
+          "rect": {
+            "x": 36,
+            "y": 459.375,
+            "w": 157.25,
+            "h": 45.1875
+          },
+          "minWidth": "44px",
+          "width": "157.25px",
+          "scrollWidth": 155,
+          "centerHit": {
+            "tag": "BUTTON",
+            "class": "",
+            "inside": true
+          },
+          "ancestors": [
+            {
+              "tag": "DIV",
+              "class": "shell__module-scroll",
+              "overflowX": "auto",
+              "overflowY": "auto",
+              "x": 12,
+              "y": 252.109375,
+              "width": 366,
+              "height": 575.890625,
+              "clientWidth": 366,
+              "scrollWidth": 366,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "SECTION",
+              "class": "shell__body",
+              "overflowX": "hidden",
+              "overflowY": "hidden",
+              "x": 0,
+              "y": 236.109375,
+              "width": 390,
+              "height": 607.890625,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "DIV",
+              "class": "shell",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "BODY",
+              "class": "",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "HTML",
+              "class": "",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            }
+          ]
+        }
+      ],
+      "audit": []
+    },
+    {
+      "name": "record-governance-horizontal-pan-end",
+      "profile": {
+        "viewport": {
+          "width": 390,
+          "height": 844
+        },
+        "theme": "dark",
+        "deviceScaleFactor": 1,
+        "touch": true
+      },
+      "steps": [
+        "Scroll actual record-governance container horizontally to its end"
+      ],
+      "screenshot": "screenshots/003-390-dark-record-governance-horizontal-pan-end.png",
+      "viewportScreenshot": "screenshots/003-390-dark-record-governance-horizontal-pan-end-viewport.png",
+      "geometry": {
+        "viewport": {
+          "width": 390,
+          "height": 844,
+          "devicePixelRatio": 1
+        },
+        "document": {
+          "width": 390,
+          "scrollWidth": 390,
+          "height": 844
+        },
+        "theme": "dark",
+        "occludedControls": [
+          {
+            "selector": "#nav-appointments",
+            "text": "Appointments",
+            "rect": {
+              "x": 304.265625,
+              "y": 9,
+              "w": 80.28125,
+              "h": 49.3125
+            },
+            "cover": "#btn-logout"
+          }
+        ],
+        "scrollContainers": [
+          {
+            "selector": "div.shell__sidebar-top",
+            "width": 313,
+            "scrollWidth": 2260,
+            "rect": {
+              "x": 13,
+              "y": 9,
+              "w": 313,
+              "h": 49.3125
+            }
+          }
+        ],
+        "alerts": [],
+        "activeElement": {
+          "selector": "#nav-record-governance",
+          "text": "Medical records"
+        }
+      },
+      "layout": [
+        {
+          "selector": ".record-governance",
+          "text": "Medical records\n\nTrack file custody, documented legal holds and authorised record handovers.\n\nLegal holds\nFile custody\nR",
+          "rect": {
+            "x": 12,
+            "y": 263.8125,
+            "w": 366,
+            "h": 464.5
+          },
+          "minWidth": "auto",
+          "width": "366px",
+          "scrollWidth": 366,
+          "centerHit": {
+            "tag": "NAV",
+            "class": "",
+            "inside": true
+          },
+          "ancestors": [
+            {
+              "tag": "DIV",
+              "class": "shell__module-scroll",
+              "overflowX": "auto",
+              "overflowY": "auto",
+              "x": 12,
+              "y": 252.109375,
+              "width": 366,
+              "height": 575.890625,
+              "clientWidth": 366,
+              "scrollWidth": 366,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "SECTION",
+              "class": "shell__body",
+              "overflowX": "hidden",
+              "overflowY": "hidden",
+              "x": 0,
+              "y": 236.109375,
+              "width": 390,
+              "height": 607.890625,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "DIV",
+              "class": "shell",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "BODY",
+              "class": "",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "HTML",
+              "class": "",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            }
+          ]
+        },
+        {
+          "selector": ".record-governance input",
+          "text": "",
+          "rect": {
+            "x": 53,
+            "y": 638.9375,
+            "w": 209.78125,
+            "h": 48.375
+          },
+          "minWidth": "0px",
+          "width": "209.781px",
+          "scrollWidth": 208,
+          "centerHit": {
+            "tag": "INPUT",
+            "class": "",
+            "inside": true
+          },
+          "ancestors": [
+            {
+              "tag": "DIV",
+              "class": "shell__module-scroll",
+              "overflowX": "auto",
+              "overflowY": "auto",
+              "x": 12,
+              "y": 252.109375,
+              "width": 366,
+              "height": 575.890625,
+              "clientWidth": 366,
+              "scrollWidth": 366,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "SECTION",
+              "class": "shell__body",
+              "overflowX": "hidden",
+              "overflowY": "hidden",
+              "x": 0,
+              "y": 236.109375,
+              "width": 390,
+              "height": 607.890625,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "DIV",
+              "class": "shell",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "BODY",
+              "class": "",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "HTML",
+              "class": "",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            }
+          ]
+        },
+        {
+          "selector": ".record-governance button",
+          "text": "Legal holds",
+          "rect": {
+            "x": 36,
+            "y": 406.1875,
+            "w": 114.3125,
+            "h": 45.1875
+          },
+          "minWidth": "44px",
+          "width": "114.312px",
+          "scrollWidth": 112,
+          "centerHit": {
+            "tag": "BUTTON",
+            "class": "",
+            "inside": true
+          },
+          "ancestors": [
+            {
+              "tag": "DIV",
+              "class": "shell__module-scroll",
+              "overflowX": "auto",
+              "overflowY": "auto",
+              "x": 12,
+              "y": 252.109375,
+              "width": 366,
+              "height": 575.890625,
+              "clientWidth": 366,
+              "scrollWidth": 366,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "SECTION",
+              "class": "shell__body",
+              "overflowX": "hidden",
+              "overflowY": "hidden",
+              "x": 0,
+              "y": 236.109375,
+              "width": 390,
+              "height": 607.890625,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "DIV",
+              "class": "shell",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "BODY",
+              "class": "",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "HTML",
+              "class": "",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            }
+          ]
+        },
+        {
+          "selector": ".record-governance button",
+          "text": "File custody",
+          "rect": {
+            "x": 158.3125,
+            "y": 406.1875,
+            "w": 119.203125,
+            "h": 45.1875
+          },
+          "minWidth": "44px",
+          "width": "119.203px",
+          "scrollWidth": 117,
+          "centerHit": {
+            "tag": "BUTTON",
+            "class": "",
+            "inside": true
+          },
+          "ancestors": [
+            {
+              "tag": "DIV",
+              "class": "shell__module-scroll",
+              "overflowX": "auto",
+              "overflowY": "auto",
+              "x": 12,
+              "y": 252.109375,
+              "width": 366,
+              "height": 575.890625,
+              "clientWidth": 366,
+              "scrollWidth": 366,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "SECTION",
+              "class": "shell__body",
+              "overflowX": "hidden",
+              "overflowY": "hidden",
+              "x": 0,
+              "y": 236.109375,
+              "width": 390,
+              "height": 607.890625,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "DIV",
+              "class": "shell",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "BODY",
+              "class": "",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "HTML",
+              "class": "",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            }
+          ]
+        },
+        {
+          "selector": ".record-governance button",
+          "text": "Release requests",
+          "rect": {
+            "x": 36,
+            "y": 459.375,
+            "w": 157.25,
+            "h": 45.1875
+          },
+          "minWidth": "44px",
+          "width": "157.25px",
+          "scrollWidth": 155,
+          "centerHit": {
+            "tag": "BUTTON",
+            "class": "",
+            "inside": true
+          },
+          "ancestors": [
+            {
+              "tag": "DIV",
+              "class": "shell__module-scroll",
+              "overflowX": "auto",
+              "overflowY": "auto",
+              "x": 12,
+              "y": 252.109375,
+              "width": 366,
+              "height": 575.890625,
+              "clientWidth": 366,
+              "scrollWidth": 366,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "SECTION",
+              "class": "shell__body",
+              "overflowX": "hidden",
+              "overflowY": "hidden",
+              "x": 0,
+              "y": 236.109375,
+              "width": 390,
+              "height": 607.890625,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "DIV",
+              "class": "shell",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "BODY",
+              "class": "",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            },
+            {
+              "tag": "HTML",
+              "class": "",
+              "overflowX": "hidden",
+              "overflowY": "auto",
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 844,
+              "clientWidth": 390,
+              "scrollWidth": 390,
+              "scrollLeft": 0
+            }
+          ]
+        }
+      ],
+      "audit": []
+    }
+  ],
+  "focus": [],
+  "interactions": [],
+  "errors": [
+    {
+      "type": "scenario-error",
+      "profile": {
+        "viewport": {
+          "width": 390,
+          "height": 844
+        },
+        "theme": "light",
+        "deviceScaleFactor": 1,
+        "touch": true
+      },
+      "message": "locator.waitFor: Error: strict mode violation: locator('.record-governance h1') resolved to 2 elements:\n    1) <h1>Radiation safety documents</h1> aka getByRole('heading', { name: 'Radiation safety documents' })\n    2) <h1>Medical records</h1> aka locator('#panel-record-governance').getByText('Medical records')\n\nCall log:\n\u001b[2m  - waiting for locator('.record-governance h1') to be visible\u001b[22m\n\u001b[2m    5 × locator resolved to hidden <h1>Medical records</h1>\u001b[22m\n\n    at capture (/Users/samuelmorningstar/Documents/Projects/Orb/scripts/browser_ux_followup.cjs:12:136)\n    at main (/Users/samuelmorningstar/Documents/Projects/Orb/scripts/browser_ux_followup.cjs:14:297)"
+    },
+    {
+      "type": "scenario-error",
+      "profile": {
+        "viewport": {
+          "width": 390,
+          "height": 844
+        },
+        "theme": "dark",
+        "deviceScaleFactor": 1,
+        "touch": true
+      },
+      "message": "locator.waitFor: Error: strict mode violation: locator('.record-governance h1') resolved to 2 elements:\n    1) <h1>Radiation safety documents</h1> aka getByRole('heading', { name: 'Radiation safety documents' })\n    2) <h1>Medical records</h1> aka locator('#panel-record-governance').getByText('Medical records')\n\nCall log:\n\u001b[2m  - waiting for locator('.record-governance h1') to be visible\u001b[22m\n\u001b[2m    5 × locator resolved to hidden <h1>Medical records</h1>\u001b[22m\n\n    at capture (/Users/samuelmorningstar/Documents/Projects/Orb/scripts/browser_ux_followup.cjs:12:136)\n    at main (/Users/samuelmorningstar/Documents/Projects/Orb/scripts/browser_ux_followup.cjs:14:297)"
+    }
+  ],
+  "externalRequests": [],
+  "inferenceRequests": [],
+  "security": [],
+  "browserVersion": "149.0.7827.55",
+  "backendCleanup": {
+    "code": 130,
+    "signal": null
+  },
+  "finishedAt": "2026-10-12T11:03:47.202Z"
+}

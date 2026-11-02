@@ -1,0 +1,176 @@
+{
+  "schema": "orb.audit.backend-ml-acceptance/1",
+  "date": "2026-10-12",
+  "status": "passed",
+  "runtime": "/private/tmp/orb-ml-upgrade-20261012/bin/python",
+  "collected_files": 511,
+  "tests": 16031,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 8,
+  "passed": 16023,
+  "elapsed_seconds": 327.39,
+  "isolation": "6 independent disposable source copies, synthetic DBs, exports/caches; no live data/models/env copied",
+  "settings": {
+    "background_models": false,
+    "automatic_knowledge_startup": false,
+    "scoring": true,
+    "sepsis_autostart": true,
+    "inference_endpoint": "unused loopback port; no model calls"
+  },
+  "exact_source_changes_after_snapshot": [],
+  "source_hashes": "docs/audit-2026-10/backend-acceptance-final-20261012/source-sha256.json",
+  "shards": [
+    {
+      "index": 1,
+      "files": 82,
+      "tests": 2672,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "pytest_seconds": 285.774,
+      "exit_code": 0,
+      "log": "docs/audit-2026-10/backend-acceptance-final-20261012/shard-1.log",
+      "log_sha256": "f3c339eead2ea19657d454ff6567e2dc8e5365d93d7ffc825424183e766545f8",
+      "junit_sha256": "a7b800b709ae2cc6021f1a0bb3b44900cf94644a747b39ad66d81d2cff906d2a"
+    },
+    {
+      "index": 2,
+      "files": 85,
+      "tests": 2672,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "pytest_seconds": 275.605,
+      "exit_code": 0,
+      "log": "docs/audit-2026-10/backend-acceptance-final-20261012/shard-2.log",
+      "log_sha256": "c7362687836099ff246e681dde8688df6e5ee54b8442539ceddc8c10584800e6",
+      "junit_sha256": "c0133cb0b3ce401066792c121058010f0a3a6089ddf7ee241fcdc9587305381d"
+    },
+    {
+      "index": 3,
+      "files": 86,
+      "tests": 2672,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "pytest_seconds": 256.143,
+      "exit_code": 0,
+      "log": "docs/audit-2026-10/backend-acceptance-final-20261012/shard-3.log",
+      "log_sha256": "8788cbb9db60ac742bafa933d89e2c21ff74dd5ded1c0cc230bc921715461fa4",
+      "junit_sha256": "a5e71edf72ae329dc8d1f08d89d874c3caf0a3013f62a1cb6eed49625a9f8933"
+    },
+    {
+      "index": 4,
+      "files": 86,
+      "tests": 2672,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 1,
+      "pytest_seconds": 182.876,
+      "exit_code": 0,
+      "log": "docs/audit-2026-10/backend-acceptance-final-20261012/shard-4.log",
+      "log_sha256": "870d7094afdaef057846678aab0cea7bea67fb314ac53148bbb5282356eaa3ff",
+      "junit_sha256": "543325256c34932b85ebb4bdd6e6b1dcf6560caa495d81aae030b4d84e51691f"
+    },
+    {
+      "index": 5,
+      "files": 86,
+      "tests": 2672,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 6,
+      "pytest_seconds": 264.004,
+      "exit_code": 0,
+      "log": "docs/audit-2026-10/backend-acceptance-final-20261012/shard-5.log",
+      "log_sha256": "a232a8bf776f92fdc981b0cce7ec2f8abf7d263c8639f99a67e655940db4c530",
+      "junit_sha256": "9a93be2ce4a740513497e95d0bb5f063dfa7975cb17990eecf46598c1659a415"
+    },
+    {
+      "index": 6,
+      "files": 86,
+      "tests": 2671,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 1,
+      "pytest_seconds": 206.725,
+      "exit_code": 0,
+      "log": "docs/audit-2026-10/backend-acceptance-final-20261012/shard-6.log",
+      "log_sha256": "698a74944d6e54ea5d6aee292683526e55d22b2b12e22626b51b43f3e8641a42",
+      "junit_sha256": "98da151e8de540ccc598cdd23cc48cd62686881846efd14f53a0bebf66ff7dc3"
+    }
+  ],
+  "skipped_cases": [
+    {
+      "module": "tests.test_warm_standby",
+      "test": "test_real_encrypted_backup_verifies",
+      "reason": "needs the real ORB_DB_ENCRYPTION_KEY and a real backup on disk"
+    },
+    {
+      "module": "tests.test_evidence_relevance",
+      "test": "test_an_alert_retrieves_the_patients_own_guideline[DKA]",
+      "reason": "no cross-encoder on this machine \u2014 lexical relevance cannot separate alert-shaped queries, which is measured, not assumed"
+    },
+    {
+      "module": "tests.test_evidence_relevance",
+      "test": "test_an_alert_retrieves_the_patients_own_guideline[dengue]",
+      "reason": "no cross-encoder on this machine \u2014 lexical relevance cannot separate alert-shaped queries, which is measured, not assumed"
+    },
+    {
+      "module": "tests.test_evidence_relevance",
+      "test": "test_an_alert_retrieves_the_patients_own_guideline[sepsis_cap]",
+      "reason": "no cross-encoder on this machine \u2014 lexical relevance cannot separate alert-shaped queries, which is measured, not assumed"
+    },
+    {
+      "module": "tests.test_evidence_relevance",
+      "test": "test_an_alert_retrieves_the_patients_own_guideline[UTI]",
+      "reason": "no cross-encoder on this machine \u2014 lexical relevance cannot separate alert-shaped queries, which is measured, not assumed"
+    },
+    {
+      "module": "tests.test_evidence_relevance",
+      "test": "test_an_alert_retrieves_the_patients_own_guideline[COPD]",
+      "reason": "no cross-encoder on this machine \u2014 lexical relevance cannot separate alert-shaped queries, which is measured, not assumed"
+    },
+    {
+      "module": "tests.test_evidence_relevance",
+      "test": "test_the_drivers_alone_are_what_used_to_fail",
+      "reason": "no cross-encoder on this machine \u2014 lexical relevance cannot separate alert-shaped queries, which is measured, not assumed"
+    },
+    {
+      "module": "tests.test_relay_channel_scope",
+      "test": "test_direct_messages_are_membership_scoped",
+      "reason": "no direct channels in this database"
+    }
+  ],
+  "separate_process_cleanup": {
+    "file": "server/tests/test_e2e_process_cleanup.py",
+    "passed": 7,
+    "failed": 0,
+    "evidence": "docs/audit-2026-10/sage-browser-harness-verification.json",
+    "note": "Within the separate 32-test launcher/process selection; other25 launcher tests overlap the full suite."
+  },
+  "supersedes": {
+    "run": "/private/tmp/orb-ml-backend-shards-20261012-v4",
+    "evidence": "docs/audit-2026-10/backend-acceptance-20261012/results.json",
+    "collected": 16003,
+    "passed": 15994,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 9,
+    "disposition": "Previously clean complete run retained. Entire suite repeated after the bounded shared-model ambient-context fix and its28new regression cases, from a fresh source and database snapshot."
+  },
+  "intermediate_failure": {
+    "run": "/private/tmp/orb-ml-backend-shards-20261012-v5",
+    "evidence": "docs/audit-2026-10/backend-pre-isolation-20261012/results.json",
+    "collected": 16031,
+    "passed": 16016,
+    "failures": 7,
+    "errors": 0,
+    "skipped": 8,
+    "disposition": "Two pre-existing module fixture dependencies reproduced: discharged Unassessed Vitals locator rows affected invented-name scope tests; laboratory starter terminology affected the canonical Orders seed display assertion. Both modules now use the existing fresh module database fixture. Assertions and all production behavior remain unchanged. The complete identical partition is rerun."
+  },
+  "limits": [
+    "Skipped 8 cases; individual reasons retained explicitly. Cached real BGE adapter checks and real retrieval browser timing are separate evidence, not inferred from synthetic unit fixtures.",
+    "No live environment, patient database, upload tree or backups were copied. Hosted CI and native Apple speech build/inference were not executed."
+  ]
+}

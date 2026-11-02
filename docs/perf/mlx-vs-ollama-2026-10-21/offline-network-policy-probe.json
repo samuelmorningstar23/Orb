@@ -1,0 +1,14 @@
+{
+  "loopback": {
+    "connected": false,
+    "errno": 61,
+    "error_type": "ConnectionRefusedError"
+  },
+  "external_block_probe": {
+    "connected": false,
+    "errno": 1,
+    "error_type": "PermissionError"
+  },
+  "external_denied_by_os": true,
+  "loopback_not_denied_by_os": true
+}

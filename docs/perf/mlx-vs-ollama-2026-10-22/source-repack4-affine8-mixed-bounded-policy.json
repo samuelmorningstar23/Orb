@@ -1,0 +1,29 @@
+{
+  "mlx_lm_version": "0.32.2",
+  "source_ollama_weight_digest": "sha256:4b97da6b21a8fb1405a0d1efee462bfd6c4d3c46307bac8b34373835f07ca758",
+  "conversion_label": "medgemma-27b-text-mlx-source-q4-integer-repack-q6-affine8-candidate",
+  "context_policy": "reject_input_plus_output_over_8192",
+  "sampling_parity_verified": false,
+  "template_parity_verified": false,
+  "clinical_equivalence_qualified": false,
+  "sampling_wrapper": {
+    "path": "/Users/samuelmorningstar/Documents/Projects/Orb/scripts/serve_mlx_benchmark.py",
+    "sha256": "abfdfbcaeaa13ac539abb7fb3195e335a1d69816e823a44fd1ea3139934451ac"
+  },
+  "note": "Same27B source, originalQ4integercodes withFP16scales/biases and separately labelledQ6affine8. Not lossless. Experimental F32 residual repair with F16 normalized projections; no global norm-output dtype patch. Bounded8GiB prefix cache enabled and unchanged8192 context/output/sampling/fidelity gates. No clinical or hardware purchase qualification. Owned MLX listener backlog256; unchanged2s proxyconnect and3/5/15s complete-answer targets. Retained real retrieval fixture starts before eager27B launch to avoid overlapping cold-load peaks. Bounded-memory serving variant: 256-token prefill chunks (no context truncation) and1GiB unusedMLXallocatorcache, distinct fromunchanged8GiB prefixcache. Original arithmetic,KVs,weights,outputbudgets,samplingandresourceguardsunchanged.",
+  "loading_mode": "mixed-staged",
+  "activation_dtype_policy": "F32 embedding/residual and post/final norms; F16 normalized projection inputs and QK cache inputs; original weights and RMSNorm formula unchanged",
+  "loading_wrapper_sha256": "cbe1d601f12cf3c994b577f70d091d47df2db93f1ecded7722a9ec9b842e3ed6",
+  "startup_trace_sha256": "567b104b08d7d8ce410a652201c04c3e09ebc62ca0efe3e1a7e8a42385d13faf",
+  "traced_inner_wrapper_sha256": "c9311445d21cbbbeb89aa0cf7a82ab0afb7d7dfb79869e6429de0b142a374ed4",
+  "trace_launcher_sha256": "adcb706bba52024b47fce769d96d9f23ec149caad0895a8594effe21f64bb2b9",
+  "prompt_trace_sha256": "0b2c482794f3fe51298c21afd608eb184a0b32107eee57624dad7f1f4a66318f",
+  "f32_embedding_sha256": "093ea64960a429d17722bdc8c9d94e9ae8a1f28adad660aba2662fc5b12e3ebf",
+  "mixed_projection_sha256": "f4cc1cdfbcf7025513d8b4c0b8244181e3cee40b3726e489312b285fae6f7c48",
+  "http_backlog_sha256": "2096906492eb4f03c81bca1131c7ddbcf24f612fd8cd0acfc895a295b47a297b",
+  "http_listen_backlog": 256,
+  "startup_policy": "Real retrieval fixture qualifies before the eager owned inference-engine launch; same models remain resident for measured requests; original memory guards unchanged.",
+  "allocator_budget_sha256": "f566780e0b486e2f62c92b444811c0f2c2f7d72e08d025d1718afb648f3ea145",
+  "mlx_allocator_cache_byte_limit": 1073741824,
+  "prefill_step_size": 256
+}

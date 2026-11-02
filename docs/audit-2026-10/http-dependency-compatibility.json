@@ -1,0 +1,547 @@
+{
+  "schema_version": 1,
+  "audit_date": "2026-10-12",
+  "scope": "Independent patched HTTP framework compatibility acceptance; application source unchanged by this verification.",
+  "runtime": {
+    "python_executable": "/private/tmp/orb-core-upgrade-20261011/bin/python",
+    "python_version": "3.12.13",
+    "platform": "macOS-26.5.2-arm64-arm-64bit",
+    "packages": {
+      "fastapi": "0.133.0",
+      "starlette": "1.3.1",
+      "pydantic": "2.13.4",
+      "anyio": "4.14.2",
+      "httpx": "0.28.1",
+      "python-multipart": "0.0.31",
+      "uvicorn": "0.34.2",
+      "python-socketio": "5.16.4",
+      "urllib3": "2.8.0",
+      "multidict": "6.9.1"
+    },
+    "installation_scope": "Owned prepared /private/tmp interpreter only; no user/project virtual environment edits."
+  },
+  "core_transport_auth_media": {
+    "command": [
+      "/private/tmp/orb-core-upgrade-20261011/bin/python",
+      "-m",
+      "pytest",
+      "tests/test_request_limits.py",
+      "tests/test_host_gate.py",
+      "tests/test_facility_fence.py",
+      "tests/test_security_headers.py",
+      "tests/test_unauthenticated_surface.py",
+      "tests/test_phase0_security.py",
+      "tests/test_cookie_auth_csrf.py",
+      "tests/test_auth_dependency_hardening.py",
+      "tests/test_auth_login_hardening.py",
+      "tests/test_auth_lockout_active.py",
+      "tests/test_auth_mfa_revocation.py",
+      "tests/test_readiness.py",
+      "tests/test_spa_switches.py",
+      "tests/test_upload_patient_scope.py",
+      "tests/test_history_import.py",
+      "tests/test_roster_import.py",
+      "tests/test_import_and_time_compatibility.py",
+      "tests/test_media_upload_errors.py",
+      "tests/test_lens.py",
+      "tests/test_lens_review_filing.py",
+      "tests/test_lens_filed_disclaimer.py",
+      "tests/test_scribe_pipeline.py",
+      "tests/test_media_stream_contracts.py",
+      "tests/test_asr_failure_contracts.py",
+      "tests/test_sage_streaming.py",
+      "tests/test_opd_socket_rooms.py",
+      "tests/test_voice_mutation_gate.py",
+      "tests/test_audit.py",
+      "tests/test_audit_actor_names.py",
+      "tests/test_audit_fixes.py",
+      "tests/test_audit_fail_closed_categories.py",
+      "tests/test_audit_trail_attack.py",
+      "tests/test_audit_chain_types.py",
+      "tests/test_audit_views_facets_and_summaries.py",
+      "tests/test_admission_form_choices.py",
+      "tests/test_discharge_access.py",
+      "-q"
+    ],
+    "shell_command": "/private/tmp/orb-core-upgrade-20261011/bin/python -m pytest tests/test_request_limits.py tests/test_host_gate.py tests/test_facility_fence.py tests/test_security_headers.py tests/test_unauthenticated_surface.py tests/test_phase0_security.py tests/test_cookie_auth_csrf.py tests/test_auth_dependency_hardening.py tests/test_auth_login_hardening.py tests/test_auth_lockout_active.py tests/test_auth_mfa_revocation.py tests/test_readiness.py tests/test_spa_switches.py tests/test_upload_patient_scope.py tests/test_history_import.py tests/test_roster_import.py tests/test_import_and_time_compatibility.py tests/test_media_upload_errors.py tests/test_lens.py tests/test_lens_review_filing.py tests/test_lens_filed_disclaimer.py tests/test_scribe_pipeline.py tests/test_media_stream_contracts.py tests/test_asr_failure_contracts.py tests/test_sage_streaming.py tests/test_opd_socket_rooms.py tests/test_voice_mutation_gate.py tests/test_audit.py tests/test_audit_actor_names.py tests/test_audit_fixes.py tests/test_audit_fail_closed_categories.py tests/test_audit_trail_attack.py tests/test_audit_chain_types.py tests/test_audit_views_facets_and_summaries.py tests/test_admission_form_choices.py tests/test_discharge_access.py -q > /private/tmp/orb-fastapi-starlette-core-compatibility.log 2>&1",
+    "working_directory": "/Users/samuelmorningstar/Documents/Projects/Orb/server",
+    "test_files": [
+      "tests/test_request_limits.py",
+      "tests/test_host_gate.py",
+      "tests/test_facility_fence.py",
+      "tests/test_security_headers.py",
+      "tests/test_unauthenticated_surface.py",
+      "tests/test_phase0_security.py",
+      "tests/test_cookie_auth_csrf.py",
+      "tests/test_auth_dependency_hardening.py",
+      "tests/test_auth_login_hardening.py",
+      "tests/test_auth_lockout_active.py",
+      "tests/test_auth_mfa_revocation.py",
+      "tests/test_readiness.py",
+      "tests/test_spa_switches.py",
+      "tests/test_upload_patient_scope.py",
+      "tests/test_history_import.py",
+      "tests/test_roster_import.py",
+      "tests/test_import_and_time_compatibility.py",
+      "tests/test_media_upload_errors.py",
+      "tests/test_lens.py",
+      "tests/test_lens_review_filing.py",
+      "tests/test_lens_filed_disclaimer.py",
+      "tests/test_scribe_pipeline.py",
+      "tests/test_media_stream_contracts.py",
+      "tests/test_asr_failure_contracts.py",
+      "tests/test_sage_streaming.py",
+      "tests/test_opd_socket_rooms.py",
+      "tests/test_voice_mutation_gate.py",
+      "tests/test_audit.py",
+      "tests/test_audit_actor_names.py",
+      "tests/test_audit_fixes.py",
+      "tests/test_audit_fail_closed_categories.py",
+      "tests/test_audit_trail_attack.py",
+      "tests/test_audit_chain_types.py",
+      "tests/test_audit_views_facets_and_summaries.py",
+      "tests/test_admission_form_choices.py",
+      "tests/test_discharge_access.py"
+    ],
+    "selected_file_count": 36,
+    "passed": 675,
+    "failed": 0,
+    "skipped": 0,
+    "exit_code": 0,
+    "seconds": 93.48,
+    "warnings": 1,
+    "warning_note": "StarletteDeprecationWarning: httpx TestClient support is deprecated in favor of httpx2; existing pinned httpx0.28.1 remains functional.",
+    "log": {
+      "path": "/private/tmp/orb-fastapi-starlette-core-compatibility.log",
+      "sha256": "39a32edfe99718ca5a79e4bce368b4e194a12315989a05bbd878f16e4a574313"
+    }
+  },
+  "offline_modules_and_shared_boundaries": {
+    "command": [
+      "/private/tmp/orb-core-upgrade-20261011/bin/python",
+      "-m",
+      "pytest",
+      "server/tests/test_local_operations.py",
+      "server/tests/test_reporting_finance.py",
+      "server/tests/test_offline_clinical_records.py",
+      "server/tests/test_record_governance.py",
+      "server/tests/test_radiation_safety.py",
+      "server/tests/test_local_workflow_privacy_export.py",
+      "server/tests/test_infection_surveillance.py",
+      "server/tests/test_vigil_labelled_extract.py",
+      "server/tests/test_offline_module_integration.py",
+      "server/tests/test_offline_patient_picker.py",
+      "server/tests/test_billing.py",
+      "server/tests/test_billing_op_patients.py",
+      "server/tests/test_invoice_supplier_snapshot.py",
+      "server/tests/test_billing_bed_days_and_encounter.py",
+      "server/tests/test_billing_permissions.py",
+      "server/tests/test_billing_reversal_refresh.py",
+      "server/tests/test_bridge_admission_only.py",
+      "server/tests/test_bridge_appointments.py",
+      "server/tests/test_bridge_current_stay.py",
+      "server/tests/test_bridge_red_flag_delivery.py",
+      "server/tests/test_bridge_vitals_no_verdict.py",
+      "server/tests/test_bridge_vitals_timestamp.py",
+      "server/tests/test_opt_in_platform.py",
+      "server/tests/test_db_exception_aliases.py",
+      "server/tests/test_migrations.py",
+      "server/tests/test_consent_quarantine_retention.py",
+      "server/tests/test_retention_gst_documents.py",
+      "server/tests/test_dpdp_compliance.py",
+      "server/tests/test_request_limits.py",
+      "server/tests/test_unauthenticated_surface.py",
+      "-q"
+    ],
+    "shell_command": "/private/tmp/orb-core-upgrade-20261011/bin/python -m pytest server/tests/test_local_operations.py server/tests/test_reporting_finance.py server/tests/test_offline_clinical_records.py server/tests/test_record_governance.py server/tests/test_radiation_safety.py server/tests/test_local_workflow_privacy_export.py server/tests/test_infection_surveillance.py server/tests/test_vigil_labelled_extract.py server/tests/test_offline_module_integration.py server/tests/test_offline_patient_picker.py server/tests/test_billing.py server/tests/test_billing_op_patients.py server/tests/test_invoice_supplier_snapshot.py server/tests/test_billing_bed_days_and_encounter.py server/tests/test_billing_permissions.py server/tests/test_billing_reversal_refresh.py server/tests/test_bridge_admission_only.py server/tests/test_bridge_appointments.py server/tests/test_bridge_current_stay.py server/tests/test_bridge_red_flag_delivery.py server/tests/test_bridge_vitals_no_verdict.py server/tests/test_bridge_vitals_timestamp.py server/tests/test_opt_in_platform.py server/tests/test_db_exception_aliases.py server/tests/test_migrations.py server/tests/test_consent_quarantine_retention.py server/tests/test_retention_gst_documents.py server/tests/test_dpdp_compliance.py server/tests/test_request_limits.py server/tests/test_unauthenticated_surface.py -q > /private/tmp/orb-fastapi-starlette-offline-compatibility.log 2>&1",
+    "working_directory": "/Users/samuelmorningstar/Documents/Projects/Orb",
+    "test_files": [
+      "server/tests/test_local_operations.py",
+      "server/tests/test_reporting_finance.py",
+      "server/tests/test_offline_clinical_records.py",
+      "server/tests/test_record_governance.py",
+      "server/tests/test_radiation_safety.py",
+      "server/tests/test_local_workflow_privacy_export.py",
+      "server/tests/test_infection_surveillance.py",
+      "server/tests/test_vigil_labelled_extract.py",
+      "server/tests/test_offline_module_integration.py",
+      "server/tests/test_offline_patient_picker.py",
+      "server/tests/test_billing.py",
+      "server/tests/test_billing_op_patients.py",
+      "server/tests/test_invoice_supplier_snapshot.py",
+      "server/tests/test_billing_bed_days_and_encounter.py",
+      "server/tests/test_billing_permissions.py",
+      "server/tests/test_billing_reversal_refresh.py",
+      "server/tests/test_bridge_admission_only.py",
+      "server/tests/test_bridge_appointments.py",
+      "server/tests/test_bridge_current_stay.py",
+      "server/tests/test_bridge_red_flag_delivery.py",
+      "server/tests/test_bridge_vitals_no_verdict.py",
+      "server/tests/test_bridge_vitals_timestamp.py",
+      "server/tests/test_opt_in_platform.py",
+      "server/tests/test_db_exception_aliases.py",
+      "server/tests/test_migrations.py",
+      "server/tests/test_consent_quarantine_retention.py",
+      "server/tests/test_retention_gst_documents.py",
+      "server/tests/test_dpdp_compliance.py",
+      "server/tests/test_request_limits.py",
+      "server/tests/test_unauthenticated_surface.py"
+    ],
+    "selected_file_count": 30,
+    "passed": 573,
+    "failed": 0,
+    "skipped": 0,
+    "exit_code": 0,
+    "seconds": 94.48,
+    "warnings": 1,
+    "warning_note": "StarletteDeprecationWarning: httpx TestClient support is deprecated in favor of httpx2; existing pinned httpx0.28.1 remains functional.",
+    "log": {
+      "path": "/private/tmp/orb-fastapi-starlette-offline-compatibility.log",
+      "sha256": "a6cb4937d0e5611f8a42705e899a8d379d1972cba8f4d5afe8b3f425bedc37b9"
+    }
+  },
+  "counting_note": "The two selections overlap server/tests/test_request_limits.py and server/tests/test_unauthenticated_surface.py. Counts are reported separately and must not be added as a unique-test total. The offline selection exactly repeats the stored offline_backend.command test-file list.",
+  "independent_static_review": {
+    "confirmed_application_incompatibilities": [],
+    "checked": [
+      "Installed FastAPI0.133.0 declares Starlette>=0.40.0 and Pydantic>=2.7.0; installed Starlette1.3.1 supports Python>=3.10, Anyio<5 and current httpx0.28.1.",
+      "FastAPI explicitly implements middleware, exception_handler and on_event; Orb uses FastAPI middleware/exception decorators and an async lifespan context manager.",
+      "Orb StaticFiles.file_response override matches the installed Starlette1.3.1 signature; SPA cache/injected-switch behavior passed real TestClient tests.",
+      "No production dependency on removed Starlette event registration/decorators, FileResponse method argument, templating signatures, or SessionMiddleware was found.",
+      "Orb cookie auth/CSRF uses its own session tokens and response cookies; auth/refusal/refresh/MFA behavior passed existing route tests.",
+      "Direct ASGI request limits, security/facility/Host fences, real socket polling/websocket upgrade, streamed multipart UploadFile and SSE responses passed existing tests.",
+      "Mutation audit through FastAPI BaseHTTPMiddleware registration and route validation/error paths passed the selected audit/API tests."
+    ],
+    "primary_sources": [
+      "https://raw.githubusercontent.com/fastapi/fastapi/0.133.0/pyproject.toml",
+      "https://raw.githubusercontent.com/Kludex/starlette/1.3.1/docs/release-notes.md",
+      "https://fastapi.tiangolo.com/release-notes/"
+    ]
+  },
+  "source_fingerprints": [
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/requirements.txt",
+      "sha256": "3da600521a095b6f3039e78c3a6442a3bd0597aab5a9b6f7cc4b2745aa95337f"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/requirements-dev.txt",
+      "sha256": "dbcc6da194c941d2ec2c53c706625b503642f00ed574fde788817d10621e1d49"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/constraints-security.txt",
+      "sha256": "040dd45f2301a6ca7ed70ee693bdba6414396e763599ba692427030c68678aa7"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/main.py",
+      "sha256": "9f8ce36566fca5b3daae55826f014f5f50240af1b403d7b28f633174f3003c25"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/request_limits.py",
+      "sha256": "3edd9d3e3dc1ba9659c794622b2974f9da5a87720e266541294d153da25199a6"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/facility_fence.py",
+      "sha256": "a035fe91ea23f080975b31fd29285153fd376b41a24ae5641ef806307b6cefaf"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/services/host_gate.py",
+      "sha256": "4b02c30b3464331f95e22260bc9ec5b9b7c3e567a86eecab18ee8f5f98e9eab9"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/services/audit_middleware.py",
+      "sha256": "91e132c3db8c5a25c8a37e8f14c83b9d56765ce2d5ffed98e0e4aff6bb32e835"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/auth.py",
+      "sha256": "6dac23105b16a070d81fd6e0c397bed525a2db3638c9415d34b0e9a54d6045d5"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/routes/auth_routes.py",
+      "sha256": "e15371d1bc53761aa21c16dc1f04e765d2fb6675d0c4e577ef090412675d6709"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/routes/lens_routes.py",
+      "sha256": "03818e2df360879fc424d8acc1380e8a6d7ec5e59c6fa47f90a83b4b2734f200"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/routes/scribe_routes.py",
+      "sha256": "922acf0366e1cc28cb8d7de354c5ac4c4ea2ad06a8b67a2401417eb399332f59"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/routes/admin_routes.py",
+      "sha256": "48eef445c07d3aa1cb55667e99996c476b500d4003c4324b0b37cb0c45020f8e"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/routes/roster_import_routes.py",
+      "sha256": "766c0c802ee572c4f67200ff92e70e708ecca5bf98b2901b4c433e52a324d3ce"
+    }
+  ],
+  "test_source_fingerprints": [
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_admission_form_choices.py",
+      "sha256": "41839f235176e1f7cce629e6679735466a0b8134e8c6542066331a35e51ec20d"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_asr_failure_contracts.py",
+      "sha256": "4725d1014cd32f6c8821d2e9744226ef4893631ed10989a77f1da84ab13d4829"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_audit.py",
+      "sha256": "999e1264963779bc913f7294bbb480517e3f1a30f220d841d12b3ba90e864dc5"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_audit_actor_names.py",
+      "sha256": "a9946b1fecfdcb2c0b7776401a7a1d5995cd560797fb136901374963da0dbb91"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_audit_chain_types.py",
+      "sha256": "841907f9d7205d3d43a1ca345781cf96b9d4af412dab297accd6d7c05b510f04"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_audit_fail_closed_categories.py",
+      "sha256": "af897aa10b9529f35dc6ff1a5616e98133f1669a8a9f44bddd7bc1d16b1faa91"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_audit_fixes.py",
+      "sha256": "c78c506ee897c804fd04ab68f6bc3a518712c9d5654c7a5d52b369950cc75cda"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_audit_trail_attack.py",
+      "sha256": "0487cfbc08b6fbec3f287f7cb192e4fcad1830982822ea880c69da72803d2895"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_audit_views_facets_and_summaries.py",
+      "sha256": "68be2f2bab7a50a981486271041f6f0b8213fa926641afaa90cce212df3e64a9"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_auth_dependency_hardening.py",
+      "sha256": "f6b216e0acc1524ef8c47d452c306a29e3e4597fa518cd8763ddb1debbe26ef8"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_auth_lockout_active.py",
+      "sha256": "03b6942177060c54c29402cb188c21cc4010e6cc188a2bb8ca54350ed4257932"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_auth_login_hardening.py",
+      "sha256": "8dccac63c561e632ce7650b45187e82baeefc35e567e0e4b16419efe8e444cfa"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_auth_mfa_revocation.py",
+      "sha256": "bf2ad7a5514b6ef40ba66f39e32c63ab7cb244fcf75246a5127bce5978b6abd9"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_billing.py",
+      "sha256": "c95108c6d4d6cc9876a1dc129b7c99324e4a8cc5a2160d437e8364f5bbee3472"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_billing_bed_days_and_encounter.py",
+      "sha256": "6e9ce305dbe8fdde1824e819b3aace6171b4e893cfedde00085c14f8e302cca2"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_billing_op_patients.py",
+      "sha256": "dc8780de1e8d591aae764d22d3fa40bc4776e4bd46aa72891d18465818d56076"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_billing_permissions.py",
+      "sha256": "bd5f05c699ba28682494ead4fcce4fd67920dd81b34322f90cea6c3281fb30bd"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_billing_reversal_refresh.py",
+      "sha256": "ec8fa20abf95bd6bcc78b73ef6c8346c4d225147a6281bf0196ab3a6fa882de5"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_bridge_admission_only.py",
+      "sha256": "5bf254046aecabd6f60af21e5f83eb51d8ee0e66984b332e38fde105109786ef"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_bridge_appointments.py",
+      "sha256": "9966055db5de0effd6a870e4a84c4a97aee5829272a86259b91272fc8176cf7c"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_bridge_current_stay.py",
+      "sha256": "0122ec271b7ceb089365f605f91e984f27b4f1e1a8e6e997ef431af9928e798c"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_bridge_red_flag_delivery.py",
+      "sha256": "2ca28863cdf0f1a1d5f9d12fd240c7e362b3c77446b5d4e40a6578978aff81f5"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_bridge_vitals_no_verdict.py",
+      "sha256": "15bb4290ba6531f57daad2b349e125419e4d0a34effabde1554bc23995e4b43c"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_bridge_vitals_timestamp.py",
+      "sha256": "a17f44d7508dafc5cda02fa3b007730b3322368a7de7f5f1ff5e3a98325a7b44"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_consent_quarantine_retention.py",
+      "sha256": "c2cf4bcc76d798eb0141d1534c141e0805ca79eb8d896d333aa69fe0f5078604"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_cookie_auth_csrf.py",
+      "sha256": "804eed9a051b43f92cbcebdfd630fdfac6bf10b99dfa57eef28a0a24fd44a7bd"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_db_exception_aliases.py",
+      "sha256": "11566794cddc5de78208c0b79dd92c12b6da4962d482a507e71f75ed38074036"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_discharge_access.py",
+      "sha256": "f3a87cd7ae93a11356c3995dd47ceaa38686a70e3e931d96e7bf222c0a274da2"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_dpdp_compliance.py",
+      "sha256": "7d75b3ce6ec277a782c546a3505f2607651ca54f0d2ef367fb7b1f8aafd6b512"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_facility_fence.py",
+      "sha256": "f742e85fa18f89c79c21159db6754fa22af4d831f61ffcb3f1e2c5156fe27b1b"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_history_import.py",
+      "sha256": "f1ad468fbf0e1835e2b119abda9d2fe44f36ce6d5ef086276ed6cb63ef4bceef"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_host_gate.py",
+      "sha256": "24c2d1d41f257ffa28de23f198731c40e5a2b24b9b65d548e8e4eacef048d73c"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_import_and_time_compatibility.py",
+      "sha256": "0e5c0693527ad063fbdfb5982fe3021fb304137ef5f93ed65c751cdc48861e9e"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_infection_surveillance.py",
+      "sha256": "90694d236c8d3fc3fc994c7f12735a8bd053672022f2773fd2bc8480956fa67d"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_invoice_supplier_snapshot.py",
+      "sha256": "9a3c0e8069a512664073e61743fe3c3e1bdc8e2774e3cdd3f4c7e44a4c4166e6"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_lens.py",
+      "sha256": "29355c52424d26d6adc24bd0c02a5dc9e6c595f345ca2348e8d8ffb708958c6f"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_lens_filed_disclaimer.py",
+      "sha256": "5d847efd8e7d0301a37b27f5b482b57927d55e9695605eec3a4c82e2a83b09ff"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_lens_review_filing.py",
+      "sha256": "6163a38a3c8816f73b47b7fd6316537a16b3f1f5bd97601e8e3f3befcafb6db6"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_local_operations.py",
+      "sha256": "baa4b8cca38caadc076dac04b70071deff64314749e81a9c6822e18b1fbb7b5a"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_local_workflow_privacy_export.py",
+      "sha256": "27893d66fb786c2b73cef6cdcf8d4aa65315788ed50a8d1699a628e3d25e9be1"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_media_stream_contracts.py",
+      "sha256": "3c187e451280b10a9984526f65c58576ec86acb0445dddd09df5ca3096791a40"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_media_upload_errors.py",
+      "sha256": "cbbfca3328360ea5d631cb848c500ecb1ba466a3974e67d828f8ea50d35622a4"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_migrations.py",
+      "sha256": "b98562ac3076c949b0ecbc973442a752f6f4e49aa9b7e28e8e830b5e5015a929"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_offline_clinical_records.py",
+      "sha256": "fb6ec2eadf975d10147f04da9e766592627aebf731bebc3a8f7a3d2dcc5c06d7"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_offline_module_integration.py",
+      "sha256": "8cf2bdf2c14c500bdb8083055ae6e8d6e7fa8b989e1b1bd4bf591aecce1e7577"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_offline_patient_picker.py",
+      "sha256": "f6c1644398bbfcf0d9cd3cfbf075d22857575857f09f8ca09182532a165182bc"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_opd_socket_rooms.py",
+      "sha256": "f158d9c5ea04d6d44856e34a24a463dd6409e5de6566198ad3535405428a731b"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_opt_in_platform.py",
+      "sha256": "86fff235904b4e635679fbc89bc7ca1284bcfe8f751b21c1ae9b4136be07ece8"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_phase0_security.py",
+      "sha256": "e1ee1f95b1d0307854f91131ace8789b915e4a33c05f62e9ba494de13473e86b"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_radiation_safety.py",
+      "sha256": "d344bb5a0fe1263004f75996f92c898b72acbdf028afa0f408c0765e943a5645"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_readiness.py",
+      "sha256": "950f43d78d73d2c4210d3989f21d154856a976d72663edf41bcfa0f573b35a2f"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_record_governance.py",
+      "sha256": "4cf58b4bdfd2b0f15525f4f8b5cab4aadd5de6d385508f6af7f5eb7e2d33ec90"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_reporting_finance.py",
+      "sha256": "893028d8ac4e131d5c5f7f1b67d8d1c251014f9dabad76e2b268ab91467dd250"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_request_limits.py",
+      "sha256": "6fba50c88cc5f9b7ad4c563049738434885ff06d24bb3a749e0816d56cc2d674"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_retention_gst_documents.py",
+      "sha256": "74b595b80c3524c9cd792c135b97771ed7eea6d6438b597575b3e5c0febe0b6c"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_roster_import.py",
+      "sha256": "a0a31a0eda9166270d280796998879c1568a16e71481578ff905ed2698576e33"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_sage_streaming.py",
+      "sha256": "1de9c7da51ba052727030a3881eb713f927c77e4a205cefcdd66233ca5c738db"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_scribe_pipeline.py",
+      "sha256": "8f94d6136a8eecbd502642dcb2d4479e9b27af1bb9d269a6d247540acedf9a53"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_security_headers.py",
+      "sha256": "e4ba19d5d426307a8459c92b395836ec778d053b5605fb382189e4c318f1b11e"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_spa_switches.py",
+      "sha256": "ca3bc0b2ffdd8ae1e9cdd0c7d92369b0bb4be752266178037629f1266067bbd3"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_unauthenticated_surface.py",
+      "sha256": "8f0e48589f16c16994cab9d5a70f598dcee0c9a375aa2b9935025d4995486369"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_upload_patient_scope.py",
+      "sha256": "de814351cc1a8282868accbc61e09bc597167d3fa74884fa41ff4575b8180bc5"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_vigil_labelled_extract.py",
+      "sha256": "f231631c0d42c7799e4bfe185422ae684def37e403ec513f144201d86e8f7c6e"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_voice_mutation_gate.py",
+      "sha256": "bd6d08b4600b6c6d1aaad5771e75cf8e33dc4065c93bf2f7c87de49ae830345f"
+    }
+  ],
+  "limitations": [
+    "Affected-scope acceptance, not a full repository backend test run.",
+    "All tests used synthetic disposable databases/media/provider responses; no clinical data, .env values, live appliance writes, model inference or running ASR daemon was accessed.",
+    "Process cleanup/signal tests were excluded from these native Torch-importing test processes.",
+    "Operations owns the separate 11-case HTTP advisory contract module and dependency vulnerability scan; those counts are not included here.",
+    "Root owns real isolated Uvicorn/browser E2E acceptance; this record covers ASGI TestClient/direct ASGI paths.",
+    "Optional ML dependency advisories and coordinated model upgrade acceptance remain outside this HTTP framework scope.",
+    "The httpx TestClient deprecation is a future test-transport migration; no httpx2 upgrade was attempted in this bounded fix.",
+    "Temporary local logs are evidence paths, not durable CI artifact URLs."
+  ]
+}

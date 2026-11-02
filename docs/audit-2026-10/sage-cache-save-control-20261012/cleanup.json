@@ -1,0 +1,15 @@
+{
+  "recorded_at_utc": "2026-10-12T08:49:16.891277+00:00",
+  "profile": "ONE slot, fullSWA, similarity0.6 from owned INI",
+  "controller_exit_code": 0,
+  "daemon_exit_codes": [
+    0
+  ],
+  "model_files_unchanged": true,
+  "model_file_count": 33,
+  "owned_port_connect_ex": 61,
+  "shared_read_only_api_ps": {
+    "models": []
+  },
+  "shared_service_changed": false
+}

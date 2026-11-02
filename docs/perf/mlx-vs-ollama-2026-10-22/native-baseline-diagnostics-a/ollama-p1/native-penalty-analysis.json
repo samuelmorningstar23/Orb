@@ -1,0 +1,522 @@
+{
+  "schema_version": 1,
+  "created_at": "2026-10-22T08:38:13.307707+00:00",
+  "evidence_kind": "offline_analysis_of_saved_synthetic_native_first_token_probabilities",
+  "source_report": {
+    "path": "/Users/samuelmorningstar/Documents/Projects/Orb/docs/perf/mlx-vs-ollama-2026-10-22/native-baseline-diagnostics-a/ollama-p1/native-penalty-probe.json",
+    "sha256": "69c4301f86b0fa806f2eabf4d69ea497607dee5cc1607d2d8827f2b052f0f05e",
+    "bytes": 47052,
+    "unchanged": true
+  },
+  "analysis_helper": {
+    "path": "/Users/samuelmorningstar/Documents/Projects/Orb/scripts/probe_native_penalties.py",
+    "sha256": "fe0a79289dd0c31159c0f0325a0b167d1b7feca3fa6001e1fc94c29ec14ac09a"
+  },
+  "network_or_inference_performed_for_analysis": false,
+  "clinical_quality_qualified": false,
+  "partial_distribution_comparison": {
+    "schema_observations": [
+      "probabilities_with_explicit_token_ids",
+      "probabilities_with_explicit_token_ids"
+    ],
+    "full_distribution_observed": false,
+    "probability_tolerance": 1e-07,
+    "observation": "inconclusive_different_partial_candidate_ids",
+    "matched_tokens": [
+      {
+        "token_id": 106,
+        "in_repeat_last_n_prompt": true,
+        "without_penalty_probability": 6.39942372799851e-05,
+        "with_penalty_probability": 8.095516022876836e-06,
+        "probability_delta": -5.5898721257108264e-05
+      },
+      {
+        "token_id": 818,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 3.3844958124973346e-07,
+        "with_penalty_probability": 3.384851368082309e-07,
+        "probability_delta": 3.5555558497435413e-11
+      },
+      {
+        "token_id": 1018,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 8.126167472255474e-08,
+        "with_penalty_probability": 8.127021544623858e-08,
+        "probability_delta": 8.540723683836404e-12
+      },
+      {
+        "token_id": 1564,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 1.6333640928678506e-07,
+        "with_penalty_probability": 1.633535617884263e-07,
+        "probability_delta": 1.715250164124882e-11
+      },
+      {
+        "token_id": 2094,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 9.8435286588483e-08,
+        "with_penalty_probability": 9.844563209071566e-08,
+        "probability_delta": 1.0345502232667059e-11
+      },
+      {
+        "token_id": 2717,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 0.9998615384101868,
+        "with_penalty_probability": 0.9999666213989258,
+        "probability_delta": 0.00010508298873901367
+      },
+      {
+        "token_id": 3771,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 1.6219858878230298e-07,
+        "with_penalty_probability": 1.622156275971065e-07,
+        "probability_delta": 1.7038814803527202e-11
+      },
+      {
+        "token_id": 4119,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 1.8882107610806997e-07,
+        "with_penalty_probability": 1.888409144612524e-07,
+        "probability_delta": 1.9838353182421997e-11
+      },
+      {
+        "token_id": 6126,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 9.13951154757342e-08,
+        "with_penalty_probability": 9.140472201352168e-08,
+        "probability_delta": 9.606537787476555e-12
+      },
+      {
+        "token_id": 6275,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 7.179981764693366e-08,
+        "with_penalty_probability": 7.180736361078743e-08,
+        "probability_delta": 7.545963853772264e-12
+      },
+      {
+        "token_id": 8433,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 1.707773833459214e-07,
+        "with_penalty_probability": 1.707953316554267e-07,
+        "probability_delta": 1.794830950530013e-11
+      },
+      {
+        "token_id": 14937,
+        "in_repeat_last_n_prompt": true,
+        "without_penalty_probability": 5.6172146287281066e-05,
+        "with_penalty_probability": 7.227861260616919e-06,
+        "probability_delta": -4.894428502666415e-05
+      },
+      {
+        "token_id": 15231,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 4.478831101550895e-07,
+        "with_penalty_probability": 4.479301765059063e-07,
+        "probability_delta": 4.7066350816749036e-11
+      },
+      {
+        "token_id": 19058,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 1.0594055055435092e-07,
+        "with_penalty_probability": 1.0595167765359292e-07,
+        "probability_delta": 1.1127099242003169e-11
+      },
+      {
+        "token_id": 25146,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 1.6422200133092701e-07,
+        "with_penalty_probability": 1.6423925330855127e-07,
+        "probability_delta": 1.7251977624255233e-11
+      },
+      {
+        "token_id": 27658,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 2.586392611192423e-07,
+        "with_penalty_probability": 2.5866643227345776e-07,
+        "probability_delta": 2.717115421546623e-11
+      },
+      {
+        "token_id": 31608,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 3.1725687676953385e-06,
+        "with_penalty_probability": 3.1729020975035382e-06,
+        "probability_delta": 3.333298081997782e-10
+      },
+      {
+        "token_id": 42204,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 8.487335634299598e-08,
+        "with_penalty_probability": 8.488227365432977e-08,
+        "probability_delta": 8.917311333789257e-12
+      },
+      {
+        "token_id": 45562,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 2.663934424163017e-07,
+        "with_penalty_probability": 2.6642143780009064e-07,
+        "probability_delta": 2.7995383788947947e-11
+      },
+      {
+        "token_id": 49190,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 3.108455075562233e-07,
+        "with_penalty_probability": 3.1087816410035884e-07,
+        "probability_delta": 3.2656544135534205e-11
+      },
+      {
+        "token_id": 95235,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 2.725568606365414e-07,
+        "with_penalty_probability": 2.7258550971964723e-07,
+        "probability_delta": 2.864908310584724e-11
+      },
+      {
+        "token_id": 149902,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 1.5858834956361534e-07,
+        "with_penalty_probability": 1.5860500468534156e-07,
+        "probability_delta": 1.6655121726216748e-11
+      },
+      {
+        "token_id": 179808,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 9.16547051588168e-08,
+        "with_penalty_probability": 9.166433301288635e-08,
+        "probability_delta": 9.627854069549358e-12
+      },
+      {
+        "token_id": 184899,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 1.444836641439906e-07,
+        "with_penalty_probability": 1.4449885554768116e-07,
+        "probability_delta": 1.5191403690550942e-11
+      },
+      {
+        "token_id": 236775,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 8.419966093242692e-07,
+        "with_penalty_probability": 8.420851145274355e-07,
+        "probability_delta": 8.850520316627808e-11
+      },
+      {
+        "token_id": 236777,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 2.6460006097295263e-07,
+        "with_penalty_probability": 2.6462785740477557e-07,
+        "probability_delta": 2.779643182293512e-11
+      },
+      {
+        "token_id": 236782,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 1.6997358898152015e-07,
+        "with_penalty_probability": 1.6999145202589716e-07,
+        "probability_delta": 1.786304437700892e-11
+      },
+      {
+        "token_id": 236829,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 5.246350838206126e-07,
+        "with_penalty_probability": 5.246902219369076e-07,
+        "probability_delta": 5.5138116294983774e-11
+      },
+      {
+        "token_id": 236840,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 2.634845088778093e-07,
+        "with_penalty_probability": 2.635122200445039e-07,
+        "probability_delta": 2.7711166694643907e-11
+      },
+      {
+        "token_id": 236929,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 1.835319949350378e-07,
+        "with_penalty_probability": 1.8355127906488633e-07,
+        "probability_delta": 1.928412984852912e-11
+      }
+    ],
+    "candidate_counts": [
+      32,
+      32
+    ],
+    "same_candidate_token_ids": false,
+    "only_without_penalty_ids": [
+      82138,
+      236770
+    ],
+    "only_with_penalty_ids": [
+      4606,
+      31836
+    ]
+  },
+  "matched_relative_odds_analysis": {
+    "observation": "matched_prompt_tail_odds_suppressed_with_stable_nonprompt_controls",
+    "full_distribution_observed": false,
+    "relative_log_odds_tolerance": 1e-05,
+    "clinical_quality_qualified": false,
+    "matched_candidate_count": 30,
+    "positive_probability_matched_count": 30,
+    "excluded_zero_probability_ids": [],
+    "same_partial_candidate_ids": false,
+    "nonprompt_control_count": 28,
+    "rows": [
+      {
+        "token_id": 106,
+        "in_repeat_last_n_prompt": true,
+        "without_penalty_probability": 6.39942372799851e-05,
+        "with_penalty_probability": 8.095516022876836e-06,
+        "relative_log_odds_change": -2.067587797848493,
+        "relative_odds_multiplier": 0.12649053473434102
+      },
+      {
+        "token_id": 818,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 3.3844958124973346e-07,
+        "with_penalty_probability": 3.384851368082309e-07,
+        "relative_log_odds_change": -4.33110493177583e-08,
+        "relative_odds_multiplier": 0.9999999566889516
+      },
+      {
+        "token_id": 1018,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 8.126167472255474e-08,
+        "with_penalty_probability": 8.127021544623858e-08,
+        "relative_log_odds_change": 3.956141732323849e-09,
+        "relative_odds_multiplier": 1.0000000039561416
+      },
+      {
+        "token_id": 1564,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 1.6333640928678506e-07,
+        "with_penalty_probability": 1.633535617884263e-07,
+        "relative_log_odds_change": -8.419334597686433e-08,
+        "relative_odds_multiplier": 0.9999999158066576
+      },
+      {
+        "token_id": 2094,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 9.8435286588483e-08,
+        "with_penalty_probability": 9.844563209071566e-08,
+        "relative_log_odds_change": 1.9878282201443286e-09,
+        "relative_odds_multiplier": 1.0000000019878281
+      },
+      {
+        "token_id": 2717,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 0.9998615384101868,
+        "with_penalty_probability": 0.9999666213989258,
+        "relative_log_odds_change": 0.0,
+        "relative_odds_multiplier": 1.0
+      },
+      {
+        "token_id": 3771,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 1.6219858878230298e-07,
+        "with_penalty_probability": 1.622156275971065e-07,
+        "relative_log_odds_change": -4.8441597748301356e-08,
+        "relative_odds_multiplier": 0.9999999515584034
+      },
+      {
+        "token_id": 4119,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 1.8882107610806997e-07,
+        "with_penalty_probability": 1.888409144612524e-07,
+        "relative_log_odds_change": -3.324253618341576e-08,
+        "relative_odds_multiplier": 0.9999999667574644
+      },
+      {
+        "token_id": 6126,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 9.13951154757342e-08,
+        "with_penalty_probability": 9.140472201352168e-08,
+        "relative_log_odds_change": 1.2427345914893485e-08,
+        "relative_odds_multiplier": 1.000000012427346
+      },
+      {
+        "token_id": 6275,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 7.179981764693366e-08,
+        "with_penalty_probability": 7.180736361078743e-08,
+        "relative_log_odds_change": -2.841534937306645e-10,
+        "relative_odds_multiplier": 0.9999999997158465
+      },
+      {
+        "token_id": 8433,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 1.707773833459214e-07,
+        "with_penalty_probability": 1.707953316554267e-07,
+        "relative_log_odds_change": 1.5519461971503883e-10,
+        "relative_odds_multiplier": 1.0000000001551945
+      },
+      {
+        "token_id": 14937,
+        "in_repeat_last_n_prompt": true,
+        "without_penalty_probability": 5.6172146287281066e-05,
+        "with_penalty_probability": 7.227861260616919e-06,
+        "relative_log_odds_change": -2.050582930561824,
+        "relative_odds_multiplier": 0.1286598819464576
+      },
+      {
+        "token_id": 15231,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 4.478831101550895e-07,
+        "with_penalty_probability": 4.479301765059063e-07,
+        "relative_log_odds_change": -1.130217909672414e-08,
+        "relative_odds_multiplier": 0.9999999886978209
+      },
+      {
+        "token_id": 19058,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 1.0594055055435092e-07,
+        "with_penalty_probability": 1.0595167765359292e-07,
+        "relative_log_odds_change": -6.599312775545517e-08,
+        "relative_odds_multiplier": 0.9999999340068744
+      },
+      {
+        "token_id": 25146,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 1.6422200133092701e-07,
+        "with_penalty_probability": 1.6423925330855127e-07,
+        "relative_log_odds_change": -4.4756938059827044e-08,
+        "relative_odds_multiplier": 0.999999955243063
+      },
+      {
+        "token_id": 27658,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 2.586392611192423e-07,
+        "with_penalty_probability": 2.5866643227345776e-07,
+        "relative_log_odds_change": -4.328377335848931e-08,
+        "relative_odds_multiplier": 0.9999999567162275
+      },
+      {
+        "token_id": 31608,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 3.1725687676953385e-06,
+        "with_penalty_probability": 3.1729020975035382e-06,
+        "relative_log_odds_change": -3.1317391695147344e-08,
+        "relative_odds_multiplier": 0.9999999686826088
+      },
+      {
+        "token_id": 42204,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 8.487335634299598e-08,
+        "with_penalty_probability": 8.488227365432977e-08,
+        "relative_log_odds_change": -3.1451677166778646e-08,
+        "relative_odds_multiplier": 0.9999999685483233
+      },
+      {
+        "token_id": 45562,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 2.663934424163017e-07,
+        "with_penalty_probability": 2.6642143780009064e-07,
+        "relative_log_odds_change": -7.176114273584099e-09,
+        "relative_odds_multiplier": 0.9999999928238857
+      },
+      {
+        "token_id": 49190,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 3.108455075562233e-07,
+        "with_penalty_probability": 3.1087816410035884e-07,
+        "relative_log_odds_change": -4.038318336807155e-08,
+        "relative_odds_multiplier": 0.9999999596168174
+      },
+      {
+        "token_id": 95235,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 2.725568606365414e-07,
+        "with_penalty_probability": 2.7258550971964723e-07,
+        "relative_log_odds_change": 1.4774625618833815e-08,
+        "relative_odds_multiplier": 1.0000000147746257
+      },
+      {
+        "token_id": 149902,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 1.5858834956361534e-07,
+        "with_penalty_probability": 1.5860500468534156e-07,
+        "relative_log_odds_change": -7.644019851948546e-08,
+        "relative_odds_multiplier": 0.9999999235598044
+      },
+      {
+        "token_id": 179808,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 9.16547051588168e-08,
+        "with_penalty_probability": 9.166433301288635e-08,
+        "relative_log_odds_change": -5.2692655920445796e-08,
+        "relative_odds_multiplier": 0.9999999473073454
+      },
+      {
+        "token_id": 184899,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 1.444836641439906e-07,
+        "with_penalty_probability": 1.4449885554768116e-07,
+        "relative_log_odds_change": 4.516240857544286e-08,
+        "relative_odds_multiplier": 1.0000000451624096
+      },
+      {
+        "token_id": 236775,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 8.419966093242692e-07,
+        "with_penalty_probability": 8.420851145274355e-07,
+        "relative_log_odds_change": 1.5948790384250023e-08,
+        "relative_odds_multiplier": 1.0000000159487905
+      },
+      {
+        "token_id": 236777,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 2.6460006097295263e-07,
+        "with_penalty_probability": 2.6462785740477557e-07,
+        "relative_log_odds_change": -4.6797254420134814e-08,
+        "relative_odds_multiplier": 0.9999999532027467
+      },
+      {
+        "token_id": 236782,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 1.6997358898152015e-07,
+        "with_penalty_probability": 1.6999145202589716e-07,
+        "relative_log_odds_change": -4.48146621334221e-09,
+        "relative_odds_multiplier": 0.9999999955185338
+      },
+      {
+        "token_id": 236829,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 5.246350838206126e-07,
+        "with_penalty_probability": 5.246902219369076e-07,
+        "relative_log_odds_change": 4.940329104737972e-10,
+        "relative_odds_multiplier": 1.0000000004940328
+      },
+      {
+        "token_id": 236840,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 2.634845088778093e-07,
+        "with_penalty_probability": 2.635122200445039e-07,
+        "relative_log_odds_change": 7.435251668386623e-08,
+        "relative_odds_multiplier": 1.0000000743525195
+      },
+      {
+        "token_id": 236929,
+        "in_repeat_last_n_prompt": false,
+        "without_penalty_probability": 1.835319949350378e-07,
+        "with_penalty_probability": 1.8355127906488633e-07,
+        "relative_log_odds_change": -2.5232518645275414e-08,
+        "relative_odds_multiplier": 0.9999999747674817
+      }
+    ],
+    "anchor_token_id": 2717,
+    "anchor_absent_from_entire_prompt": true,
+    "suppressed_prompt_tail_ids": [
+      106,
+      14937
+    ],
+    "increased_prompt_tail_ids": [],
+    "maximum_absolute_nonprompt_relative_log_odds_change": 8.419334597686433e-08,
+    "fresh_first_token_and_settings_attested": true,
+    "prompt_history_penalties_observed_at_first_token": true
+  },
+  "method": "For each common positive-probability ID i, delta_i = ln(p_1.15(i)/p_1.15(anchor)) - ln(p_1.0(i)/p_1.0(anchor)). Softmax normalisation cancels. The anchor is the highest baseline-probability common ID absent from the last256 prompt IDs. Candidate IDs absent from either partial snapshot are never imputed or rank-matched.",
+  "conclusion": "This observed native runner applies prompt-history repetition penalties before the first generated token for at least two prompt-tail IDs in this synthetic input. It does not simply ignore the prompt.28 matched nonprompt controls preserve relative odds within8.42e-8 log units; prompt-tail IDs106 and14937 are selectively suppressed by about2.068 and2.051 log units.",
+  "limitations": [
+    "One synthetic first-token request pair; no general clinical accuracy or full-distribution claim.",
+    "The two partial top32 ID sets differ. Overall-distribution equality remains inconclusive even though explicitly matched pairwise odds can be compared.",
+    "Advertised generation settings and timings attest a fresh280-token prompt, cache_n0, predicted_n1. The source-weight identity is established separately by the owned-runner orchestrator, not this analysis.",
+    "This disproves only the hypothesis that this native run ignores all prompt tokens. It does not establish every penalty implementation detail, explain MLX fidelity failures, or settle cached-prefix history differences."
+  ]
+}

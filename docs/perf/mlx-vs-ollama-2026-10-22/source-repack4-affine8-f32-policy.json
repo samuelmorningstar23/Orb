@@ -1,0 +1,24 @@
+{
+  "mlx_lm_version": "0.32.2",
+  "source_ollama_weight_digest": "sha256:4b97da6b21a8fb1405a0d1efee462bfd6c4d3c46307bac8b34373835f07ca758",
+  "conversion_label": "medgemma-27b-text-mlx-source-q4-integer-repack-q6-affine8-candidate",
+  "context_policy": "reject_input_plus_output_over_8192",
+  "sampling_parity_verified": false,
+  "template_parity_verified": false,
+  "clinical_equivalence_qualified": false,
+  "sampling_wrapper": {
+    "path": "/Users/samuelmorningstar/Documents/Projects/Orb/scripts/serve_mlx_benchmark.py",
+    "sha256": "abfdfbcaeaa13ac539abb7fb3195e335a1d69816e823a44fd1ea3139934451ac"
+  },
+  "note": "Composed from same-checkpoint original Q4 integer repack and existing Q6 affine8 files, with unchanged F32 norm parameters and separately pinned reference normalization output dtype repair. Additional Q6 quantization remains unqualified; same eight factual gates required before timing. Diagnostic using existing unbatched generator; no sampling or quality-gate changes. Not batched capacity qualification. Observational engine token-ID hashes enabled; no input mutation. Experimental native-like F32 activation path avoids the installed F16 residual clipping. Batch generator enabled. Requires unchanged synthetic quality gates; not clinical qualification.",
+  "loading_mode": "f32-staged",
+  "activation_dtype_policy": "F32 embedding and residual path, exact F32 sqrt5376 gain; norm weights and quantized checkpoint unchanged; F32 KV budgeted explicitly",
+  "loading_wrapper_sha256": "a4e2a9570dbf49860e1005bab63e6eafb7821c3426e4d895d69090b1528f2a13",
+  "startup_trace_sha256": "567b104b08d7d8ce410a652201c04c3e09ebc62ca0efe3e1a7e8a42385d13faf",
+  "traced_inner_wrapper_sha256": "c9311445d21cbbbeb89aa0cf7a82ab0afb7d7dfb79869e6429de0b142a374ed4",
+  "precision_repair_sha256": "559eab7cd52e34bf8adab443a63803ffbe143b2b95aa0f0fef93d2b9cbdeea95",
+  "trace_launcher_sha256": "adcb706bba52024b47fce769d96d9f23ec149caad0895a8594effe21f64bb2b9",
+  "precision_launcher_sha256": "3c5bd9e7220fab511383300a5e90985fc613c4bd74ff591e3e3523be542f6392",
+  "prompt_trace_sha256": "0b2c482794f3fe51298c21afd608eb184a0b32107eee57624dad7f1f4a66318f",
+  "f32_embedding_sha256": "093ea64960a429d17722bdc8c9d94e9ae8a1f28adad660aba2662fc5b12e3ebf"
+}

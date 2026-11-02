@@ -1,0 +1,261 @@
+{
+  "source_snapshot": "workflow-serving-qualified-rerun",
+  "files": [
+    {
+      "path": "scripts/benchmark_mlx_ollama.py",
+      "sha256": "74cdfd4558a65dfb2b27857b6ef49b91e2f37d29fd61a1b8b3cb7e918b4d5be6"
+    },
+    {
+      "path": "scripts/serve_mlx_benchmark.py",
+      "sha256": "abfdfbcaeaa13ac539abb7fb3195e335a1d69816e823a44fd1ea3139934451ac"
+    },
+    {
+      "path": "scripts/mlx_ollama_benchmark_proxy.py",
+      "sha256": "fe5df10e4bfa2f2f87b38275d8c5673040510c97ffdf61600680b6a3626da1d1"
+    },
+    {
+      "path": "scripts/convert_medgemma_gguf_mlx.py",
+      "sha256": "3655f444fd6b47b54343ecadb6923d7f7b48e94b4b073ce866f2c39fff606da7"
+    },
+    {
+      "path": "scripts/llm_fidelity_cases.py",
+      "sha256": "f78e58370b9c01c3f5b8d2d4a27f8a06a7ff2d1aaa88a070800c2e0349f19d2f"
+    },
+    {
+      "path": "scripts/replay_llm_benchmark.py",
+      "sha256": "013a7c8c0dfe49c3aeb7f71560bc83495e45e334e0a64a8654e1bf87b5b91538"
+    },
+    {
+      "path": "scripts/replay_200_llm_benchmark.py",
+      "sha256": "762809c931bd622fb77dd26c74b123d7ce2ec3f6b98f260c6bfddbd3dd1bded1"
+    },
+    {
+      "path": "scripts/ollama_template_oracle.py",
+      "sha256": "5704360753336bc572a6bfef330fcd61a7150ee297dec5c9551650cd37b273e9"
+    },
+    {
+      "path": "scripts/serve_ollama_candidate.py",
+      "sha256": "2a256355adc41044fac6d03e6b3907969b88893c83d1e8184bcb4ad99d3cbbd1"
+    },
+    {
+      "path": "scripts/serve_mlx_benchmark_staged.py",
+      "sha256": "c9311445d21cbbbeb89aa0cf7a82ab0afb7d7dfb79869e6429de0b142a374ed4"
+    },
+    {
+      "path": "scripts/qualify_ollama_serving.py",
+      "sha256": "bb35ccc4793950a119a20ec678f48c3ca9361fde91a2eefb18f11e2f9398806a"
+    },
+    {
+      "path": "scripts/serve_mlx_benchmark_trace.py",
+      "sha256": "adcb706bba52024b47fce769d96d9f23ec149caad0895a8594effe21f64bb2b9"
+    },
+    {
+      "path": "scripts/mlx_startup_trace.py",
+      "sha256": "567b104b08d7d8ce410a652201c04c3e09ebc62ca0efe3e1a7e8a42385d13faf"
+    },
+    {
+      "path": "scripts/serve_mlx_benchmark_precision.py",
+      "sha256": "3c5bd9e7220fab511383300a5e90985fc613c4bd74ff591e3e3523be542f6392"
+    },
+    {
+      "path": "scripts/mlx_gemma3_precision.py",
+      "sha256": "559eab7cd52e34bf8adab443a63803ffbe143b2b95aa0f0fef93d2b9cbdeea95"
+    },
+    {
+      "path": "scripts/serve_mlx_benchmark_serial.py",
+      "sha256": "2d64b05d9c848cadfc9e5f7d4d998bbbe08e45698670a7fbb404f90f48da3145"
+    },
+    {
+      "path": "scripts/mlx_prompt_token_trace.py",
+      "sha256": "0b2c482794f3fe51298c21afd608eb184a0b32107eee57624dad7f1f4a66318f"
+    },
+    {
+      "path": "scripts/serve_mlx_benchmark_f32.py",
+      "sha256": "a4e2a9570dbf49860e1005bab63e6eafb7821c3426e4d895d69090b1528f2a13"
+    },
+    {
+      "path": "scripts/mlx_gemma3_f32_embedding.py",
+      "sha256": "093ea64960a429d17722bdc8c9d94e9ae8a1f28adad660aba2662fc5b12e3ebf"
+    },
+    {
+      "path": "scripts/serve_mlx_benchmark_mixed.py",
+      "sha256": "8876090a79434eb3cc2fb167759f039c740305c5c1b5247302e1aff6e6f87fb2"
+    },
+    {
+      "path": "scripts/mlx_gemma3_mixed_precision.py",
+      "sha256": "f4cc1cdfbcf7025513d8b4c0b8244181e3cee40b3726e489312b285fae6f7c48"
+    },
+    {
+      "path": "scripts/probe_native_penalties.py",
+      "sha256": "fe0a79289dd0c31159c0f0325a0b167d1b7feca3fa6001e1fc94c29ec14ac09a"
+    },
+    {
+      "path": "scripts/probe_engine_token_distribution.py",
+      "sha256": "95e91d94b8f48cad1f6ec30c9cff76ea4d8797d769b0c739ad291ace7f323959"
+    },
+    {
+      "path": "scripts/benchmark_model_residency_lease.py",
+      "sha256": "63251be7cef540a8a704f9d7aa486a45e08569bb7c2665ab4481afaa7d4601a9"
+    },
+    {
+      "path": "scripts/mlx_http_backlog.py",
+      "sha256": "2096906492eb4f03c81bca1131c7ddbcf24f612fd8cd0acfc895a295b47a297b"
+    },
+    {
+      "path": "scripts/loadtest_capacity.py",
+      "sha256": "66aba30b33760f7080c9e5d20cdf86bce64dd3efaa3314755d9e90c3b9dc4318"
+    },
+    {
+      "path": "scripts/loadtest_capacity_fixture.py",
+      "sha256": "a12fd2af8f75c5631099a59d061263bfeb6878a0196875bcaf0509fe1e1dbac3"
+    },
+    {
+      "path": "scripts/capacity_retrieval_fixture.py",
+      "sha256": "99f50a6fbdd0061aa16992229ab4780387f4e76fc91af14fdbbde1e9b9fe62ef"
+    },
+    {
+      "path": "scripts/e2e_server.py",
+      "sha256": "90cde4f221b159a951c836e6a60ba46c2ca1eb650c52909cb1ef9178e1e0c755"
+    },
+    {
+      "path": "scripts/mlx_allocator_budget.py",
+      "sha256": "f566780e0b486e2f62c92b444811c0f2c2f7d72e08d025d1718afb648f3ea145"
+    },
+    {
+      "path": "scripts/offline_benchmark.sb",
+      "sha256": "fe2953214dcb524a23e989ca27b96b778927bbdd9a90981d0eb3d8f26546e4c0"
+    },
+    {
+      "path": "scripts/mlx_serving_scheduler.py",
+      "sha256": "e09a0eb8b9a082255645fa3ef819097a9271253fca1ad7e619d44367cd9f48b6"
+    },
+    {
+      "path": "scripts/capacity_answer_quality.py",
+      "sha256": "c99635b670236eb5375ebbbff860e1ea92a2c779e66e6e9f514c712c8e12fdcc"
+    },
+    {
+      "path": "scripts/qualify_embedding_microbatch.py",
+      "sha256": "d4a4ca5da1dc9000a7a4808dcfe8645a0a639a9738ba0dd5471c663dd39e5685"
+    },
+    {
+      "path": "server/services/sage_service.py",
+      "sha256": "0ed34ddfd44adb3dd50917233d035aaa1d7e2aa47a09cddfd34030170a5f66ac"
+    },
+    {
+      "path": "server/routes/sage_routes.py",
+      "sha256": "8d1da28f082bdf52d16cf5693fcec5cab45cc3164f51a2af920e50bf36620fcd"
+    },
+    {
+      "path": "server/services/disconnect_stream.py",
+      "sha256": "7dbf454b36849fdc8c678f8ee6b0f7d54036cc5a38260a87fbc48448aabadba7"
+    },
+    {
+      "path": "server/services/knowledge_worker.py",
+      "sha256": "e77f743c3b3b826c0b1ee5bcee17355571b9283d2f8f903d062740010e844e8a"
+    },
+    {
+      "path": "docs/perf/orb-workflow-serving-2026-10-22/mlx-policy.json",
+      "sha256": "fd1d492ba402c0cc73f0e10f89d8588627f5e39b431175d46aa411ed8e1b10a3"
+    },
+    {
+      "path": "scripts/capacity_profiler.py",
+      "sha256": "0651e872e13a76cdf7da927f781a68ea666e0417b3fdd280de6ac4eb7d7a1c09"
+    },
+    {
+      "path": "server/main.py",
+      "sha256": "53b263d405648a35a4abe9fdf9f0430799c44f442ece39d359fa60973e563083"
+    },
+    {
+      "path": "server/config.py",
+      "sha256": "d2d442b4fd885b669f571329592891f103b77dece689cb821270109fa6be5208"
+    },
+    {
+      "path": "server/database.py",
+      "sha256": "ff8cce6f457f01d40c68205e8242770d6f273f9c53016cd68a3145a956d0498b"
+    },
+    {
+      "path": "server/request_admission.py",
+      "sha256": "006b2f205224de525fdc8e2948f4897e16f52d680a9c1a0435dd405968619c37"
+    },
+    {
+      "path": "server/services/local_inference_pool.py",
+      "sha256": "1de3328222463b5e585ae5dd8bf21212ec2e207df7b28c54b5c2760325d14715"
+    },
+    {
+      "path": "server/services/ollama_gateway.py",
+      "sha256": "ae1ae77e28fb5bd7251dab3de39cc595d8fa3d4b39cf121431fbfd4e65e221bc"
+    },
+    {
+      "path": "server/services/local_inference_routing.py",
+      "sha256": "37b719b7161ce7b69d4d1fac7f58bb223ce4b450b19026fd7a330672d7174dbd"
+    },
+    {
+      "path": "server/services/llm_providers.py",
+      "sha256": "7d046094300312482e6eb386ec9b5a3dae5129f093efb8dc6769fc4ad634389e"
+    },
+    {
+      "path": "server/services/local_model_http.py",
+      "sha256": "82e9c726246e2783855c5c0e679c926a3f2c5f6b11d082e7ebd0791dd9aef415"
+    },
+    {
+      "path": "server/services/model_router.py",
+      "sha256": "ab5cdd5ae99d2186fd038c66649fea43eb8c768215a2fee29862caa95ee1acf3"
+    },
+    {
+      "path": "server/services/ai_governance.py",
+      "sha256": "27460ff15d77501a1ac55ea8628f1c4781e6f8e90eca990020ffbc5b2899b8c3"
+    },
+    {
+      "path": "server/services/sage_retrieval_executor.py",
+      "sha256": "84db008f3bae24699be093758975a02c7619e1f7c0d7af7cec0b54463f071971"
+    },
+    {
+      "path": "server/services/clinical_knowledge.py",
+      "sha256": "25151f2fd1613627621be9615a1377b73990b79ee222fd73f1d77ffcade9bb9c"
+    },
+    {
+      "path": "server/services/local_transformers.py",
+      "sha256": "6dcc60d8d841f6f75cf53e5e7b7588691b4d8a5540a4f00ba3e669426565a8b9"
+    },
+    {
+      "path": "server/services/thinking_mode.py",
+      "sha256": "07cacbea0632a791af87b193f91e195967584a27943ca9be7cb558b2ea563d8b"
+    },
+    {
+      "path": "server/services/llm_queue_service.py",
+      "sha256": "d606d1c9be8f15628b24236f5eb0230a2f9806ed3c760d7b6f1efaa8bacdb992"
+    },
+    {
+      "path": "server/services/gpu_coordinator.py",
+      "sha256": "239fa29a4b16fb7d2da658c3f27a1e27a82088e46703c489a3dffc422ec30bd0"
+    },
+    {
+      "path": "server/services/patient_summary_service.py",
+      "sha256": "891c96cb2c3073b8d1ca1d54fc4f92ef84ac6e2abd52a40385a01619315f9ad6"
+    },
+    {
+      "path": "server/routes/patient_summary_routes.py",
+      "sha256": "5b3fa1c31e024972cfb9e705e4a4e98e9961e446bd8cb4e88c873bd820022c83"
+    },
+    {
+      "path": "server/migrations_his/m0089_patient_summary_snapshots.py",
+      "sha256": "e976d75a918d17847f36e8c0780c326df2fb5f95cb215ea1a261d108ccbeccf5"
+    },
+    {
+      "path": "server/migrations_his/m0090_sage_retrieval_indexes.py",
+      "sha256": "923a566d27345583123931caf286fcbb6a7865ac370fed0b4b79ee4304641540"
+    },
+    {
+      "path": "server/auth.py",
+      "sha256": "99d57740ede219a4466765332db6f16769adb26d63c98424827cf1478a7f2067"
+    },
+    {
+      "path": "server/permissions.py",
+      "sha256": "816f8a8f37eaafb72a1595f38ce39369e523abd03131f83668925c6e4468c98c"
+    },
+    {
+      "path": "server/db_backend.py",
+      "sha256": "a58259db992fcf8300d6c95c649f86b0731b5b982cd179a602ddf024fabbe2f5"
+    }
+  ]
+}

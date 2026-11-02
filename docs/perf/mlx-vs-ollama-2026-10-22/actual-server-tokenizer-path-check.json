@@ -1,0 +1,80 @@
+{
+  "status": "tokenizer_only_actual_installed_server_path_observed",
+  "full_model_loaded": false,
+  "generation_performed": false,
+  "all_exact_match": true,
+  "rows": [
+    {
+      "case_id": "numbers_and_units",
+      "exact_match": true,
+      "actual_count": 280,
+      "expected_count": 280,
+      "actual_sha256": "6909e4c0158015d6c75b641b1dd61ae2d09d9c12ab65d269e8c625c70b314c50",
+      "expected_sha256": "6909e4c0158015d6c75b641b1dd61ae2d09d9c12ab65d269e8c625c70b314c50",
+      "segments_reconstruct_prompt": true
+    },
+    {
+      "case_id": "missing_data_is_null",
+      "exact_match": true,
+      "actual_count": 221,
+      "expected_count": 221,
+      "actual_sha256": "f24589974a5560476e55999745b8a88be40e0b90ac3252e7118566009d5e5f9b",
+      "expected_sha256": "f24589974a5560476e55999745b8a88be40e0b90ac3252e7118566009d5e5f9b",
+      "segments_reconstruct_prompt": true
+    },
+    {
+      "case_id": "active_and_stopped_medication",
+      "exact_match": true,
+      "actual_count": 216,
+      "expected_count": 216,
+      "actual_sha256": "6b6089df413552c39bcd8f52b910c9b9d4f0683e32a87df18d830f9c870a56b6",
+      "expected_sha256": "6b6089df413552c39bcd8f52b910c9b9d4f0683e32a87df18d830f9c870a56b6",
+      "segments_reconstruct_prompt": true
+    },
+    {
+      "case_id": "allergy_and_recorded_reaction",
+      "exact_match": true,
+      "actual_count": 192,
+      "expected_count": 192,
+      "actual_sha256": "7ba9f32c7435d443c394b7fda04ed51fa78b4498dbaaa113677feada8349bcc7",
+      "expected_sha256": "7ba9f32c7435d443c394b7fda04ed51fa78b4498dbaaa113677feada8349bcc7",
+      "segments_reconstruct_prompt": true
+    },
+    {
+      "case_id": "cross_patient_identity",
+      "exact_match": true,
+      "actual_count": 227,
+      "expected_count": 227,
+      "actual_sha256": "0d087d7a883ac09d2da2aceb15a8c0ed35b488c8b35df744d6ee814e0a7d01bd",
+      "expected_sha256": "0d087d7a883ac09d2da2aceb15a8c0ed35b488c8b35df744d6ee814e0a7d01bd",
+      "segments_reconstruct_prompt": true
+    },
+    {
+      "case_id": "negation_preserved",
+      "exact_match": true,
+      "actual_count": 202,
+      "expected_count": 202,
+      "actual_sha256": "68fd753b11d97f2e4cb4cc08778958dad36b0d5baa394e753657167193b93572",
+      "expected_sha256": "68fd753b11d97f2e4cb4cc08778958dad36b0d5baa394e753657167193b93572",
+      "segments_reconstruct_prompt": true
+    },
+    {
+      "case_id": "long_context_allergy_and_corrected_chronology",
+      "exact_match": true,
+      "actual_count": 3392,
+      "expected_count": 3392,
+      "actual_sha256": "e1421e5012b1182ee4a0115545ecddad3c5d5386cce9f5ff86642702b8acff27",
+      "expected_sha256": "e1421e5012b1182ee4a0115545ecddad3c5d5386cce9f5ff86642702b8acff27",
+      "segments_reconstruct_prompt": true
+    },
+    {
+      "case_id": "quoted_prompt_injection",
+      "exact_match": true,
+      "actual_count": 247,
+      "expected_count": 247,
+      "actual_sha256": "082eac43cbb6efbbf32fde674848f885770913f5879023188546c503f91e7613",
+      "expected_sha256": "082eac43cbb6efbbf32fde674848f885770913f5879023188546c503f91e7613",
+      "segments_reconstruct_prompt": true
+    }
+  ]
+}

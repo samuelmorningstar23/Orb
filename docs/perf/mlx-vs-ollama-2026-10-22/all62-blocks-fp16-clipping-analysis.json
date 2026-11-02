@@ -1,0 +1,314 @@
+{
+  "status": "fp16_residual_saturation_identified",
+  "raw_report": "/Users/samuelmorningstar/Documents/Projects/Orb/docs/perf/mlx-vs-ollama-2026-10-22/all62-blocks-metal-vs-source-f32.json",
+  "raw_report_sha256": "59e1e22610a2c4ca3a2c1167e35695dc1bd31e0e8eaf2de9037b5bf48c60e488",
+  "raw_report_preserved": true,
+  "new_inference_performed": false,
+  "clinical_quality_qualified": false,
+  "scope": {
+    "device": "gpu",
+    "blocks": 62,
+    "token_ids": [
+      2,
+      105,
+      2430,
+      82138,
+      31037,
+      10797,
+      699,
+      11716
+    ],
+    "record_count": 1183,
+    "raw_elapsed_seconds": 466.37389562500175,
+    "reference": "NumPy original GGUF float32 dequantized weights",
+    "candidate": "MLX source Q4_K integer repack and source Q6_K dense FP16, FP16 activation path"
+  },
+  "conclusion": "The first large divergence occurs at the ninth block residual addition (zero-based block 8), where candidate activations hit the FP16 finite limit 65504. Pre-addition activations remain close. Subsequent clipping and later nonfinite norm outputs corrupt the hidden state and selected logits; same-input matrix projections remain close.",
+  "first_saturation": {
+    "stage": "blk.8.block_output",
+    "shape": [
+      8,
+      5376
+    ],
+    "reference_nonfinite": 0,
+    "actual_nonfinite": 0,
+    "actual_max_abs": 65504.0,
+    "reference_min": -311.6162414550781,
+    "reference_max": 81246.921875,
+    "actual_min": -311.75,
+    "actual_max": 65504.0,
+    "actual_abs_ge_fp16_max": 1,
+    "max_abs_error": 15742.921875,
+    "relative_l2": 0.19343169566463056,
+    "cosine_similarity": 0.9999001138122997,
+    "layer": 8,
+    "source_prefix": "blk.8",
+    "is_global": false,
+    "rope_base": 10000.0,
+    "rope_scale": 1.0
+  },
+  "immediately_related_records": [
+    {
+      "stage": "blk.7.block_output",
+      "shape": [
+        8,
+        5376
+      ],
+      "reference_nonfinite": 0,
+      "actual_nonfinite": 0,
+      "actual_max_abs": 40768.0,
+      "reference_min": -744.3380737304688,
+      "reference_max": 40783.3515625,
+      "actual_min": -745.0,
+      "actual_max": 40768.0,
+      "actual_abs_ge_fp16_max": 0,
+      "max_abs_error": 15.3515625,
+      "relative_l2": 0.00038448204209638867,
+      "cosine_similarity": 0.9999999935982423,
+      "layer": 7,
+      "source_prefix": "blk.7",
+      "is_global": false,
+      "rope_base": 10000.0,
+      "rope_scale": 1.0
+    },
+    {
+      "stage": "blk.8.attention_residual",
+      "shape": [
+        8,
+        5376
+      ],
+      "reference_nonfinite": 0,
+      "actual_nonfinite": 0,
+      "actual_max_abs": 38912.0,
+      "reference_min": -300.11175537109375,
+      "reference_max": 38923.54296875,
+      "actual_min": -300.25,
+      "actual_max": 38912.0,
+      "actual_abs_ge_fp16_max": 0,
+      "max_abs_error": 11.54296875,
+      "relative_l2": 0.0003119997620738748,
+      "cosine_similarity": 0.9999999916009108
+    },
+    {
+      "stage": "blk.8.post_ffw_norm",
+      "shape": [
+        8,
+        5376
+      ],
+      "reference_nonfinite": 0,
+      "actual_nonfinite": 0,
+      "actual_max_abs": 42304.0,
+      "reference_min": -965.4827270507812,
+      "reference_max": 42323.37890625,
+      "actual_min": -966.0,
+      "actual_max": 42304.0,
+      "actual_abs_ge_fp16_max": 0,
+      "max_abs_error": 19.37890625,
+      "relative_l2": 0.00046253367915610765,
+      "cosine_similarity": 0.9999999967957603
+    },
+    {
+      "stage": "blk.8.block_output",
+      "shape": [
+        8,
+        5376
+      ],
+      "reference_nonfinite": 0,
+      "actual_nonfinite": 0,
+      "actual_max_abs": 65504.0,
+      "reference_min": -311.6162414550781,
+      "reference_max": 81246.921875,
+      "actual_min": -311.75,
+      "actual_max": 65504.0,
+      "actual_abs_ge_fp16_max": 1,
+      "max_abs_error": 15742.921875,
+      "relative_l2": 0.19343169566463056,
+      "cosine_similarity": 0.9999001138122997,
+      "layer": 8,
+      "source_prefix": "blk.8",
+      "is_global": false,
+      "rope_base": 10000.0,
+      "rope_scale": 1.0
+    },
+    {
+      "stage": "blk.9.block_output",
+      "shape": [
+        8,
+        5376
+      ],
+      "reference_nonfinite": 0,
+      "actual_nonfinite": 0,
+      "actual_max_abs": 65504.0,
+      "reference_min": -362.2170715332031,
+      "reference_max": 118911.2890625,
+      "actual_min": -362.25,
+      "actual_max": 65504.0,
+      "actual_abs_ge_fp16_max": 1,
+      "max_abs_error": 53407.2890625,
+      "relative_l2": 0.4487228350553032,
+      "cosine_similarity": 0.9993923320096005,
+      "layer": 9,
+      "source_prefix": "blk.9",
+      "is_global": false,
+      "rope_base": 10000.0,
+      "rope_scale": 1.0
+    }
+  ],
+  "first_saturation_relative_l2_before_ff_add": 0.00046253367915610765,
+  "first_saturation_relative_l2_after_ff_add": 0.19343169566463056,
+  "residual_stage_saturation_summary": {
+    "stage_count": 69,
+    "block_output_stage_count": 39,
+    "sum_boundary_counts_across_stages": 338,
+    "max_boundary_count_in_one_stage": 15,
+    "counts_are_repeated_stage_observations_not_distinct_elements": true
+  },
+  "nonfinite_summary": {
+    "source_nonfinite_count_across_all_records": 0,
+    "candidate_nonfinite_stages": [
+      {
+        "stage": "blk.18.post_ffw_norm",
+        "shape": [
+          8,
+          5376
+        ],
+        "reference_nonfinite": 0,
+        "actual_nonfinite": 1,
+        "actual_max_abs": 756.5,
+        "reference_min": -547.9080810546875,
+        "reference_max": 65034.9609375,
+        "actual_min": -558.5,
+        "actual_max": 756.5,
+        "actual_abs_ge_fp16_max": 1
+      },
+      {
+        "stage": "blk.30.post_ffw_norm",
+        "shape": [
+          8,
+          5376
+        ],
+        "reference_nonfinite": 0,
+        "actual_nonfinite": 1,
+        "actual_max_abs": 4520.0,
+        "reference_min": -5855.1728515625,
+        "reference_max": 71551.4765625,
+        "actual_min": -4520.0,
+        "actual_max": 468.5,
+        "actual_abs_ge_fp16_max": 1
+      }
+    ],
+    "candidate_residual_outputs_all_finite": true,
+    "interpretation": "Finite residual outputs alone miss both saturation and nonfinite norm values subsequently clamped by residual clipping."
+  },
+  "worst_same_input_projection": {
+    "stage": "blk.51.ffn_up",
+    "shape": [
+      8,
+      21504
+    ],
+    "reference_nonfinite": 0,
+    "actual_nonfinite": 0,
+    "actual_max_abs": 36.40625,
+    "reference_min": -21.325469970703125,
+    "reference_max": 36.404685974121094,
+    "actual_min": -21.328125,
+    "actual_max": 36.40625,
+    "actual_abs_ge_fp16_max": 0,
+    "max_abs_error": 0.013790369033813477,
+    "relative_l2": 0.0018251337471169402,
+    "cosine_similarity": 0.9999983344530392
+  },
+  "final_selected_records": [
+    {
+      "stage": "blk.61.block_output",
+      "shape": [
+        8,
+        5376
+      ],
+      "reference_nonfinite": 0,
+      "actual_nonfinite": 0,
+      "actual_max_abs": 65504.0,
+      "reference_min": -19531.1953125,
+      "reference_max": 846173.25,
+      "actual_min": -7804.0,
+      "actual_max": 65504.0,
+      "actual_abs_ge_fp16_max": 3,
+      "max_abs_error": 780669.25,
+      "relative_l2": 0.8778949722763119,
+      "cosine_similarity": 0.5663936154629814,
+      "layer": 61,
+      "source_prefix": "blk.61",
+      "is_global": false,
+      "rope_base": 10000.0,
+      "rope_scale": 1.0
+    },
+    {
+      "stage": "output_norm",
+      "shape": [
+        8,
+        5376
+      ],
+      "reference_nonfinite": 0,
+      "actual_nonfinite": 0,
+      "actual_max_abs": 52.96875,
+      "reference_min": -33.834434509277344,
+      "reference_max": 83.62911987304688,
+      "actual_min": -42.65625,
+      "actual_max": 52.96875,
+      "actual_abs_ge_fp16_max": 0,
+      "max_abs_error": 76.09396362304688,
+      "relative_l2": 2.2633963015663916,
+      "cosine_similarity": 0.38523928730255225
+    },
+    {
+      "stage": "tied_head_selected_logits",
+      "shape": [
+        8,
+        6
+      ],
+      "reference_nonfinite": 0,
+      "actual_nonfinite": 0,
+      "actual_max_abs": 22.140625,
+      "reference_min": -6.929024696350098,
+      "reference_max": 11.585641860961914,
+      "actual_min": -2.5234375,
+      "actual_max": 22.140625,
+      "actual_abs_ge_fp16_max": 0,
+      "max_abs_error": 16.002445697784424,
+      "relative_l2": 1.0952380318774404,
+      "cosine_similarity": 0.6346698447569606,
+      "token_ids": [
+        2717,
+        106,
+        14937,
+        12324,
+        236782,
+        236829
+      ],
+      "same_input": {
+        "shape": [
+          8,
+          6
+        ],
+        "reference_nonfinite": 0,
+        "actual_nonfinite": 0,
+        "actual_max_abs": 22.140625,
+        "reference_min": -2.522470474243164,
+        "reference_max": 22.136430740356445,
+        "actual_min": -2.5234375,
+        "actual_max": 22.140625,
+        "actual_abs_ge_fp16_max": 0,
+        "max_abs_error": 0.0043315887451171875,
+        "relative_l2": 0.00022365825961623184,
+        "cosine_similarity": 0.9999999759659132
+      }
+    }
+  ],
+  "recommended_experiment": "Promote the activation/residual stream to float32 while retaining the pinned clinical checkpoint and unchanged task quality gates. All-quantized matrix serving can avoid dense FP16-to-FP32 weight temporaries; its conversion quality still requires an independent gate.",
+  "limitations": [
+    "This establishes a concrete numerical defect in the observed FP16 path, not complete explanation or resolution of all clinical test failures.",
+    "Original source intermediate tensors come from an independent NumPy implementation, not captured Ollama layer outputs.",
+    "Only eight input tokens were evaluated, with no sampling, cache reuse or long-context qualification.",
+    "Clipping count includes values exactly on the finite boundary; the first observed saturated residual stage also has an independently larger float32 reference range."
+  ]
+}

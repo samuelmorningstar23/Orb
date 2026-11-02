@@ -1,0 +1,1614 @@
+{
+  "date": "2026-10-11",
+  "scope": "Source-only router/service/frontend response contract review for 13 default-off local modules; no live database, clinical file, environment secret or external integration read. Synthetic browser verification is recorded separately.",
+  "corrections": [
+    {
+      "source": "src/api/reporting.ts",
+      "function": "getReportDefinitions",
+      "before": "assumed bare array",
+      "after": "unwrap response.definitions"
+    },
+    {
+      "source": "src/api/financeTools.ts",
+      "function": "getPayoutStatements",
+      "before": "assumed bare array",
+      "after": "unwrap response.statements"
+    }
+  ],
+  "module_count": 13,
+  "endpoint_count": 104,
+  "modules": [
+    {
+      "module": "feedback",
+      "router_source": "server/routes/feedback_routes.py",
+      "frontend_source": "src/api/feedback.ts",
+      "contract_review": "Register {cases,limit,offset,notice,has_more}; individual mutations/details return case objects; detail adds events.",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/feedback",
+          "handler": "register",
+          "line": 32,
+          "success_status": 200,
+          "return_expression": [
+            "call(svc.list_cases, actor=user, status=status, limit=limit, offset=offset, request=request)"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/feedback",
+          "handler": "record",
+          "line": 38,
+          "success_status": 200,
+          "return_expression": [
+            "call(svc.register, body.model_dump(), actor=user, key=key, request=request)"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/feedback/{ident}",
+          "handler": "detail",
+          "line": 44,
+          "success_status": 200,
+          "return_expression": [
+            "call(svc.detail, ident, actor=user, request=request)"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/feedback/{ident}/actions",
+          "handler": "action",
+          "line": 49,
+          "success_status": 200,
+          "return_expression": [
+            "call(svc.act, ident, body.model_dump(), actor=user, request=request)"
+          ]
+        }
+      ],
+      "frontend_exports": [
+        {
+          "name": "loadFeedback",
+          "line": 15
+        },
+        {
+          "name": "getFeedback",
+          "line": 16
+        },
+        {
+          "name": "recordFeedback",
+          "line": 17
+        },
+        {
+          "name": "actOnFeedback",
+          "line": 20
+        }
+      ],
+      "browser_role": "admin",
+      "role_contract_source": "src/lib/roles.ts:337"
+    },
+    {
+      "module": "mortuary",
+      "router_source": "server/routes/mortuary_routes.py",
+      "frontend_source": "src/api/mortuary.ts",
+      "contract_review": "Register {cases,slots,limit,offset,notice,has_more}; slot and custody mutations return records; detail adds events.",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/mortuary",
+          "handler": "register",
+          "line": 41,
+          "success_status": 200,
+          "return_expression": [
+            "call(svc.register, actor=user, limit=limit, offset=offset, request=request)"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/mortuary/slots",
+          "handler": "slot",
+          "line": 47,
+          "success_status": 200,
+          "return_expression": [
+            "call(svc.add_slot, body.model_dump(), actor=user, request=request)"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/mortuary",
+          "handler": "intake",
+          "line": 52,
+          "success_status": 200,
+          "return_expression": [
+            "call(svc.intake, body.model_dump(), actor=user, key=key, request=request)"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/mortuary/{ident}",
+          "handler": "detail",
+          "line": 58,
+          "success_status": 200,
+          "return_expression": [
+            "call(svc.detail, ident, actor=user, request=request)"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/mortuary/{ident}/actions",
+          "handler": "action",
+          "line": 63,
+          "success_status": 200,
+          "return_expression": [
+            "call(svc.act, ident, body.model_dump(), actor=user, request=request)"
+          ]
+        }
+      ],
+      "frontend_exports": [
+        {
+          "name": "loadMortuary",
+          "line": 20
+        },
+        {
+          "name": "getMortuaryCase",
+          "line": 21
+        },
+        {
+          "name": "addMortuarySlot",
+          "line": 22
+        },
+        {
+          "name": "recordMortuaryIntake",
+          "line": 23
+        },
+        {
+          "name": "actOnMortuaryCase",
+          "line": 26
+        }
+      ],
+      "browser_role": "admin",
+      "role_contract_source": "src/lib/roles.ts:337"
+    },
+    {
+      "module": "cssd",
+      "router_source": "server/routes/cssd_routes.py",
+      "frontend_source": "src/api/cssd.ts",
+      "contract_review": "Register {sets,packs,cycles,limit,offset,notice,has_more}; individual mutations return rows; pack/cycle detail adds related custody rows and events.",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/cssd",
+          "handler": "register",
+          "line": 60,
+          "success_status": 200,
+          "return_expression": [
+            "call(svc.register, actor=user, limit=limit, offset=offset, request=request)"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/cssd/sets",
+          "handler": "create_set",
+          "line": 66,
+          "success_status": 200,
+          "return_expression": [
+            "call(svc.create_set, body.model_dump(), actor=user, request=request)"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/cssd/packs",
+          "handler": "create_pack",
+          "line": 71,
+          "success_status": 200,
+          "return_expression": [
+            "call(svc.create_pack, body.model_dump(), actor=user, request=request)"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/cssd/packs/{ident}",
+          "handler": "pack",
+          "line": 76,
+          "success_status": 200,
+          "return_expression": [
+            "call(svc.pack_detail, ident, actor=user, request=request)"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/cssd/packs/{ident}/actions",
+          "handler": "pack_action",
+          "line": 81,
+          "success_status": 200,
+          "return_expression": [
+            "call(svc.pack_action, ident, body.model_dump(), actor=user, request=request)"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/cssd/cycles",
+          "handler": "start_cycle",
+          "line": 86,
+          "success_status": 200,
+          "return_expression": [
+            "call(svc.start_cycle, body.model_dump(), actor=user, key=key, request=request)"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/cssd/cycles/{ident}",
+          "handler": "cycle",
+          "line": 92,
+          "success_status": 200,
+          "return_expression": [
+            "call(svc.cycle_detail, ident, actor=user, request=request)"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/cssd/cycles/{ident}/actions",
+          "handler": "cycle_action",
+          "line": 97,
+          "success_status": 200,
+          "return_expression": [
+            "call(svc.cycle_action, ident, body.model_dump(), actor=user, request=request)"
+          ]
+        }
+      ],
+      "frontend_exports": [
+        {
+          "name": "loadCssd",
+          "line": 26
+        },
+        {
+          "name": "getCssdPack",
+          "line": 27
+        },
+        {
+          "name": "getCssdCycle",
+          "line": 28
+        },
+        {
+          "name": "createCssdSet",
+          "line": 29
+        },
+        {
+          "name": "createCssdPack",
+          "line": 30
+        },
+        {
+          "name": "actOnCssdPack",
+          "line": 31
+        },
+        {
+          "name": "startCssdCycle",
+          "line": 32
+        },
+        {
+          "name": "actOnCssdCycle",
+          "line": 33
+        }
+      ],
+      "browser_role": "admin",
+      "role_contract_source": "src/lib/roles.ts:337"
+    },
+    {
+      "module": "reporting",
+      "router_source": "server/routes/reporting_routes.py",
+      "frontend_source": "src/api/reporting.ts",
+      "contract_review": "Catalog/query are objects. Definitions GET is {definitions:[...]}; adapter now unwraps this envelope. Save/delete return objects; CSV is text/csv.",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/reporting/catalog",
+          "handler": "catalog",
+          "line": 58,
+          "success_status": 200,
+          "return_expression": [
+            "_call(svc.catalog, user=user)"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/reporting/query",
+          "handler": "query",
+          "line": 63,
+          "success_status": 200,
+          "return_expression": [
+            "_call(svc.run, user=user, query=body.model_dump(exclude_none=True))"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/reporting/query.csv",
+          "handler": "query_csv",
+          "line": 68,
+          "success_status": 200,
+          "return_expression": [
+            "Response(content, media_type='text/csv; charset=utf-8', headers={'Content-Disposition': 'attachment; filename=\"orb-report.csv\"', 'Cache-Control': 'no-store'})"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/reporting/definitions",
+          "handler": "definitions",
+          "line": 74,
+          "success_status": 200,
+          "return_expression": [
+            "{'definitions': _call(svc.definitions, user=user)}"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/reporting/definitions",
+          "handler": "create_definition",
+          "line": 79,
+          "success_status": 200,
+          "return_expression": [
+            "_call(svc.save_definition, user=user, name=body.name, query=body.query.model_dump(exclude_none=True))"
+          ]
+        },
+        {
+          "method": "PUT",
+          "path": "/api/reporting/definitions/{definition_id}",
+          "handler": "update_definition",
+          "line": 84,
+          "success_status": 200,
+          "return_expression": [
+            "_call(svc.save_definition, user=user, definition_id=definition_id, version=body.version, name=body.name, query=body.query.model_dump(exclude_none=True))"
+          ]
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/reporting/definitions/{definition_id}",
+          "handler": "delete_definition",
+          "line": 89,
+          "success_status": 200,
+          "return_expression": [
+            "_call(svc.delete_definition, user=user, definition_id=definition_id)"
+          ]
+        }
+      ],
+      "frontend_exports": [
+        {
+          "name": "getReportCatalog",
+          "line": 44
+        },
+        {
+          "name": "runReport",
+          "line": 45
+        },
+        {
+          "name": "exportReport",
+          "line": 46
+        },
+        {
+          "name": "getReportDefinitions",
+          "line": 47
+        },
+        {
+          "name": "saveReportDefinition",
+          "line": 51
+        },
+        {
+          "name": "deleteReportDefinition",
+          "line": 55
+        }
+      ],
+      "browser_role": "admin",
+      "role_contract_source": "src/lib/roles.ts:337"
+    },
+    {
+      "module": "finance-tools",
+      "router_source": "server/routes/finance_tools_routes.py",
+      "frontend_source": "src/api/financeTools.ts",
+      "contract_review": "Meta,charge worklist,previews,individual statements/mutations are objects. Payout-statements GET is {statements:[...]}; adapter now unwraps it. Journal export GET is a bare array. CSV endpoints return text/csv.",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/finance-tools/meta",
+          "handler": "metadata",
+          "line": 91,
+          "success_status": 200,
+          "return_expression": [
+            "_call(svc.metadata, user=user, facility_id=facility_id)"
+          ]
+        },
+        {
+          "method": "PUT",
+          "path": "/api/finance-tools/account-mappings",
+          "handler": "mapping",
+          "line": 96,
+          "success_status": 200,
+          "return_expression": [
+            "_call(svc.set_mapping, user=user, **body.model_dump())"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/finance-tools/journal/preview",
+          "handler": "journal_preview",
+          "line": 101,
+          "success_status": 200,
+          "return_expression": [
+            "_call(svc.journal_preview, user=user, **body.model_dump())"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/finance-tools/journal/exports",
+          "handler": "journal_exports",
+          "line": 106,
+          "success_status": 200,
+          "return_expression": [
+            "_call(svc.list_journal_exports, user=user, facility_id=facility_id)"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/finance-tools/journal/exports",
+          "handler": "journal_export",
+          "line": 111,
+          "success_status": 200,
+          "return_expression": [
+            "_call(svc.create_journal_export, user=user, **body.model_dump())"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/finance-tools/journal/exports/{export_id}.csv",
+          "handler": "journal_csv",
+          "line": 116,
+          "success_status": 200,
+          "return_expression": [
+            "Response(content, media_type='text/csv; charset=utf-8', headers={'Content-Disposition': 'attachment; filename=\"orb-journal.csv\"', 'Cache-Control': 'no-store'})"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/finance-tools/charges",
+          "handler": "charges",
+          "line": 122,
+          "success_status": 200,
+          "return_expression": [
+            "_call(svc.charges, user=user, facility_id=facility_id, from_day=from_day, to_day=to_day)"
+          ]
+        },
+        {
+          "method": "PUT",
+          "path": "/api/finance-tools/charges/{charge_id}/doctor",
+          "handler": "attribute",
+          "line": 127,
+          "success_status": 200,
+          "return_expression": [
+            "_call(svc.attribute_charge, user=user, charge_id=charge_id, **body.model_dump())"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/finance-tools/payout-rules",
+          "handler": "rule",
+          "line": 132,
+          "success_status": 200,
+          "return_expression": [
+            "_call(svc.create_rule, user=user, **body.model_dump())"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/finance-tools/payout-rules/{rule_id}/retire",
+          "handler": "retire_rule",
+          "line": 137,
+          "success_status": 200,
+          "return_expression": [
+            "_call(svc.retire_rule, user=user, rule_id=rule_id)"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/finance-tools/payouts/preview",
+          "handler": "payout_preview",
+          "line": 142,
+          "success_status": 200,
+          "return_expression": [
+            "_call(svc.payout_preview, user=user, **body.model_dump())"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/finance-tools/payout-statements",
+          "handler": "statements",
+          "line": 147,
+          "success_status": 200,
+          "return_expression": [
+            "{'statements': _call(svc.list_statements, user=user, facility_id=facility_id)}"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/finance-tools/payout-statements",
+          "handler": "create_statement",
+          "line": 152,
+          "success_status": 200,
+          "return_expression": [
+            "_call(svc.create_statement, user=user, **body.model_dump())"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/finance-tools/payout-statements/{statement_id}.csv",
+          "handler": "payout_csv",
+          "line": 157,
+          "success_status": 200,
+          "return_expression": [
+            "Response(content, media_type='text/csv; charset=utf-8', headers={'Content-Disposition': 'attachment; filename=\"orb-doctor-statement.csv\"', 'Cache-Control': 'no-store'})"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/finance-tools/payout-statements/{statement_id}",
+          "handler": "statement",
+          "line": 163,
+          "success_status": 200,
+          "return_expression": [
+            "_call(svc.get_statement, user=user, statement_id=statement_id)"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/finance-tools/payout-statements/{statement_id}/approve",
+          "handler": "approve",
+          "line": 168,
+          "success_status": 200,
+          "return_expression": [
+            "_call(svc.approve_statement, user=user, statement_id=statement_id)"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/finance-tools/payout-statements/{statement_id}/paid",
+          "handler": "paid",
+          "line": 173,
+          "success_status": 200,
+          "return_expression": [
+            "_call(svc.mark_statement_paid, user=user, statement_id=statement_id, **body.model_dump())"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/finance-tools/payout-statements/{statement_id}/cancel",
+          "handler": "cancel",
+          "line": 178,
+          "success_status": 200,
+          "return_expression": [
+            "_call(svc.cancel_statement, user=user, statement_id=statement_id)"
+          ]
+        }
+      ],
+      "frontend_exports": [
+        {
+          "name": "getFinanceMeta",
+          "line": 54
+        },
+        {
+          "name": "saveAccountMapping",
+          "line": 55
+        },
+        {
+          "name": "previewJournal",
+          "line": 56
+        },
+        {
+          "name": "createJournalExport",
+          "line": 57
+        },
+        {
+          "name": "downloadJournal",
+          "line": 58
+        },
+        {
+          "name": "getFinanceCharges",
+          "line": 59
+        },
+        {
+          "name": "attributeFinanceCharge",
+          "line": 60
+        },
+        {
+          "name": "createPayoutRule",
+          "line": 61
+        },
+        {
+          "name": "retirePayoutRule",
+          "line": 62
+        },
+        {
+          "name": "previewPayout",
+          "line": 63
+        },
+        {
+          "name": "getPayoutStatements",
+          "line": 64
+        },
+        {
+          "name": "getPayoutStatement",
+          "line": 68
+        },
+        {
+          "name": "createPayoutStatement",
+          "line": 69
+        },
+        {
+          "name": "approvePayoutStatement",
+          "line": 70
+        },
+        {
+          "name": "markPayoutPaid",
+          "line": 71
+        },
+        {
+          "name": "cancelPayoutStatement",
+          "line": 72
+        },
+        {
+          "name": "downloadPayoutStatement",
+          "line": 73
+        },
+        {
+          "name": "getJournalExports",
+          "line": 78
+        }
+      ],
+      "browser_role": "admin",
+      "role_contract_source": "src/lib/roles.ts:337"
+    },
+    {
+      "module": "radiology",
+      "router_source": "server/routes/radiology_routes.py",
+      "frontend_source": "src/api/offlineClinicalRecords.ts",
+      "contract_review": "Meta is an object; worklist {records,limit,offset}; detail/mutations return record objects; detail includes history, history_next_offset. History endpoint returns {history,history_next_offset}. Creates return201.",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/radiology/meta",
+          "handler": "get_meta",
+          "line": 23,
+          "success_status": 200,
+          "return_expression": [
+            "records.meta('radiology', user)"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/radiology/records",
+          "handler": "get_records",
+          "line": 28,
+          "success_status": 200,
+          "return_expression": [
+            "records.list_records('radiology', user, patient_id, limit, offset, request)"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/radiology/records",
+          "handler": "post_record",
+          "line": 35,
+          "success_status": 201,
+          "return_expression": [
+            "records.create('radiology', body, user, idempotency_key, request)"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/radiology/records/{record_id}",
+          "handler": "get_record",
+          "line": 42,
+          "success_status": 200,
+          "return_expression": [
+            "records.detail('radiology', record_id, user, request)"
+          ]
+        },
+        {
+          "method": "PUT",
+          "path": "/api/radiology/records/{record_id}",
+          "handler": "put_record",
+          "line": 48,
+          "success_status": 200,
+          "return_expression": [
+            "records.update('radiology', record_id, body, user, request)"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/radiology/records/{record_id}/sign",
+          "handler": "sign_record",
+          "line": 54,
+          "success_status": 200,
+          "return_expression": [
+            "records.sign('radiology', record_id, body.version, user, request)"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/radiology/records/{record_id}/addenda",
+          "handler": "post_addendum",
+          "line": 60,
+          "success_status": 200,
+          "return_expression": [
+            "records.addendum('radiology', record_id, body, user, request)"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/radiology/records/{record_id}/history",
+          "handler": "get_history",
+          "line": 66,
+          "success_status": 200,
+          "return_expression": [
+            "records.history('radiology', record_id, user, offset, request)"
+          ]
+        }
+      ],
+      "frontend_exports": [
+        {
+          "name": "getClinicalMeta",
+          "line": 68
+        },
+        {
+          "name": "listClinicalRecords",
+          "line": 69
+        },
+        {
+          "name": "getClinicalRecord",
+          "line": 71
+        },
+        {
+          "name": "createClinicalRecord",
+          "line": 72
+        },
+        {
+          "name": "updateClinicalRecord",
+          "line": 74
+        },
+        {
+          "name": "signClinicalRecord",
+          "line": 76
+        },
+        {
+          "name": "addClinicalAddendum",
+          "line": 78
+        },
+        {
+          "name": "listPerioperativeCases",
+          "line": 80
+        },
+        {
+          "name": "getClinicalHistory",
+          "line": 81
+        }
+      ],
+      "browser_role": "doctor",
+      "role_contract_source": "src/lib/roles.ts:338"
+    },
+    {
+      "module": "care-plans",
+      "router_source": "server/routes/care_plan_routes.py",
+      "frontend_source": "src/api/offlineClinicalRecords.ts",
+      "contract_review": "Same shared clinical record contract; care-plan completed/cancelled states are terminal; no signing capability.",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/care-plans/meta",
+          "handler": "get_meta",
+          "line": 23,
+          "success_status": 200,
+          "return_expression": [
+            "records.meta('care-plans', user)"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/care-plans/records",
+          "handler": "get_records",
+          "line": 28,
+          "success_status": 200,
+          "return_expression": [
+            "records.list_records('care-plans', user, patient_id, limit, offset, request)"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/care-plans/records",
+          "handler": "post_record",
+          "line": 35,
+          "success_status": 201,
+          "return_expression": [
+            "records.create('care-plans', body, user, idempotency_key, request)"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/care-plans/records/{record_id}",
+          "handler": "get_record",
+          "line": 42,
+          "success_status": 200,
+          "return_expression": [
+            "records.detail('care-plans', record_id, user, request)"
+          ]
+        },
+        {
+          "method": "PUT",
+          "path": "/api/care-plans/records/{record_id}",
+          "handler": "put_record",
+          "line": 48,
+          "success_status": 200,
+          "return_expression": [
+            "records.update('care-plans', record_id, body, user, request)"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/care-plans/records/{record_id}/sign",
+          "handler": "sign_record",
+          "line": 54,
+          "success_status": 200,
+          "return_expression": [
+            "records.sign('care-plans', record_id, body.version, user, request)"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/care-plans/records/{record_id}/addenda",
+          "handler": "post_addendum",
+          "line": 60,
+          "success_status": 200,
+          "return_expression": [
+            "records.addendum('care-plans', record_id, body, user, request)"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/care-plans/records/{record_id}/history",
+          "handler": "get_history",
+          "line": 66,
+          "success_status": 200,
+          "return_expression": [
+            "records.history('care-plans', record_id, user, offset, request)"
+          ]
+        }
+      ],
+      "frontend_exports": [
+        {
+          "name": "getClinicalMeta",
+          "line": 68
+        },
+        {
+          "name": "listClinicalRecords",
+          "line": 69
+        },
+        {
+          "name": "getClinicalRecord",
+          "line": 71
+        },
+        {
+          "name": "createClinicalRecord",
+          "line": 72
+        },
+        {
+          "name": "updateClinicalRecord",
+          "line": 74
+        },
+        {
+          "name": "signClinicalRecord",
+          "line": 76
+        },
+        {
+          "name": "addClinicalAddendum",
+          "line": 78
+        },
+        {
+          "name": "listPerioperativeCases",
+          "line": 80
+        },
+        {
+          "name": "getClinicalHistory",
+          "line": 81
+        }
+      ],
+      "browser_role": "doctor",
+      "role_contract_source": "src/lib/roles.ts:338"
+    },
+    {
+      "module": "emergency",
+      "router_source": "server/routes/emergency_record_routes.py",
+      "frontend_source": "src/api/offlineClinicalRecords.ts",
+      "contract_review": "Same shared clinical record contract; record_closed/cancelled states are terminal; no signing capability.",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/emergency/meta",
+          "handler": "get_meta",
+          "line": 23,
+          "success_status": 200,
+          "return_expression": [
+            "records.meta('emergency', user)"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/emergency/records",
+          "handler": "get_records",
+          "line": 28,
+          "success_status": 200,
+          "return_expression": [
+            "records.list_records('emergency', user, patient_id, limit, offset, request)"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/emergency/records",
+          "handler": "post_record",
+          "line": 35,
+          "success_status": 201,
+          "return_expression": [
+            "records.create('emergency', body, user, idempotency_key, request)"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/emergency/records/{record_id}",
+          "handler": "get_record",
+          "line": 42,
+          "success_status": 200,
+          "return_expression": [
+            "records.detail('emergency', record_id, user, request)"
+          ]
+        },
+        {
+          "method": "PUT",
+          "path": "/api/emergency/records/{record_id}",
+          "handler": "put_record",
+          "line": 48,
+          "success_status": 200,
+          "return_expression": [
+            "records.update('emergency', record_id, body, user, request)"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/emergency/records/{record_id}/sign",
+          "handler": "sign_record",
+          "line": 54,
+          "success_status": 200,
+          "return_expression": [
+            "records.sign('emergency', record_id, body.version, user, request)"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/emergency/records/{record_id}/addenda",
+          "handler": "post_addendum",
+          "line": 60,
+          "success_status": 200,
+          "return_expression": [
+            "records.addendum('emergency', record_id, body, user, request)"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/emergency/records/{record_id}/history",
+          "handler": "get_history",
+          "line": 66,
+          "success_status": 200,
+          "return_expression": [
+            "records.history('emergency', record_id, user, offset, request)"
+          ]
+        }
+      ],
+      "frontend_exports": [
+        {
+          "name": "getClinicalMeta",
+          "line": 68
+        },
+        {
+          "name": "listClinicalRecords",
+          "line": 69
+        },
+        {
+          "name": "getClinicalRecord",
+          "line": 71
+        },
+        {
+          "name": "createClinicalRecord",
+          "line": 72
+        },
+        {
+          "name": "updateClinicalRecord",
+          "line": 74
+        },
+        {
+          "name": "signClinicalRecord",
+          "line": 76
+        },
+        {
+          "name": "addClinicalAddendum",
+          "line": 78
+        },
+        {
+          "name": "listPerioperativeCases",
+          "line": 80
+        },
+        {
+          "name": "getClinicalHistory",
+          "line": 81
+        }
+      ],
+      "browser_role": "doctor",
+      "role_contract_source": "src/lib/roles.ts:338"
+    },
+    {
+      "module": "perioperative",
+      "router_source": "server/routes/perioperative_record_routes.py",
+      "frontend_source": "src/api/offlineClinicalRecords.ts",
+      "contract_review": "Same shared clinical record contract; cases lookup returns {cases,offset}; create records require existing surgical case.",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/perioperative/meta",
+          "handler": "get_meta",
+          "line": 23,
+          "success_status": 200,
+          "return_expression": [
+            "records.meta('perioperative', user)"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/perioperative/cases",
+          "handler": "get_cases",
+          "line": 28,
+          "success_status": 200,
+          "return_expression": [
+            "records.list_perioperative_cases(user, request, q, offset)"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/perioperative/records",
+          "handler": "get_records",
+          "line": 34,
+          "success_status": 200,
+          "return_expression": [
+            "records.list_records('perioperative', user, patient_id, limit, offset, request)"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/perioperative/records",
+          "handler": "post_record",
+          "line": 41,
+          "success_status": 201,
+          "return_expression": [
+            "records.create('perioperative', body, user, idempotency_key, request)"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/perioperative/records/{record_id}",
+          "handler": "get_record",
+          "line": 48,
+          "success_status": 200,
+          "return_expression": [
+            "records.detail('perioperative', record_id, user, request)"
+          ]
+        },
+        {
+          "method": "PUT",
+          "path": "/api/perioperative/records/{record_id}",
+          "handler": "put_record",
+          "line": 54,
+          "success_status": 200,
+          "return_expression": [
+            "records.update('perioperative', record_id, body, user, request)"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/perioperative/records/{record_id}/sign",
+          "handler": "sign_record",
+          "line": 60,
+          "success_status": 200,
+          "return_expression": [
+            "records.sign('perioperative', record_id, body.version, user, request)"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/perioperative/records/{record_id}/addenda",
+          "handler": "post_addendum",
+          "line": 66,
+          "success_status": 200,
+          "return_expression": [
+            "records.addendum('perioperative', record_id, body, user, request)"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/perioperative/records/{record_id}/history",
+          "handler": "get_history",
+          "line": 72,
+          "success_status": 200,
+          "return_expression": [
+            "records.history('perioperative', record_id, user, offset, request)"
+          ]
+        }
+      ],
+      "frontend_exports": [
+        {
+          "name": "getClinicalMeta",
+          "line": 68
+        },
+        {
+          "name": "listClinicalRecords",
+          "line": 69
+        },
+        {
+          "name": "getClinicalRecord",
+          "line": 71
+        },
+        {
+          "name": "createClinicalRecord",
+          "line": 72
+        },
+        {
+          "name": "updateClinicalRecord",
+          "line": 74
+        },
+        {
+          "name": "signClinicalRecord",
+          "line": 76
+        },
+        {
+          "name": "addClinicalAddendum",
+          "line": 78
+        },
+        {
+          "name": "listPerioperativeCases",
+          "line": 80
+        },
+        {
+          "name": "getClinicalHistory",
+          "line": 81
+        }
+      ],
+      "browser_role": "doctor",
+      "role_contract_source": "src/lib/roles.ts:338"
+    },
+    {
+      "module": "dialysis",
+      "router_source": "server/routes/dialysis_record_routes.py",
+      "frontend_source": "src/api/offlineClinicalRecords.ts",
+      "contract_review": "Same shared clinical record contract; prescription capability is separately reported in meta.",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/dialysis/meta",
+          "handler": "get_meta",
+          "line": 23,
+          "success_status": 200,
+          "return_expression": [
+            "records.meta('dialysis', user)"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/dialysis/records",
+          "handler": "get_records",
+          "line": 28,
+          "success_status": 200,
+          "return_expression": [
+            "records.list_records('dialysis', user, patient_id, limit, offset, request)"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/dialysis/records",
+          "handler": "post_record",
+          "line": 35,
+          "success_status": 201,
+          "return_expression": [
+            "records.create('dialysis', body, user, idempotency_key, request)"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/dialysis/records/{record_id}",
+          "handler": "get_record",
+          "line": 42,
+          "success_status": 200,
+          "return_expression": [
+            "records.detail('dialysis', record_id, user, request)"
+          ]
+        },
+        {
+          "method": "PUT",
+          "path": "/api/dialysis/records/{record_id}",
+          "handler": "put_record",
+          "line": 48,
+          "success_status": 200,
+          "return_expression": [
+            "records.update('dialysis', record_id, body, user, request)"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/dialysis/records/{record_id}/sign",
+          "handler": "sign_record",
+          "line": 54,
+          "success_status": 200,
+          "return_expression": [
+            "records.sign('dialysis', record_id, body.version, user, request)"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/dialysis/records/{record_id}/addenda",
+          "handler": "post_addendum",
+          "line": 60,
+          "success_status": 200,
+          "return_expression": [
+            "records.addendum('dialysis', record_id, body, user, request)"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/dialysis/records/{record_id}/history",
+          "handler": "get_history",
+          "line": 66,
+          "success_status": 200,
+          "return_expression": [
+            "records.history('dialysis', record_id, user, offset, request)"
+          ]
+        }
+      ],
+      "frontend_exports": [
+        {
+          "name": "getClinicalMeta",
+          "line": 68
+        },
+        {
+          "name": "listClinicalRecords",
+          "line": 69
+        },
+        {
+          "name": "getClinicalRecord",
+          "line": 71
+        },
+        {
+          "name": "createClinicalRecord",
+          "line": 72
+        },
+        {
+          "name": "updateClinicalRecord",
+          "line": 74
+        },
+        {
+          "name": "signClinicalRecord",
+          "line": 76
+        },
+        {
+          "name": "addClinicalAddendum",
+          "line": 78
+        },
+        {
+          "name": "listPerioperativeCases",
+          "line": 80
+        },
+        {
+          "name": "getClinicalHistory",
+          "line": 81
+        }
+      ],
+      "browser_role": "doctor",
+      "role_contract_source": "src/lib/roles.ts:338"
+    },
+    {
+      "module": "record-governance",
+      "router_source": "server/routes/record_governance_routes.py",
+      "frontend_source": "src/api/recordGovernance.ts",
+      "contract_review": "Kind register {records,total}; details and mutations return record objects, detail includes events. Creates return201.",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/record-governance/{kind}",
+          "handler": "records",
+          "line": 50,
+          "success_status": 200,
+          "return_expression": [
+            "call(svc.list_records, kind, actor=user, patient_id=patient_id, limit=limit, offset=offset)"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/record-governance/{kind}/{record_id}",
+          "handler": "detail",
+          "line": 57,
+          "success_status": 200,
+          "return_expression": [
+            "call(svc.detail, kind, record_id, actor=user)"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/record-governance/{kind}",
+          "handler": "create",
+          "line": 62,
+          "success_status": 201,
+          "return_expression": [
+            "call(svc.create, kind, body.model_dump(), actor=user)"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/record-governance/{kind}/{record_id}/transition",
+          "handler": "transition",
+          "line": 67,
+          "success_status": 200,
+          "return_expression": [
+            "call(svc.transition, kind, record_id, actor=user, **body.model_dump())"
+          ]
+        }
+      ],
+      "frontend_exports": [
+        {
+          "name": "listGovernance",
+          "line": 20
+        },
+        {
+          "name": "getGovernance",
+          "line": 22
+        },
+        {
+          "name": "createGovernance",
+          "line": 24
+        },
+        {
+          "name": "transitionGovernance",
+          "line": 26
+        }
+      ],
+      "browser_role": "admin",
+      "role_contract_source": "src/lib/roles.ts:337"
+    },
+    {
+      "module": "radiation-safety",
+      "router_source": "server/routes/radiation_safety_routes.py",
+      "frontend_source": "src/pages/panels/RadiationSafetyPanel.tsx",
+      "contract_review": "Register {records,total,assets,asset_total,asset_offset,asset_limit,asset_next_offset}; detail {record,events}; create/withdraw return evidence rows. Creates return201. Date labels use within_recorded_dates.",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/radiation-safety",
+          "handler": "listing",
+          "line": 41,
+          "success_status": 200,
+          "return_expression": [
+            "call(svc.listing, actor=user, asset_id=asset_id, offset=offset, limit=limit, asset_query=asset_query, asset_offset=asset_offset, asset_limit=asset_limit)"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/radiation-safety",
+          "handler": "create",
+          "line": 49,
+          "success_status": 201,
+          "return_expression": [
+            "call(svc.create, actor=user, values=body.model_dump())"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/radiation-safety/{record_id}",
+          "handler": "history",
+          "line": 54,
+          "success_status": 200,
+          "return_expression": [
+            "call(svc.history, record_id, actor=user)"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/radiation-safety/{record_id}/withdraw",
+          "handler": "withdraw",
+          "line": 59,
+          "success_status": 200,
+          "return_expression": [
+            "call(svc.withdraw, record_id, actor=user, **body.model_dump())"
+          ]
+        }
+      ],
+      "frontend_exports": [],
+      "browser_role": "admin",
+      "role_contract_source": "src/lib/roles.ts:337"
+    },
+    {
+      "module": "infection-surveillance",
+      "router_source": "server/routes/infection_surveillance_routes.py",
+      "frontend_source": "src/api/infectionSurveillance.ts",
+      "contract_review": "Register {definitions,windows,isolations,offset,limit,has_more,notice}; window detail adds definition,cases,exposures,susceptibility,pagination; isolation/detail/mutations objects; metrics object suppresses rate/counts explicitly. Internal finalized count snapshots are never returned.",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/infection-surveillance",
+          "handler": "register",
+          "line": 97,
+          "success_status": 200,
+          "return_expression": [
+            "call(svc.register, actor=user, limit=limit, offset=offset, request=request)"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/infection-surveillance/records/{kind}/{ident}",
+          "handler": "detail",
+          "line": 102,
+          "success_status": 200,
+          "return_expression": [
+            "call(svc.detail, kind, ident, actor=user, limit=limit, offset=offset, request=request)"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/infection-surveillance/records/definition",
+          "handler": "definition",
+          "line": 108,
+          "success_status": 200,
+          "return_expression": [
+            "call(svc.create, 'definition', body.model_dump(), actor=user, key=key, request=request)"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/infection-surveillance/records/window",
+          "handler": "window",
+          "line": 113,
+          "success_status": 200,
+          "return_expression": [
+            "call(svc.create, 'window', body.model_dump(), actor=user, key=key, request=request)"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/infection-surveillance/records/case",
+          "handler": "case",
+          "line": 118,
+          "success_status": 200,
+          "return_expression": [
+            "call(svc.create, 'case', body.model_dump(), actor=user, key=key, request=request)"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/infection-surveillance/records/exposure",
+          "handler": "exposure",
+          "line": 123,
+          "success_status": 200,
+          "return_expression": [
+            "call(svc.create, 'exposure', body.model_dump(), actor=user, key=key, request=request)"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/infection-surveillance/records/susceptibility",
+          "handler": "susceptibility",
+          "line": 128,
+          "success_status": 200,
+          "return_expression": [
+            "call(svc.create, 'susceptibility', body.model_dump(), actor=user, key=key, request=request)"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/infection-surveillance/records/isolation",
+          "handler": "isolation",
+          "line": 133,
+          "success_status": 200,
+          "return_expression": [
+            "call(svc.create, 'isolation', body.model_dump(), actor=user, key=key, request=request)"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/infection-surveillance/cases/{ident}/classification",
+          "handler": "classify",
+          "line": 138,
+          "success_status": 200,
+          "return_expression": [
+            "call(svc.classify, ident, body.model_dump(), actor=user, request=request)"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/infection-surveillance/records/{kind}/{ident}/void",
+          "handler": "void",
+          "line": 143,
+          "success_status": 200,
+          "return_expression": [
+            "call(svc.void, kind, ident, body.model_dump(), actor=user, request=request)"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/infection-surveillance/isolations/{ident}/end",
+          "handler": "end_isolation",
+          "line": 148,
+          "success_status": 200,
+          "return_expression": [
+            "call(svc.end_isolation, ident, body.model_dump(), actor=user, request=request)"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/infection-surveillance/windows/{ident}/actions",
+          "handler": "window_action",
+          "line": 153,
+          "success_status": 200,
+          "return_expression": [
+            "call(svc.window_action, ident, body.model_dump(), actor=user, request=request)"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/infection-surveillance/windows/{ident}/metrics",
+          "handler": "metrics",
+          "line": 158,
+          "success_status": 200,
+          "return_expression": [
+            "call(svc.metrics, ident, actor=user, group_by=group_by, request=request)"
+          ]
+        }
+      ],
+      "frontend_exports": [
+        {
+          "name": "loadInfectionSurveillance",
+          "line": 28
+        },
+        {
+          "name": "getInfectionWindow",
+          "line": 29
+        },
+        {
+          "name": "getInfectionIsolation",
+          "line": 30
+        },
+        {
+          "name": "createInfectionRecord",
+          "line": 31
+        },
+        {
+          "name": "classifyInfectionCase",
+          "line": 32
+        },
+        {
+          "name": "voidInfectionRecord",
+          "line": 33
+        },
+        {
+          "name": "endInfectionIsolation",
+          "line": 34
+        },
+        {
+          "name": "actOnInfectionWindow",
+          "line": 35
+        },
+        {
+          "name": "getInfectionMetrics",
+          "line": 36
+        }
+      ],
+      "browser_role": "admin",
+      "role_contract_source": "src/lib/roles.ts:337"
+    }
+  ],
+  "role_note": "The five clinical authoring scenarios use doctors. Administrators have clinical read access only. Fixture metadata also models nurse restrictions and is covered by a permanent regression."
+}

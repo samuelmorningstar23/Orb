@@ -1,0 +1,114 @@
+{
+  "schema": "orb.audit.failed-backend-run/1",
+  "date": "2026-10-12",
+  "status": "failed",
+  "run": "/private/tmp/orb-ml-backend-shards-20261012-v5",
+  "runtime": "/private/tmp/orb-ml-upgrade-20261012/bin/python",
+  "elapsed_seconds": 396.83,
+  "tests": 16031,
+  "failures": 7,
+  "errors": 0,
+  "skipped": 8,
+  "passed": 16016,
+  "shards": [
+    {
+      "index": 1,
+      "exit_code": 1,
+      "tests": 2672,
+      "failures": 1,
+      "errors": 0,
+      "skipped": 0,
+      "log": "shard-1.log",
+      "log_sha256": "6486721dcd3e877abf9cf1ddf12bf4a079248c0256d5c9b8e7c094c1d31103c5"
+    },
+    {
+      "index": 2,
+      "exit_code": 0,
+      "tests": 2672,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "log": "shard-2.log",
+      "log_sha256": "7de0791e3063a578b61968428a45ca96a37c2019a6f6b4eb45e683e6a8d0ab8e"
+    },
+    {
+      "index": 3,
+      "exit_code": 0,
+      "tests": 2672,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "log": "shard-3.log",
+      "log_sha256": "5c2caa03aac4ea4fbf520e2f51c37ef6379b7f15e10e84a4ac67b8169dcd3b78"
+    },
+    {
+      "index": 4,
+      "exit_code": 0,
+      "tests": 2672,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 1,
+      "log": "shard-4.log",
+      "log_sha256": "6a13b253856baeacb1a151410783ff7065865ea15d1bc8f709d6da069a392f24"
+    },
+    {
+      "index": 5,
+      "exit_code": 0,
+      "tests": 2672,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 6,
+      "log": "shard-5.log",
+      "log_sha256": "71d632e0882c62d6462923b861c9777ea88d2d596fd638668a1d4c9180429999"
+    },
+    {
+      "index": 6,
+      "exit_code": 1,
+      "tests": 2671,
+      "failures": 6,
+      "errors": 0,
+      "skipped": 1,
+      "log": "shard-6.log",
+      "log_sha256": "cd761294afe622582b1e0074be6b670f1bde20728af426e93cb80264e01a4365"
+    }
+  ],
+  "failed_cases": [
+    {
+      "module": "tests.test_orders_service",
+      "test": "test_validate_and_display",
+      "message": "AssertionError: assert 'Lactate' == 'Lactate [Mol...rum or Plasma'\n  \n  - Lactate [Moles/volume] in Serum or Plasma\n  + Lactate"
+    },
+    {
+      "module": "tests.test_sage_department_scope",
+      "test": "test_out_of_scope_is_distinguishable_from_no_such_patient[cardiology]",
+      "message": "AssertionError: assert 'OUT_OF_SCOPE' != 'OUT_OF_SCOPE'"
+    },
+    {
+      "module": "tests.test_sage_department_scope",
+      "test": "test_out_of_scope_is_distinguishable_from_no_such_patient[neurology]",
+      "message": "AssertionError: assert 'OUT_OF_SCOPE' != 'OUT_OF_SCOPE'"
+    },
+    {
+      "module": "tests.test_sage_department_scope",
+      "test": "test_out_of_scope_is_distinguishable_from_no_such_patient[orthopedics]",
+      "message": "AssertionError: assert 'OUT_OF_SCOPE' != 'OUT_OF_SCOPE'"
+    },
+    {
+      "module": "tests.test_sage_department_scope",
+      "test": "test_out_of_scope_is_distinguishable_from_no_such_patient[pulmonology]",
+      "message": "AssertionError: assert 'OUT_OF_SCOPE' != 'OUT_OF_SCOPE'"
+    },
+    {
+      "module": "tests.test_sage_department_scope",
+      "test": "test_out_of_scope_is_distinguishable_from_no_such_patient[surgery]",
+      "message": "AssertionError: assert 'OUT_OF_SCOPE' != 'OUT_OF_SCOPE'"
+    },
+    {
+      "module": "tests.test_sage_department_scope",
+      "test": "test_invented_patient_is_still_reported_as_absent",
+      "message": "AssertionError: assert 'OUT_OF_SCOPE' != 'OUT_OF_SCOPE'"
+    }
+  ],
+  "source_hashes": "source-sha256.json",
+  "disposition": "Failures retained. Investigating shared-database fixture dependencies exposed by whole-file partition changes after28new gateway cases; no production behavior or held resolver decision changed."
+}

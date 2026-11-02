@@ -1,0 +1,5 @@
+{
+  "ORB_HTTP_MAX_INFLIGHT": "200",
+  "ORB_LLM_POOL_MAX_INFLIGHT": "200",
+  "ORB_LLM_WORKERS": "[{\"name\":\"mock-transport-only\",\"origin\":\"{inference_url}\",\"models\":[\"medgemma:27b\",\"medgemma:4b\"],\"capacity\":200,\"lanes\":[\"interactive\"],\"qualified\":true,\"qualification\":\"SYNTHETIC TRANSPORT ONLY: not a hardware qualification\"}]"
+}

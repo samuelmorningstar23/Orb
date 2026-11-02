@@ -1,0 +1,21 @@
+{
+  "status": "rejected_not_promoted_not_run_with_model",
+  "reason": "Application has independent interactive and background lanes; daemonparallel2 could enable real overlap and change the existing concurrency boundary.",
+  "mechanics_only_tests": 104,
+  "repository_changed_by_candidate": false,
+  "model_inference_calls_for_candidate": 0,
+  "artifacts": {
+    "pytest.log": {
+      "sha256": "9412f8642e7f4a9e7dff5466a443b2467fef0fe86f36dd3234045bc015687553",
+      "bytes": 191
+    },
+    "two-slot.patch": {
+      "sha256": "10ffe3c19666a0743ee995471c89ab80bc683ed9ad331a8e53d15bb0aa0978ac",
+      "bytes": 6808
+    },
+    "verification.json": {
+      "sha256": "fafad7709680fd97faca109bbd05e31b66685cac75f4d83aaca50704bbbd70a6",
+      "bytes": 2360
+    }
+  }
+}

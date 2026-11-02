@@ -1,0 +1,69 @@
+{
+  "created_at": "2026-10-21T17:22:52.872955+00:00",
+  "status": "experiment_finished",
+  "explicit_user_authorisation": true,
+  "profiles": [
+    {
+      "name": "mlx-p1",
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/docs/perf/mlx-vs-ollama-2026-10-21/suspended-resident-source-repack4-f16-staged-b/mlx-p1/report.json",
+      "status": "aborted",
+      "quality_passed": false
+    }
+  ],
+  "runtime_network": "inherited_localhost_only_sandbox",
+  "model_files_changed": false,
+  "original_residents": [
+    {
+      "name": "medgemma:27b",
+      "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+      "size": 17919744408,
+      "size_vram": 17919744408,
+      "context_length": 8192,
+      "expires_at": "2319-01-31T22:37:28.176534807+05:30"
+    },
+    {
+      "name": "medgemma:4b",
+      "digest": "9fe4e9a6c9bda2d007bb595515550eafbc8e226622adff9257f3241eba334c4d",
+      "size": 2887841218,
+      "size_vram": 2887841218,
+      "context_length": 4096,
+      "expires_at": "2319-01-31T09:33:06.637596807+05:30"
+    }
+  ],
+  "original_runner_identity_verified": true,
+  "original_worker_idle": true,
+  "after_release": [
+    {
+      "name": "medgemma:4b",
+      "digest": "9fe4e9a6c9bda2d007bb595515550eafbc8e226622adff9257f3241eba334c4d",
+      "size": 2887841218,
+      "size_vram": 2887841218,
+      "context_length": 4096,
+      "expires_at": "2319-01-31T09:33:06.637596807+05:30"
+    }
+  ],
+  "experiment_outcome": "MLX not qualified for further timing; inspect first profile",
+  "restoration": {
+    "status": "restored_and_verified",
+    "models": [
+      {
+        "name": "medgemma:27b",
+        "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+        "size": 17919744408,
+        "size_vram": 17919744408,
+        "context_length": 8192,
+        "expires_at": "2319-01-31T22:40:49.393547807+05:30"
+      },
+      {
+        "name": "medgemma:4b",
+        "digest": "9fe4e9a6c9bda2d007bb595515550eafbc8e226622adff9257f3241eba334c4d",
+        "size": 2887841218,
+        "size_vram": 2887841218,
+        "context_length": 4096,
+        "expires_at": "2319-01-31T09:33:06.637596807+05:30"
+      }
+    ],
+    "identity_and_context_verified": true,
+    "other_original_residents_unchanged": true
+  }
+}

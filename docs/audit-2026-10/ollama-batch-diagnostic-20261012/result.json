@@ -1,0 +1,1283 @@
+{
+  "purpose": "Cold-prefix one-token prefill diagnostics, not clinical answer quality or browser/SLA acceptance",
+  "model": "medgemma:27b",
+  "context": 8192,
+  "source_prompts": {
+    "general": {
+      "scope": "clinical",
+      "characters": 2870,
+      "sha256": "d0223e4cb21b46d4a497676e1babc55b1c94373599b178430e6b7605271d2453"
+    },
+    "patient": {
+      "scope": "patient",
+      "characters": 3799,
+      "sha256": "e2bcf696549e8f42994049addc7b666f49524019bd7f7d4a7a69ca19316b5a8b"
+    }
+  },
+  "nonce": "Fixed-width unique three-digit nonce prepended to the first system message; changes earliest prompt content for equal cold-prefix evaluation",
+  "arms": [
+    "AUTO",
+    512,
+    1024
+  ],
+  "repeats": 3,
+  "calls": [
+    {
+      "index": 1,
+      "repeat": 1,
+      "category": "general",
+      "arm": "AUTO",
+      "requested_options": {
+        "num_ctx": 8192,
+        "num_predict": 1,
+        "temperature": 0.0,
+        "repeat_penalty": 1.15,
+        "repeat_last_n": 256
+      },
+      "prompt_sha256": "2a295c80a8f2d13bd91641c8ef2dea2572520038d2dea78ace7bd3fc4c8db7f6",
+      "before": [
+        {
+          "pid": 5466,
+          "rss_kib": 15073600,
+          "flags": {
+            "-c": "8192",
+            "-np": "1",
+            "-b": "512",
+            "-ub": "512"
+          }
+        }
+      ],
+      "restoring": false,
+      "http_status": 200,
+      "load_duration_ms": 2.938,
+      "total_duration_ms": 4643.259875,
+      "prompt_eval_duration_ms": 4501.776,
+      "eval_duration_ms": 0.001,
+      "prompt_eval_count": 701,
+      "prompt_eval_cached_count": 0,
+      "eval_count": 1,
+      "done_reason": "length",
+      "wall_ms": 4644.526042044163,
+      "after": [
+        {
+          "pid": 5466,
+          "rss_kib": 15822912,
+          "flags": {
+            "-c": "8192",
+            "-np": "1",
+            "-b": "512",
+            "-ub": "512"
+          }
+        }
+      ],
+      "runner_pid_changed": false,
+      "sampled_max_combined_runner_rss_kib": 15822912,
+      "residency_after": [
+        {
+          "name": "medgemma:27b",
+          "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+          "context_length": 8192,
+          "size": 17498898431,
+          "size_vram": 17498898431
+        }
+      ]
+    },
+    {
+      "index": 2,
+      "repeat": 1,
+      "category": "patient",
+      "arm": "AUTO",
+      "requested_options": {
+        "num_ctx": 8192,
+        "num_predict": 1,
+        "temperature": 0.0,
+        "repeat_penalty": 1.15,
+        "repeat_last_n": 256
+      },
+      "prompt_sha256": "d8dcdda3cb37826b015984f621fe8bf1af6d5f5cd904c07dbc0c12a250ad3853",
+      "before": [
+        {
+          "pid": 5466,
+          "rss_kib": 15822912,
+          "flags": {
+            "-c": "8192",
+            "-np": "1",
+            "-b": "512",
+            "-ub": "512"
+          }
+        }
+      ],
+      "restoring": false,
+      "http_status": 200,
+      "load_duration_ms": 2.784708,
+      "total_duration_ms": 6794.021708,
+      "prompt_eval_duration_ms": 6725.235,
+      "eval_duration_ms": 0.001,
+      "prompt_eval_count": 1096,
+      "prompt_eval_cached_count": 0,
+      "eval_count": 1,
+      "done_reason": "length",
+      "wall_ms": 6809.017791994847,
+      "after": [
+        {
+          "pid": 5466,
+          "rss_kib": 16617968,
+          "flags": {
+            "-c": "8192",
+            "-np": "1",
+            "-b": "512",
+            "-ub": "512"
+          }
+        }
+      ],
+      "runner_pid_changed": false,
+      "sampled_max_combined_runner_rss_kib": 16617968,
+      "residency_after": [
+        {
+          "name": "medgemma:27b",
+          "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+          "context_length": 8192,
+          "size": 17498898431,
+          "size_vram": 17498898431
+        }
+      ]
+    },
+    {
+      "index": 3,
+      "repeat": 1,
+      "category": "general",
+      "arm": 512,
+      "requested_options": {
+        "num_ctx": 8192,
+        "num_predict": 1,
+        "temperature": 0.0,
+        "repeat_penalty": 1.15,
+        "repeat_last_n": 256,
+        "num_batch": 512
+      },
+      "prompt_sha256": "4bedb00c75b3e52d28bfcbd114b10d04d77a7f3ec3301a26508dc5deb396e33e",
+      "before": [
+        {
+          "pid": 5466,
+          "rss_kib": 16617968,
+          "flags": {
+            "-c": "8192",
+            "-np": "1",
+            "-b": "512",
+            "-ub": "512"
+          }
+        }
+      ],
+      "restoring": false,
+      "http_status": 200,
+      "load_duration_ms": 4.20575,
+      "total_duration_ms": 4438.795625,
+      "prompt_eval_duration_ms": 4308.538,
+      "eval_duration_ms": 0.001,
+      "prompt_eval_count": 701,
+      "prompt_eval_cached_count": 0,
+      "eval_count": 1,
+      "done_reason": "length",
+      "wall_ms": 4439.893750008196,
+      "after": [
+        {
+          "pid": 5466,
+          "rss_kib": 17557696,
+          "flags": {
+            "-c": "8192",
+            "-np": "1",
+            "-b": "512",
+            "-ub": "512"
+          }
+        }
+      ],
+      "runner_pid_changed": false,
+      "sampled_max_combined_runner_rss_kib": 17557696,
+      "residency_after": [
+        {
+          "name": "medgemma:27b",
+          "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+          "context_length": 8192,
+          "size": 17498898431,
+          "size_vram": 17498898431
+        }
+      ]
+    },
+    {
+      "index": 4,
+      "repeat": 1,
+      "category": "patient",
+      "arm": 512,
+      "requested_options": {
+        "num_ctx": 8192,
+        "num_predict": 1,
+        "temperature": 0.0,
+        "repeat_penalty": 1.15,
+        "repeat_last_n": 256,
+        "num_batch": 512
+      },
+      "prompt_sha256": "5e61f53fc7caa7c0f374ad67bb284c8e1ceab00e95693799df9f405450c3461e",
+      "before": [
+        {
+          "pid": 5466,
+          "rss_kib": 17557696,
+          "flags": {
+            "-c": "8192",
+            "-np": "1",
+            "-b": "512",
+            "-ub": "512"
+          }
+        }
+      ],
+      "restoring": false,
+      "http_status": 200,
+      "load_duration_ms": 3.204208,
+      "total_duration_ms": 6809.616792,
+      "prompt_eval_duration_ms": 6710.196,
+      "eval_duration_ms": 0.001,
+      "prompt_eval_count": 1096,
+      "prompt_eval_cached_count": 0,
+      "eval_count": 1,
+      "done_reason": "length",
+      "wall_ms": 6810.694082989357,
+      "after": [
+        {
+          "pid": 5466,
+          "rss_kib": 18274080,
+          "flags": {
+            "-c": "8192",
+            "-np": "1",
+            "-b": "512",
+            "-ub": "512"
+          }
+        }
+      ],
+      "runner_pid_changed": false,
+      "sampled_max_combined_runner_rss_kib": 18274080,
+      "residency_after": [
+        {
+          "name": "medgemma:27b",
+          "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+          "context_length": 8192,
+          "size": 17498898431,
+          "size_vram": 17498898431
+        }
+      ]
+    },
+    {
+      "index": 5,
+      "repeat": 1,
+      "category": "general",
+      "arm": 1024,
+      "requested_options": {
+        "num_ctx": 8192,
+        "num_predict": 1,
+        "temperature": 0.0,
+        "repeat_penalty": 1.15,
+        "repeat_last_n": 256,
+        "num_batch": 1024
+      },
+      "prompt_sha256": "7faef5643549c2f428783b9656bd1828988494ddc112be8ad8f2722a1159ddb4",
+      "before": [
+        {
+          "pid": 5466,
+          "rss_kib": 18274080,
+          "flags": {
+            "-c": "8192",
+            "-np": "1",
+            "-b": "512",
+            "-ub": "512"
+          }
+        }
+      ],
+      "restoring": false,
+      "http_status": 200,
+      "load_duration_ms": 8480.697333,
+      "total_duration_ms": 12709.803,
+      "prompt_eval_duration_ms": 4223.395,
+      "eval_duration_ms": 0.001,
+      "prompt_eval_count": 701,
+      "prompt_eval_cached_count": 0,
+      "eval_count": 1,
+      "done_reason": "length",
+      "wall_ms": 12711.37637499487,
+      "after": [
+        {
+          "pid": 13147,
+          "rss_kib": 18810064,
+          "flags": {
+            "-c": "8192",
+            "-np": "1",
+            "-b": "1024",
+            "-ub": "1024"
+          }
+        }
+      ],
+      "runner_pid_changed": true,
+      "sampled_max_combined_runner_rss_kib": 18810064,
+      "residency_after": [
+        {
+          "name": "medgemma:27b",
+          "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+          "context_length": 8192,
+          "size": 17894568099,
+          "size_vram": 17894568099
+        }
+      ]
+    },
+    {
+      "index": 6,
+      "repeat": 1,
+      "category": "patient",
+      "arm": 1024,
+      "requested_options": {
+        "num_ctx": 8192,
+        "num_predict": 1,
+        "temperature": 0.0,
+        "repeat_penalty": 1.15,
+        "repeat_last_n": 256,
+        "num_batch": 1024
+      },
+      "prompt_sha256": "5c54c5b17275d652fc477263a21be2f606b8b2def0649677d5e3134d75d201b1",
+      "before": [
+        {
+          "pid": 13147,
+          "rss_kib": 18810064,
+          "flags": {
+            "-c": "8192",
+            "-np": "1",
+            "-b": "1024",
+            "-ub": "1024"
+          }
+        }
+      ],
+      "restoring": false,
+      "http_status": 200,
+      "load_duration_ms": 3.985125,
+      "total_duration_ms": 6753.644792,
+      "prompt_eval_duration_ms": 6666.214,
+      "eval_duration_ms": 0.001,
+      "prompt_eval_count": 1096,
+      "prompt_eval_cached_count": 0,
+      "eval_count": 1,
+      "done_reason": "length",
+      "wall_ms": 6755.284249957185,
+      "after": [
+        {
+          "pid": 13147,
+          "rss_kib": 19924016,
+          "flags": {
+            "-c": "8192",
+            "-np": "1",
+            "-b": "1024",
+            "-ub": "1024"
+          }
+        }
+      ],
+      "runner_pid_changed": false,
+      "sampled_max_combined_runner_rss_kib": 19924016,
+      "residency_after": [
+        {
+          "name": "medgemma:27b",
+          "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+          "context_length": 8192,
+          "size": 17894568099,
+          "size_vram": 17894568099
+        }
+      ]
+    },
+    {
+      "index": 7,
+      "repeat": 2,
+      "category": "general",
+      "arm": 512,
+      "requested_options": {
+        "num_ctx": 8192,
+        "num_predict": 1,
+        "temperature": 0.0,
+        "repeat_penalty": 1.15,
+        "repeat_last_n": 256,
+        "num_batch": 512
+      },
+      "prompt_sha256": "713e35a029ebd0e6abde5cefa572ba790281ff0d807d08ccdb6abe850fdc3d17",
+      "before": [
+        {
+          "pid": 13147,
+          "rss_kib": 19924016,
+          "flags": {
+            "-c": "8192",
+            "-np": "1",
+            "-b": "1024",
+            "-ub": "1024"
+          }
+        }
+      ],
+      "restoring": false,
+      "http_status": 200,
+      "load_duration_ms": 2435.659875,
+      "total_duration_ms": 6734.841708,
+      "prompt_eval_duration_ms": 4293.937,
+      "eval_duration_ms": 0.001,
+      "prompt_eval_count": 701,
+      "prompt_eval_cached_count": 0,
+      "eval_count": 1,
+      "done_reason": "length",
+      "wall_ms": 6738.55258297408,
+      "after": [
+        {
+          "pid": 13185,
+          "rss_kib": 18910304,
+          "flags": {
+            "-c": "8192",
+            "-np": "1",
+            "-b": "512",
+            "-ub": "512"
+          }
+        }
+      ],
+      "runner_pid_changed": true,
+      "sampled_max_combined_runner_rss_kib": 19924016,
+      "residency_after": [
+        {
+          "name": "medgemma:27b",
+          "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+          "context_length": 8192,
+          "size": 17511292599,
+          "size_vram": 17511292599
+        }
+      ]
+    },
+    {
+      "index": 8,
+      "repeat": 2,
+      "category": "patient",
+      "arm": 512,
+      "requested_options": {
+        "num_ctx": 8192,
+        "num_predict": 1,
+        "temperature": 0.0,
+        "repeat_penalty": 1.15,
+        "repeat_last_n": 256,
+        "num_batch": 512
+      },
+      "prompt_sha256": "a7aa7ea956eb225fa06cbcb633486547886c6dfff17177daba9d0ba973513c95",
+      "before": [
+        {
+          "pid": 13185,
+          "rss_kib": 18910304,
+          "flags": {
+            "-c": "8192",
+            "-np": "1",
+            "-b": "512",
+            "-ub": "512"
+          }
+        }
+      ],
+      "restoring": false,
+      "http_status": 200,
+      "load_duration_ms": 3.703917,
+      "total_duration_ms": 6836.102292,
+      "prompt_eval_duration_ms": 6742.395,
+      "eval_duration_ms": 0.001,
+      "prompt_eval_count": 1096,
+      "prompt_eval_cached_count": 0,
+      "eval_count": 1,
+      "done_reason": "length",
+      "wall_ms": 6859.405207971577,
+      "after": [
+        {
+          "pid": 13185,
+          "rss_kib": 20055664,
+          "flags": {
+            "-c": "8192",
+            "-np": "1",
+            "-b": "512",
+            "-ub": "512"
+          }
+        }
+      ],
+      "runner_pid_changed": false,
+      "sampled_max_combined_runner_rss_kib": 20055664,
+      "residency_after": [
+        {
+          "name": "medgemma:27b",
+          "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+          "context_length": 8192,
+          "size": 17511292599,
+          "size_vram": 17511292599
+        }
+      ]
+    },
+    {
+      "index": 9,
+      "repeat": 2,
+      "category": "general",
+      "arm": 1024,
+      "requested_options": {
+        "num_ctx": 8192,
+        "num_predict": 1,
+        "temperature": 0.0,
+        "repeat_penalty": 1.15,
+        "repeat_last_n": 256,
+        "num_batch": 1024
+      },
+      "prompt_sha256": "d1a2bf7036b37615218a94f84d338bf4d12a85ee4df6944f46f4ae449b010d45",
+      "before": [
+        {
+          "pid": 13185,
+          "rss_kib": 20055664,
+          "flags": {
+            "-c": "8192",
+            "-np": "1",
+            "-b": "512",
+            "-ub": "512"
+          }
+        }
+      ],
+      "restoring": false,
+      "http_status": 200,
+      "load_duration_ms": 2432.6505,
+      "total_duration_ms": 6647.198792,
+      "prompt_eval_duration_ms": 4200.082,
+      "eval_duration_ms": 0.001,
+      "prompt_eval_count": 701,
+      "prompt_eval_cached_count": 0,
+      "eval_count": 1,
+      "done_reason": "length",
+      "wall_ms": 6650.677833007649,
+      "after": [
+        {
+          "pid": 13216,
+          "rss_kib": 19055152,
+          "flags": {
+            "-c": "8192",
+            "-np": "1",
+            "-b": "1024",
+            "-ub": "1024"
+          }
+        }
+      ],
+      "runner_pid_changed": true,
+      "sampled_max_combined_runner_rss_kib": 20055664,
+      "residency_after": [
+        {
+          "name": "medgemma:27b",
+          "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+          "context_length": 8192,
+          "size": 17894568099,
+          "size_vram": 17894568099
+        }
+      ]
+    },
+    {
+      "index": 10,
+      "repeat": 2,
+      "category": "patient",
+      "arm": 1024,
+      "requested_options": {
+        "num_ctx": 8192,
+        "num_predict": 1,
+        "temperature": 0.0,
+        "repeat_penalty": 1.15,
+        "repeat_last_n": 256,
+        "num_batch": 1024
+      },
+      "prompt_sha256": "91cd4df567e12545f25e73358484eeae6407c865ccd258df1838573c149567c3",
+      "before": [
+        {
+          "pid": 13216,
+          "rss_kib": 19055152,
+          "flags": {
+            "-c": "8192",
+            "-np": "1",
+            "-b": "1024",
+            "-ub": "1024"
+          }
+        }
+      ],
+      "restoring": false,
+      "http_status": 200,
+      "load_duration_ms": 2.538959,
+      "total_duration_ms": 6773.663167,
+      "prompt_eval_duration_ms": 6692.225,
+      "eval_duration_ms": 0.001,
+      "prompt_eval_count": 1096,
+      "prompt_eval_cached_count": 0,
+      "eval_count": 1,
+      "done_reason": "length",
+      "wall_ms": 6774.679499969352,
+      "after": [
+        {
+          "pid": 13216,
+          "rss_kib": 20169440,
+          "flags": {
+            "-c": "8192",
+            "-np": "1",
+            "-b": "1024",
+            "-ub": "1024"
+          }
+        }
+      ],
+      "runner_pid_changed": false,
+      "sampled_max_combined_runner_rss_kib": 20169440,
+      "residency_after": [
+        {
+          "name": "medgemma:27b",
+          "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+          "context_length": 8192,
+          "size": 17894568099,
+          "size_vram": 17894568099
+        }
+      ]
+    },
+    {
+      "index": 11,
+      "repeat": 2,
+      "category": "general",
+      "arm": "AUTO",
+      "requested_options": {
+        "num_ctx": 8192,
+        "num_predict": 1,
+        "temperature": 0.0,
+        "repeat_penalty": 1.15,
+        "repeat_last_n": 256
+      },
+      "prompt_sha256": "b6153efcc81babe654a724342aa9bd45376a68e07586f2b2cb2e5e52d7a7ded8",
+      "before": [
+        {
+          "pid": 13216,
+          "rss_kib": 20169440,
+          "flags": {
+            "-c": "8192",
+            "-np": "1",
+            "-b": "1024",
+            "-ub": "1024"
+          }
+        }
+      ],
+      "restoring": false,
+      "http_status": 200,
+      "load_duration_ms": 2436.248208,
+      "total_duration_ms": 6689.194333,
+      "prompt_eval_duration_ms": 4240.687,
+      "eval_duration_ms": 0.001,
+      "prompt_eval_count": 701,
+      "prompt_eval_cached_count": 0,
+      "eval_count": 1,
+      "done_reason": "length",
+      "wall_ms": 6690.8718749764375,
+      "after": [
+        {
+          "pid": 13247,
+          "rss_kib": 19051872,
+          "flags": {
+            "-c": "8192",
+            "-np": "1",
+            "-b": "1024",
+            "-ub": "1024"
+          }
+        }
+      ],
+      "runner_pid_changed": true,
+      "sampled_max_combined_runner_rss_kib": 20169440,
+      "residency_after": [
+        {
+          "name": "medgemma:27b",
+          "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+          "context_length": 8192,
+          "size": 17894568099,
+          "size_vram": 17894568099
+        }
+      ]
+    },
+    {
+      "index": 12,
+      "repeat": 2,
+      "category": "patient",
+      "arm": "AUTO",
+      "requested_options": {
+        "num_ctx": 8192,
+        "num_predict": 1,
+        "temperature": 0.0,
+        "repeat_penalty": 1.15,
+        "repeat_last_n": 256
+      },
+      "prompt_sha256": "2054850b69edd21f5d72c66fe1c794aaa2fd191df8d15fe5d5543ce691b799f0",
+      "before": [
+        {
+          "pid": 13247,
+          "rss_kib": 19051872,
+          "flags": {
+            "-c": "8192",
+            "-np": "1",
+            "-b": "1024",
+            "-ub": "1024"
+          }
+        }
+      ],
+      "restoring": false,
+      "http_status": 200,
+      "load_duration_ms": 5.130333,
+      "total_duration_ms": 6762.3155,
+      "prompt_eval_duration_ms": 6675.991,
+      "eval_duration_ms": 0.001,
+      "prompt_eval_count": 1096,
+      "prompt_eval_cached_count": 0,
+      "eval_count": 1,
+      "done_reason": "length",
+      "wall_ms": 6763.487999967765,
+      "after": [
+        {
+          "pid": 13247,
+          "rss_kib": 20165968,
+          "flags": {
+            "-c": "8192",
+            "-np": "1",
+            "-b": "1024",
+            "-ub": "1024"
+          }
+        }
+      ],
+      "runner_pid_changed": false,
+      "sampled_max_combined_runner_rss_kib": 20165968,
+      "residency_after": [
+        {
+          "name": "medgemma:27b",
+          "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+          "context_length": 8192,
+          "size": 17894568099,
+          "size_vram": 17894568099
+        }
+      ]
+    },
+    {
+      "index": 13,
+      "repeat": 3,
+      "category": "general",
+      "arm": 1024,
+      "requested_options": {
+        "num_ctx": 8192,
+        "num_predict": 1,
+        "temperature": 0.0,
+        "repeat_penalty": 1.15,
+        "repeat_last_n": 256,
+        "num_batch": 1024
+      },
+      "prompt_sha256": "5eb020a1874b1826bc05f87aa4b435b58c093e160fa2f5db633bf3ec031c54b2",
+      "before": [
+        {
+          "pid": 13247,
+          "rss_kib": 20165968,
+          "flags": {
+            "-c": "8192",
+            "-np": "1",
+            "-b": "1024",
+            "-ub": "1024"
+          }
+        }
+      ],
+      "restoring": false,
+      "http_status": 200,
+      "load_duration_ms": 5.5085,
+      "total_duration_ms": 4329.187708,
+      "prompt_eval_duration_ms": 4213.037,
+      "eval_duration_ms": 0.001,
+      "prompt_eval_count": 701,
+      "prompt_eval_cached_count": 0,
+      "eval_count": 1,
+      "done_reason": "length",
+      "wall_ms": 4352.782124944497,
+      "after": [
+        {
+          "pid": 13247,
+          "rss_kib": 21135760,
+          "flags": {
+            "-c": "8192",
+            "-np": "1",
+            "-b": "1024",
+            "-ub": "1024"
+          }
+        }
+      ],
+      "runner_pid_changed": false,
+      "sampled_max_combined_runner_rss_kib": 21135760,
+      "residency_after": [
+        {
+          "name": "medgemma:27b",
+          "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+          "context_length": 8192,
+          "size": 17894568099,
+          "size_vram": 17894568099
+        }
+      ]
+    },
+    {
+      "index": 14,
+      "repeat": 3,
+      "category": "patient",
+      "arm": 1024,
+      "requested_options": {
+        "num_ctx": 8192,
+        "num_predict": 1,
+        "temperature": 0.0,
+        "repeat_penalty": 1.15,
+        "repeat_last_n": 256,
+        "num_batch": 1024
+      },
+      "prompt_sha256": "2d9275ede69f6281c579ea1d929f1873e5dc900fc2540718c433ccf51ceda12c",
+      "before": [
+        {
+          "pid": 13247,
+          "rss_kib": 21135760,
+          "flags": {
+            "-c": "8192",
+            "-np": "1",
+            "-b": "1024",
+            "-ub": "1024"
+          }
+        }
+      ],
+      "restoring": false,
+      "http_status": 200,
+      "load_duration_ms": 5.117917,
+      "total_duration_ms": 6771.409125,
+      "prompt_eval_duration_ms": 6696.793,
+      "eval_duration_ms": 0.001,
+      "prompt_eval_count": 1096,
+      "prompt_eval_cached_count": 0,
+      "eval_count": 1,
+      "done_reason": "length",
+      "wall_ms": 6772.828000015579,
+      "after": [
+        {
+          "pid": 13247,
+          "rss_kib": 21851824,
+          "flags": {
+            "-c": "8192",
+            "-np": "1",
+            "-b": "1024",
+            "-ub": "1024"
+          }
+        }
+      ],
+      "runner_pid_changed": false,
+      "sampled_max_combined_runner_rss_kib": 21851824,
+      "residency_after": [
+        {
+          "name": "medgemma:27b",
+          "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+          "context_length": 8192,
+          "size": 17894568099,
+          "size_vram": 17894568099
+        }
+      ]
+    },
+    {
+      "index": 15,
+      "repeat": 3,
+      "category": "general",
+      "arm": "AUTO",
+      "requested_options": {
+        "num_ctx": 8192,
+        "num_predict": 1,
+        "temperature": 0.0,
+        "repeat_penalty": 1.15,
+        "repeat_last_n": 256
+      },
+      "prompt_sha256": "1e66aefd6e6d6235f5a705b70783c07c17c2ecb8213f1924a761f961d70a8b9b",
+      "before": [
+        {
+          "pid": 13247,
+          "rss_kib": 21851824,
+          "flags": {
+            "-c": "8192",
+            "-np": "1",
+            "-b": "1024",
+            "-ub": "1024"
+          }
+        }
+      ],
+      "restoring": false,
+      "http_status": 200,
+      "load_duration_ms": 2.525041,
+      "total_duration_ms": 4312.3705,
+      "prompt_eval_duration_ms": 4202.104999,
+      "eval_duration_ms": 0.001,
+      "prompt_eval_count": 701,
+      "prompt_eval_cached_count": 0,
+      "eval_count": 1,
+      "done_reason": "length",
+      "wall_ms": 4328.357541991863,
+      "after": [
+        {
+          "pid": 13247,
+          "rss_kib": 22821680,
+          "flags": {
+            "-c": "8192",
+            "-np": "1",
+            "-b": "1024",
+            "-ub": "1024"
+          }
+        }
+      ],
+      "runner_pid_changed": false,
+      "sampled_max_combined_runner_rss_kib": 22821680,
+      "residency_after": [
+        {
+          "name": "medgemma:27b",
+          "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+          "context_length": 8192,
+          "size": 17894568099,
+          "size_vram": 17894568099
+        }
+      ]
+    },
+    {
+      "index": 16,
+      "repeat": 3,
+      "category": "patient",
+      "arm": "AUTO",
+      "requested_options": {
+        "num_ctx": 8192,
+        "num_predict": 1,
+        "temperature": 0.0,
+        "repeat_penalty": 1.15,
+        "repeat_last_n": 256
+      },
+      "prompt_sha256": "a2550d976f67174fdd0d8bda8dd615e01ed6506e757d573a611c71b99326aa9d",
+      "before": [
+        {
+          "pid": 13247,
+          "rss_kib": 22821680,
+          "flags": {
+            "-c": "8192",
+            "-np": "1",
+            "-b": "1024",
+            "-ub": "1024"
+          }
+        }
+      ],
+      "restoring": false,
+      "http_status": 200,
+      "load_duration_ms": 4.203,
+      "total_duration_ms": 6765.999416,
+      "prompt_eval_duration_ms": 6704.244,
+      "eval_duration_ms": 0.001,
+      "prompt_eval_count": 1096,
+      "prompt_eval_cached_count": 0,
+      "eval_count": 1,
+      "done_reason": "length",
+      "wall_ms": 6767.0412919833325,
+      "after": [
+        {
+          "pid": 13247,
+          "rss_kib": 23537840,
+          "flags": {
+            "-c": "8192",
+            "-np": "1",
+            "-b": "1024",
+            "-ub": "1024"
+          }
+        }
+      ],
+      "runner_pid_changed": false,
+      "sampled_max_combined_runner_rss_kib": 23537840,
+      "residency_after": [
+        {
+          "name": "medgemma:27b",
+          "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+          "context_length": 8192,
+          "size": 17894568099,
+          "size_vram": 17894568099
+        }
+      ]
+    },
+    {
+      "index": 17,
+      "repeat": 3,
+      "category": "general",
+      "arm": 512,
+      "requested_options": {
+        "num_ctx": 8192,
+        "num_predict": 1,
+        "temperature": 0.0,
+        "repeat_penalty": 1.15,
+        "repeat_last_n": 256,
+        "num_batch": 512
+      },
+      "prompt_sha256": "9ddc8f5fcd72033f0a2890ae324fb924310806d7a965adbd6a618096d9fbaf40",
+      "before": [
+        {
+          "pid": 13247,
+          "rss_kib": 23537840,
+          "flags": {
+            "-c": "8192",
+            "-np": "1",
+            "-b": "1024",
+            "-ub": "1024"
+          }
+        }
+      ],
+      "restoring": false,
+      "http_status": 200,
+      "load_duration_ms": 2446.272667,
+      "total_duration_ms": 6760.61125,
+      "prompt_eval_duration_ms": 4298.978,
+      "eval_duration_ms": 0.001,
+      "prompt_eval_count": 701,
+      "prompt_eval_cached_count": 0,
+      "eval_count": 1,
+      "done_reason": "length",
+      "wall_ms": 6761.843833024614,
+      "after": [
+        {
+          "pid": 13408,
+          "rss_kib": 18910864,
+          "flags": {
+            "-c": "8192",
+            "-np": "1",
+            "-b": "512",
+            "-ub": "512"
+          }
+        }
+      ],
+      "runner_pid_changed": true,
+      "sampled_max_combined_runner_rss_kib": 23537840,
+      "residency_after": [
+        {
+          "name": "medgemma:27b",
+          "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+          "context_length": 8192,
+          "size": 17511292599,
+          "size_vram": 17511292599
+        }
+      ]
+    },
+    {
+      "index": 18,
+      "repeat": 3,
+      "category": "patient",
+      "arm": 512,
+      "requested_options": {
+        "num_ctx": 8192,
+        "num_predict": 1,
+        "temperature": 0.0,
+        "repeat_penalty": 1.15,
+        "repeat_last_n": 256,
+        "num_batch": 512
+      },
+      "prompt_sha256": "f42ee8c05898389b20e7036e8272d2b4f194b2c495f6c5890f207d6d6f9eb1e7",
+      "before": [
+        {
+          "pid": 13408,
+          "rss_kib": 18910864,
+          "flags": {
+            "-c": "8192",
+            "-np": "1",
+            "-b": "512",
+            "-ub": "512"
+          }
+        }
+      ],
+      "restoring": false,
+      "http_status": 200,
+      "load_duration_ms": 4.879458,
+      "total_duration_ms": 6822.635708,
+      "prompt_eval_duration_ms": 6723.991,
+      "eval_duration_ms": 0.001,
+      "prompt_eval_count": 1096,
+      "prompt_eval_cached_count": 0,
+      "eval_count": 1,
+      "done_reason": "length",
+      "wall_ms": 6838.727583992295,
+      "after": [
+        {
+          "pid": 13408,
+          "rss_kib": 20056224,
+          "flags": {
+            "-c": "8192",
+            "-np": "1",
+            "-b": "512",
+            "-ub": "512"
+          }
+        }
+      ],
+      "runner_pid_changed": false,
+      "sampled_max_combined_runner_rss_kib": 20056224,
+      "residency_after": [
+        {
+          "name": "medgemma:27b",
+          "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+          "context_length": 8192,
+          "size": 17511292599,
+          "size_vram": 17511292599
+        }
+      ]
+    }
+  ],
+  "restore": {
+    "index": 999,
+    "repeat": null,
+    "category": "general",
+    "arm": "AUTO",
+    "requested_options": {
+      "num_ctx": 8192,
+      "num_predict": 1,
+      "temperature": 0.0,
+      "repeat_penalty": 1.15,
+      "repeat_last_n": 256
+    },
+    "prompt_sha256": "ce50365ae48bc8cc1143eca68780487cecc8197da1958c3533a3472d87819c38",
+    "before": [
+      {
+        "pid": 13408,
+        "rss_kib": 20056224,
+        "flags": {
+          "-c": "8192",
+          "-np": "1",
+          "-b": "512",
+          "-ub": "512"
+        }
+      }
+    ],
+    "restoring": true,
+    "http_status": 200,
+    "load_duration_ms": 5.620666,
+    "total_duration_ms": 4438.772083,
+    "prompt_eval_duration_ms": 4308.394,
+    "eval_duration_ms": 0.001,
+    "prompt_eval_count": 701,
+    "prompt_eval_cached_count": 0,
+    "eval_count": 1,
+    "done_reason": "length",
+    "wall_ms": 4439.928459003568,
+    "after": [
+      {
+        "pid": 13408,
+        "rss_kib": 21239072,
+        "flags": {
+          "-c": "8192",
+          "-np": "1",
+          "-b": "512",
+          "-ub": "512"
+        }
+      }
+    ],
+    "runner_pid_changed": false,
+    "sampled_max_combined_runner_rss_kib": 21239072,
+    "residency_after": [
+      {
+        "name": "medgemma:27b",
+        "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+        "context_length": 8192,
+        "size": 17511292599,
+        "size_vram": 17511292599
+      }
+    ]
+  },
+  "limitations": [
+    "Model output limited to one token; no answer/quality/ranking conclusions.",
+    "Reloads are ordinary same-tag requests and retained separately from stable-runner calls.",
+    "RSS is sampled every0.5s; process RSS and API size/size_vram are not a guaranteed true GPU allocation peak."
+  ],
+  "version": {
+    "version": "0.35.1"
+  },
+  "residency_before": [
+    {
+      "name": "medgemma:27b",
+      "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+      "context_length": 8192,
+      "size": 17498898431,
+      "size_vram": 17498898431
+    }
+  ],
+  "runner_before": [
+    {
+      "pid": 5466,
+      "rss_kib": 15073600,
+      "flags": {
+        "-c": "8192",
+        "-np": "1",
+        "-b": "512",
+        "-ub": "512"
+      }
+    }
+  ],
+  "summaries": [
+    {
+      "category": "general",
+      "arm": "AUTO",
+      "count": 3,
+      "median_prefill_ms": 4240.687,
+      "median_load_ms": 2.938,
+      "median_wall_ms": 4644.526042044163,
+      "runner_changes": 1,
+      "actual_batch_flags": [
+        "1024",
+        "512"
+      ]
+    },
+    {
+      "category": "general",
+      "arm": 512,
+      "count": 3,
+      "median_prefill_ms": 4298.978,
+      "median_load_ms": 2435.659875,
+      "median_wall_ms": 6738.55258297408,
+      "runner_changes": 2,
+      "actual_batch_flags": [
+        "512"
+      ]
+    },
+    {
+      "category": "general",
+      "arm": 1024,
+      "count": 3,
+      "median_prefill_ms": 4213.037,
+      "median_load_ms": 2432.6505,
+      "median_wall_ms": 6650.677833007649,
+      "runner_changes": 2,
+      "actual_batch_flags": [
+        "1024"
+      ]
+    },
+    {
+      "category": "patient",
+      "arm": "AUTO",
+      "count": 3,
+      "median_prefill_ms": 6704.244,
+      "median_load_ms": 4.203,
+      "median_wall_ms": 6767.0412919833325,
+      "runner_changes": 0,
+      "actual_batch_flags": [
+        "1024",
+        "512"
+      ]
+    },
+    {
+      "category": "patient",
+      "arm": 512,
+      "count": 3,
+      "median_prefill_ms": 6723.991,
+      "median_load_ms": 3.703917,
+      "median_wall_ms": 6838.727583992295,
+      "runner_changes": 0,
+      "actual_batch_flags": [
+        "512"
+      ]
+    },
+    {
+      "category": "patient",
+      "arm": 1024,
+      "count": 3,
+      "median_prefill_ms": 6692.225,
+      "median_load_ms": 3.985125,
+      "median_wall_ms": 6772.828000015579,
+      "runner_changes": 0,
+      "actual_batch_flags": [
+        "1024"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "checkedAt": "2026-10-12T11:11:37.732683+00:00",
+  "endpoint": "127.0.0.1:18122",
+  "connectEx": 61,
+  "closed": true,
+  "scope": "Owned synthetic app listener; shared model service was never queried by this UI audit."
+}

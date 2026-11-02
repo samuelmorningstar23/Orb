@@ -1,0 +1,19 @@
+{
+  "command": [
+    "/private/tmp/orb-ml-upgrade-20261012/bin/python",
+    "-m",
+    "pytest",
+    "-q",
+    "--tb=short",
+    "tests/test_helix_stock_rules.py",
+    "tests/test_patient_specific_screen.py",
+    "tests/test_zz_catalogue_restore_proof.py",
+    "-p",
+    "catalogue_probe"
+  ],
+  "cwd": "/private/tmp/orb-prose-catalogue-isolation-20261012-iqyvrnwd/source/server",
+  "state": "/private/tmp/orb-prose-catalogue-isolation-20261012-iqyvrnwd/post-state",
+  "log": "/private/tmp/orb-prose-catalogue-isolation-20261012-iqyvrnwd/post.log",
+  "exit_code": 0,
+  "isolation": "Owned source/DB/uploads/FHIR/watchdog/cache, closed Ollama port9 and offline HF; no live data/models."
+}

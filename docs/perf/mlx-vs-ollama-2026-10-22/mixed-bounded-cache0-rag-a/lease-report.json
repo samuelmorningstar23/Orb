@@ -1,0 +1,79 @@
+{
+  "created_at": "2026-10-22T10:54:55.914823+00:00",
+  "status": "experiment_finished",
+  "explicit_user_authorisation": true,
+  "profiles": [
+    {
+      "name": "mlx-p8-full-rag",
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/docs/perf/mlx-vs-ollama-2026-10-22/mixed-bounded-cache0-rag-a/mlx-p8-full-rag/report.json",
+      "status": "complete",
+      "quality_passed": true
+    }
+  ],
+  "runtime_network": "inherited_localhost_only_sandbox",
+  "model_files_changed": false,
+  "experiment_kind": "full-rag-only",
+  "original_residents": [
+    {
+      "name": "medgemma:27b",
+      "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+      "size": 17919744408,
+      "size_vram": 17919744408,
+      "context_length": 8192,
+      "expires_at": "2319-02-01T16:09:21.069830807+05:30"
+    },
+    {
+      "name": "medgemma:4b",
+      "digest": "9fe4e9a6c9bda2d007bb595515550eafbc8e226622adff9257f3241eba334c4d",
+      "size": 2887841218,
+      "size_vram": 2887841218,
+      "context_length": 4096,
+      "expires_at": "2319-02-01T14:36:45.646666807+05:30"
+    }
+  ],
+  "original_runner_identity_verified": true,
+  "original_worker_idle": true,
+  "after_release": [
+    {
+      "name": "medgemma:4b",
+      "digest": "9fe4e9a6c9bda2d007bb595515550eafbc8e226622adff9257f3241eba334c4d",
+      "size": 2887841218,
+      "size_vram": 2887841218,
+      "context_length": 4096,
+      "expires_at": "2319-02-01T14:36:45.646666807+05:30"
+    }
+  ],
+  "experiment_outcome": "Full retrieval resource diagnostic only; inspect individual quality and acceptance flags",
+  "restoration": {
+    "status": "restored_and_verified",
+    "models": [
+      {
+        "name": "medgemma:4b",
+        "digest": "9fe4e9a6c9bda2d007bb595515550eafbc8e226622adff9257f3241eba334c4d",
+        "size": 2887841218,
+        "size_vram": 2887841218,
+        "context_length": 4096,
+        "expires_at": "2319-02-01T16:16:11.862742807+05:30"
+      },
+      {
+        "name": "medgemma:27b",
+        "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+        "size": 17919744408,
+        "size_vram": 17919744408,
+        "context_length": 8192,
+        "expires_at": "2319-02-01T16:16:09.970338807+05:30"
+      }
+    ],
+    "identity_and_context_verified": true,
+    "other_original_residents_unchanged": true,
+    "all_original_residents_identity_and_context_verified": true,
+    "auto_reloaded_original_residents": [
+      {
+        "name": "medgemma:4b",
+        "digest": "9fe4e9a6c9bda2d007bb595515550eafbc8e226622adff9257f3241eba334c4d",
+        "context_length": 4096,
+        "indefinite_residency_verified": true
+      }
+    ]
+  }
+}

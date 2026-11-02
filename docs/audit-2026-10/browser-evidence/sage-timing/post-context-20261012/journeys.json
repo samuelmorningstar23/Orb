@@ -1,0 +1,524 @@
+{
+  "config": {
+    "argv": [
+      "node",
+      "/Users/samuelmorningstar/Documents/Projects/Orb/node_modules/@playwright/test/cli.js",
+      "test",
+      "--reporter=json",
+      "--output=/private/tmp/orb-sage-browser-post-context-20261012/journey-artifacts"
+    ],
+    "configFile": "/Users/samuelmorningstar/Documents/Projects/Orb/playwright.config.ts",
+    "rootDir": "/Users/samuelmorningstar/Documents/Projects/Orb/e2e",
+    "failOnFlakyTests": false,
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "projects": [
+      {
+        "outputDir": "/private/tmp/orb-sage-browser-post-context-20261012/journey-artifacts",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "chromium",
+        "name": "chromium",
+        "testDir": "/Users/samuelmorningstar/Documents/Projects/Orb/e2e",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 60000
+      }
+    ],
+    "quiet": false,
+    "reporter": [
+      [
+        "json"
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "shard": null,
+    "tags": [],
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.61.1",
+    "workers": 1,
+    "webServer": null
+  },
+  "suites": [
+    {
+      "title": "01-login-and-vigil.spec.ts",
+      "file": "01-login-and-vigil.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [
+        {
+          "title": "clinician logs in and sees the Vigil patient list",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 60000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chromium",
+              "projectName": "chromium",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 1194,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-11T23:44:25.328Z",
+                  "annotations": [],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "a8632f9d92770b889724-ac67b78f9888dce19fcf",
+          "file": "01-login-and-vigil.spec.ts",
+          "line": 13,
+          "column": 1
+        }
+      ]
+    },
+    {
+      "title": "02-scribe-note.spec.ts",
+      "file": "02-scribe-note.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [
+        {
+          "title": "clinician opens Scribe and the compose + structure UI renders",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 60000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chromium",
+              "projectName": "chromium",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 1124,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-11T23:44:26.632Z",
+                  "annotations": [],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "f7eb6709b73c19dea09a-21bc78de259ea3b94f70",
+          "file": "02-scribe-note.spec.ts",
+          "line": 20,
+          "column": 1
+        }
+      ]
+    },
+    {
+      "title": "03-orders-cpoe.spec.ts",
+      "file": "03-orders-cpoe.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [
+        {
+          "title": "clinician creates a coded order and it appears with a status chip",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 60000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chromium",
+              "projectName": "chromium",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 1834,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-11T23:44:27.764Z",
+                  "annotations": [],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "a6fb43187abd11c03f42-d00c476486e5b028daa6",
+          "file": "03-orders-cpoe.spec.ts",
+          "line": 19,
+          "column": 1
+        }
+      ]
+    },
+    {
+      "title": "04-pharmacy-verify.spec.ts",
+      "file": "04-pharmacy-verify.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [
+        {
+          "title": "pharmacist opens the Verify Queue and it renders",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 60000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chromium",
+              "projectName": "chromium",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 1671,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-11T23:44:29.608Z",
+                  "annotations": [],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "d46ccb4607520362e15f-b4e1417f5c4dfb3d818a",
+          "file": "04-pharmacy-verify.spec.ts",
+          "line": 13,
+          "column": 1
+        }
+      ]
+    },
+    {
+      "title": "05-admin-flight-recorder.spec.ts",
+      "file": "05-admin-flight-recorder.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [
+        {
+          "title": "admin opens Flight Recorder and sees timeline + chain-integrity badge",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 60000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chromium",
+              "projectName": "chromium",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 1244,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-11T23:44:31.286Z",
+                  "annotations": [],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "9210853d66edb53ad1b0-e277101cb790299ff1b4",
+          "file": "05-admin-flight-recorder.spec.ts",
+          "line": 15,
+          "column": 1
+        }
+      ]
+    },
+    {
+      "title": "06-offline-workflows.spec.ts",
+      "file": "06-offline-workflows.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [
+        {
+          "title": "all thirteen local module screens render against real authenticated APIs",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 60000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chromium",
+              "projectName": "chromium",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 7440,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-11T23:44:32.539Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "real-infection-surveillance",
+                      "contentType": "image/png",
+                      "path": "/private/tmp/orb-sage-browser-post-context-20261012/journey-artifacts/06-offline-workflows-all-t-899a6-nst-real-authenticated-APIs-chromium/attachments/real-infection-surveillance-f82b083637bce685c8d49d5f5b5bbf2136484133.png"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "3e8e67c5dc85ff6d78ec-a26c74989258da8eea1e",
+          "file": "06-offline-workflows.spec.ts",
+          "line": 64,
+          "column": 1
+        },
+        {
+          "title": "complaint statement persists and resolution survives reload with immutable history",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 60000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chromium",
+              "projectName": "chromium",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 2904,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-11T23:44:39.984Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "real-feedback-persisted",
+                      "contentType": "image/png",
+                      "path": "/private/tmp/orb-sage-browser-post-context-20261012/journey-artifacts/06-offline-workflows-compl-c897d-load-with-immutable-history-chromium/attachments/real-feedback-persisted-75b705f8a67101b3b01e129712386e3342fd60a3.png"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "3e8e67c5dc85ff6d78ec-2baaaca6c8bf2b3f90ae",
+          "file": "06-offline-workflows.spec.ts",
+          "line": 82,
+          "column": 1
+        },
+        {
+          "title": "care plan intervention records a completed outcome and reopens from storage",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 60000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chromium",
+              "projectName": "chromium",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 3132,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-11T23:44:42.892Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "real-care-plan-persisted",
+                      "contentType": "image/png",
+                      "path": "/private/tmp/orb-sage-browser-post-context-20261012/journey-artifacts/06-offline-workflows-care--fcac2-me-and-reopens-from-storage-chromium/attachments/real-care-plan-persisted-aad3a0a75013b06e8fd8aff48c72158554e8464a.png"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "3e8e67c5dc85ff6d78ec-11a55b02de94e39f6437",
+          "file": "06-offline-workflows.spec.ts",
+          "line": 116,
+          "column": 1
+        },
+        {
+          "title": "radiology report signs, locks editing and appends an audited addendum",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 60000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chromium",
+              "projectName": "chromium",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 2222,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-11T23:44:46.029Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "real-radiology-signed",
+                      "contentType": "image/png",
+                      "path": "/private/tmp/orb-sage-browser-post-context-20261012/journey-artifacts/06-offline-workflows-radio-4bd72-appends-an-audited-addendum-chromium/attachments/real-radiology-signed-d5c405fa6d333a642e05ffb9e910a3e457ec1ab0.png"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "3e8e67c5dc85ff6d78ec-e47b251e75c2c46b837f",
+          "file": "06-offline-workflows.spec.ts",
+          "line": 160,
+          "column": 1
+        },
+        {
+          "title": "doctor cannot open administrative feedback, governance or finance tools",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 60000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chromium",
+              "projectName": "chromium",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 849,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-11T23:44:48.256Z",
+                  "annotations": [],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "3e8e67c5dc85ff6d78ec-f91709f5f5c2feaf53aa",
+          "file": "06-offline-workflows.spec.ts",
+          "line": 198,
+          "column": 1
+        },
+        {
+          "title": "saved report definitions reopen and export the previewed synthetic cohort",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 60000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chromium",
+              "projectName": "chromium",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 2296,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-11T23:44:49.110Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "real-reporting-preview",
+                      "contentType": "image/png",
+                      "path": "/private/tmp/orb-sage-browser-post-context-20261012/journey-artifacts/06-offline-workflows-saved-949e8--previewed-synthetic-cohort-chromium/attachments/real-reporting-preview-871b4c319b02edab4115a8f9aa1597aaaed0a9b9.png"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "3e8e67c5dc85ff6d78ec-21b394e49a216e0ecf32",
+          "file": "06-offline-workflows.spec.ts",
+          "line": 209,
+          "column": 1
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-10-11T23:44:25.090Z",
+    "duration": 26410.557,
+    "expected": 11,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  }
+}

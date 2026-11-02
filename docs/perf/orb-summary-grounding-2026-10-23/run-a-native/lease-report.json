@@ -1,0 +1,79 @@
+{
+  "created_at": "2026-10-23T09:01:48.570213+00:00",
+  "status": "experiment_finished",
+  "explicit_user_authorisation": true,
+  "profiles": [
+    {
+      "name": "ollama-p2-full-rag",
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/docs/perf/orb-summary-grounding-2026-10-23/run-a-native/ollama-p2-full-rag/report.json",
+      "status": "aborted",
+      "quality_passed": false
+    }
+  ],
+  "runtime_network": "inherited_localhost_only_sandbox",
+  "model_files_changed": false,
+  "experiment_kind": "native-full-rag-only",
+  "original_residents": [
+    {
+      "name": "medgemma:4b",
+      "digest": "9fe4e9a6c9bda2d007bb595515550eafbc8e226622adff9257f3241eba334c4d",
+      "size": 2887841218,
+      "size_vram": 2887841218,
+      "context_length": 4096,
+      "expires_at": "2319-02-01T19:48:59.754225807+05:30"
+    },
+    {
+      "name": "medgemma:27b",
+      "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+      "size": 17919744408,
+      "size_vram": 17919744408,
+      "context_length": 8192,
+      "expires_at": "2319-02-01T19:48:58.373583807+05:30"
+    }
+  ],
+  "original_runner_identity_verified": true,
+  "original_worker_idle": true,
+  "after_release": [
+    {
+      "name": "medgemma:4b",
+      "digest": "9fe4e9a6c9bda2d007bb595515550eafbc8e226622adff9257f3241eba334c4d",
+      "size": 2887841218,
+      "size_vram": 2887841218,
+      "context_length": 4096,
+      "expires_at": "2319-02-01T19:48:59.754225807+05:30"
+    }
+  ],
+  "experiment_outcome": "Original quantized weights with full retrieval and workflow checks; individual quality and acceptance flags decide performance",
+  "restoration": {
+    "status": "restored_and_verified",
+    "models": [
+      {
+        "name": "medgemma:4b",
+        "digest": "9fe4e9a6c9bda2d007bb595515550eafbc8e226622adff9257f3241eba334c4d",
+        "size": 2887841218,
+        "size_vram": 2887841218,
+        "context_length": 4096,
+        "expires_at": "2319-02-02T14:19:35.353817807+05:30"
+      },
+      {
+        "name": "medgemma:27b",
+        "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+        "size": 17514438327,
+        "size_vram": 17514438327,
+        "context_length": 8192,
+        "expires_at": "2319-02-02T14:19:32.441539807+05:30"
+      }
+    ],
+    "identity_and_context_verified": true,
+    "other_original_residents_unchanged": true,
+    "all_original_residents_identity_and_context_verified": true,
+    "auto_reloaded_original_residents": [
+      {
+        "name": "medgemma:4b",
+        "digest": "9fe4e9a6c9bda2d007bb595515550eafbc8e226622adff9257f3241eba334c4d",
+        "context_length": 4096,
+        "indefinite_residency_verified": true
+      }
+    ]
+  }
+}

@@ -1,0 +1,165 @@
+{
+  "schema": "orb.sage.cache-save-control/1",
+  "recorded_at_utc": "2026-10-12T08:50:12.449250+00:00",
+  "purpose": "Causal single-slot cache-saving diagnostic, not browser SLA acceptance",
+  "profile": {
+    "parallel": 1,
+    "full_swa": true,
+    "similarity": 0.6,
+    "config": "[default] slot-prompt-similarity = 0.6",
+    "context": 8192,
+    "kv_type": "f16",
+    "ram_cache_mib": 8192,
+    "batch": "AUTO; actual1024/1024 in this owned direct pilot"
+  },
+  "model": "medgemma:27b",
+  "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+  "sequence": [
+    "general",
+    "patient",
+    "department",
+    "general"
+  ],
+  "normal_output_budgets": {
+    "general": 512,
+    "patient": 2048,
+    "department": 1024
+  },
+  "temperature": {
+    "general": 0.4,
+    "patient": 0.4,
+    "department": 0.2
+  },
+  "turns": [
+    {
+      "category": "general",
+      "index": 1,
+      "http_status": 200,
+      "first_content_ms": 12727.784165996127,
+      "wall_ms": 17174.816165992524,
+      "load_duration_ms": 8622.51925,
+      "total_duration_ms": 17174.326,
+      "prompt_eval_duration_ms": 4093.513,
+      "eval_duration_ms": 4447.546,
+      "prompt_eval_count": 697,
+      "prompt_eval_cached_count": 0,
+      "eval_count": 72,
+      "done_reason": "stop",
+      "evaluated_prompt_tokens": 697
+    },
+    {
+      "category": "patient",
+      "index": 2,
+      "http_status": 200,
+      "first_content_ms": 3267.7482499857433,
+      "wall_ms": 43252.14895798126,
+      "load_duration_ms": 1.651292,
+      "total_duration_ms": 43251.686708,
+      "prompt_eval_duration_ms": 3226.125,
+      "eval_duration_ms": 39985.024,
+      "prompt_eval_count": 1092,
+      "prompt_eval_cached_count": 573,
+      "eval_count": 628,
+      "done_reason": "stop",
+      "evaluated_prompt_tokens": 519
+    },
+    {
+      "category": "department",
+      "index": 3,
+      "http_status": 200,
+      "first_content_ms": 5373.871333023999,
+      "wall_ms": 26885.317375010345,
+      "load_duration_ms": 1.264959,
+      "total_duration_ms": 26884.784209,
+      "prompt_eval_duration_ms": 5316.989,
+      "eval_duration_ms": 21511.634,
+      "prompt_eval_count": 824,
+      "prompt_eval_cached_count": 3,
+      "eval_count": 333,
+      "done_reason": "stop",
+      "evaluated_prompt_tokens": 821
+    },
+    {
+      "category": "general",
+      "index": 4,
+      "http_status": 200,
+      "first_content_ms": 140.85316698765382,
+      "wall_ms": 4890.383374993689,
+      "load_duration_ms": 2.334375,
+      "total_duration_ms": 4889.864167,
+      "prompt_eval_duration_ms": 65.623999,
+      "eval_duration_ms": 4748.866,
+      "prompt_eval_count": 697,
+      "prompt_eval_cached_count": 696,
+      "eval_count": 75,
+      "done_reason": "stop",
+      "evaluated_prompt_tokens": 1
+    }
+  ],
+  "finding": "Last general after department reused696/697 prompt tokens, evaluated1, first raw engine content140.853ms. Existing fullSWA-only browser reused0 and missed~4.9s.",
+  "completion": "All4 HTTP200, nonempty fullanswers, explicitstop; no truncation/errors. Raw model content includes marker and is not browser first-readable clock.",
+  "runtime_attestation": "Native logs confirm n_slots1/n_ctx8192/kv_unifiedfalse, SWA3328MiB, RAM8192MiB, LCPthreshold0.600, and saved shortG768token state before patient.",
+  "cleanup": {
+    "recorded_at_utc": "2026-10-12T08:49:16.891277+00:00",
+    "profile": "ONE slot, fullSWA, similarity0.6 from owned INI",
+    "controller_exit_code": 0,
+    "daemon_exit_codes": [
+      0
+    ],
+    "model_files_unchanged": true,
+    "model_file_count": 33,
+    "owned_port_connect_ex": 61,
+    "shared_read_only_api_ps": {
+      "models": []
+    },
+    "shared_service_changed": false
+  },
+  "provenance_limits": [
+    "Fixed GP prompts retained from earlier actual synthetic Sage assembly; BROAD reassembled using current app code and a copy of the retained GP synthetic5patient DB, not removed latest browser DB.",
+    "Historical tempdirectory name mentions two-slot; actual pilot.py ran ONLY parallel1. No two-slot model inference was run.",
+    "Separate owned daemon/tempHOME/ownedXDG; existing cached weights unchanged; sharedservice never stopped, loaded or configured.",
+    "Coldload and all completedanswers retained. Performance qualification requires final real browser run.",
+    "No model, clinical prompt, safetyfloor, routing, lane concurrency, queuepriority, outputbudget or helddecision changes.",
+    "Actual AUTO batch was1024 here versus512 in the preceding real browser run. This is cache-reuse/correctness evidence, not a paired latency comparison or browser SLA result; final canonical browser run must attest actual batch."
+  ],
+  "primary_sources": [
+    "https://github.com/ggml-org/llama.cpp/blob/b11232/src/llama-kv-cache.cpp#L1897-L1926",
+    "https://github.com/ggml-org/llama.cpp/blob/b11232/tools/server/server-context.cpp#L1438-L1537",
+    "https://github.com/ggml-org/llama.cpp/blob/b11232/common/preset.cpp#L251-L259",
+    "https://github.com/ggml-org/llama.cpp/blob/b11232/common/common.cpp#L1026-L1041"
+  ],
+  "artifacts": {
+    "cleanup.json": {
+      "sha256": "06df24e03f5e34fc45f242da75392577eb27b627db9d4729481a153913a79a89",
+      "bytes": 367
+    },
+    "config/llama.cpp/config.ini": {
+      "sha256": "1a9675e28764807579290c64990b9ef3531970e88196e8044e58b4e2672f549f",
+      "bytes": 39
+    },
+    "control-prompts.json": {
+      "sha256": "b3a024083ddc7a113a97d1b8f54b0ada8ae759518cc7649acc54aa142e50265d",
+      "bytes": 12020
+    },
+    "department-capture.json": {
+      "sha256": "8614fe748aeb049976edd9a045a9c202e696b6e52659ff64922d48eac33dee1a",
+      "bytes": 4006
+    },
+    "ollama-full.log": {
+      "sha256": "ed0afad2e3fe5f1cb5fe0977e1a549f5dcb28f3d41041d39fe0193a89a91b6f7",
+      "bytes": 35581
+    },
+    "pilot.log": {
+      "sha256": "fbc42b996003f4e552f45b47c8d243a7170e4b228642bfb3baef766f5dc80598",
+      "bytes": 1562
+    },
+    "pilot.py": {
+      "sha256": "b3cacac03aa9ecb845aa0d3e27858c3412bd87846ff2c0f471ea98347361b091",
+      "bytes": 6607
+    },
+    "results.json": {
+      "sha256": "75710c633ec8c76bbd36e8976d711399e33d1716b93de9402b5d158782820201",
+      "bytes": 8331
+    }
+  }
+}

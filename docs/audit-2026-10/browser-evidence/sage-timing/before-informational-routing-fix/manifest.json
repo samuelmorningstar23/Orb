@@ -1,0 +1,19 @@
+{
+  "status": "Superseded partial diagnostic, not final latency acceptance",
+  "data": "Disposable seeded synthetic patients only",
+  "inspected": "All three screenshots visually inspected; general/patient successful, department correctly displays failure.",
+  "screenshots": {
+    "general-answer.png": {
+      "source": "/private/tmp/orb-sage-browser-repeats-20261012/01-general.png",
+      "sha256": "5807c4cbd67f664be9c9c31af961091483fc17302d4a9b113ed73efe19ef5f8d"
+    },
+    "patient-answer.png": {
+      "source": "/private/tmp/orb-sage-browser-repeats-20261012/02-patient.png",
+      "sha256": "404154c2f4671b9d0dda0ea548496388fa66101a4c22fb5cb203298a2e726429"
+    },
+    "department-failure.png": {
+      "source": "/private/tmp/orb-sage-browser-repeats-20261012/03-department.png",
+      "sha256": "a30c89be3d2669a15bcb4c91c456ec15694ba4a994e892218c2189557d9ec7f3"
+    }
+  }
+}

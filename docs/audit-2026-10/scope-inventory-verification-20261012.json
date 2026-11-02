@@ -1,0 +1,79 @@
+{
+  "schema": "orb.scope-inventory-verification/1",
+  "date": "2026-10-12",
+  "interpreter": "/private/tmp/orb-ml-upgrade-20261012/bin/python",
+  "cwd": "/Users/samuelmorningstar/Documents/Projects/Orb/server",
+  "command": [
+    "env",
+    "-u",
+    "ORB_DB_PATH",
+    "ORB_SKIP_KNOWLEDGE_BASE=1",
+    "HF_HUB_OFFLINE=1",
+    "TRANSFORMERS_OFFLINE=1",
+    "ORB_OLLAMA_HOST=http://127.0.0.1:9",
+    "/private/tmp/orb-ml-upgrade-20261012/bin/python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/test_caller_named_patient_scope.py",
+    "tests/test_phi_read_scope_gaps.py",
+    "tests/test_compliance_evidence.py",
+    "tests/test_clinic_schedule.py",
+    "tests/test_offline_clinical_records.py",
+    "tests/test_record_governance.py",
+    "tests/test_local_operations.py",
+    "tests/test_infection_surveillance.py"
+  ],
+  "result": {
+    "passed": 268,
+    "failed": 0,
+    "skipped": 0,
+    "seconds": 5.86
+  },
+  "overlap": "The 32-case inventory check is contained in the final 268-case selection; results are not additive. This is not a fresh full-suite result.",
+  "before": {
+    "mutation_inventory_failed": 1,
+    "flagged_delegations": 12,
+    "query_inventory_flagged_delegations": 6,
+    "backup_receipt_fixture_failures": 3,
+    "clinic_slot_fixture_failures": 1
+  },
+  "changes": [
+    "Reviewed service delegation is recognized only by AST single-return shape, exact resolved callable identity, typed patient body/query forwarding, real authenticated permission dependency, and existing canonical guard-call paths. No route is added to the empty bare-mutation allowlist.",
+    "Negative analyzer probes cover substituted actor/patient/body/helper, executable work before delegation, side-effecting arguments, and removal of required service guards.",
+    "New real service denial/replay probes cover record governance, linked mortuary custody, and all four patient-linked infection records. Existing five clinical-domain creation cases also assert foreign creation writes no record.",
+    "Synthetic compliance backup receipts now include canonical backup_file and size_bytes; production receipt validation is unchanged.",
+    "The computed clinic-slot invariant explicitly distinguishes the unrelated physical mortuary_slots register; no appointment slots are exempted."
+  ],
+  "test_case_delta": 10,
+  "source_files": {
+    "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_caller_named_patient_scope.py": "c18f1061a65cf6b05341d9224a15118c7c70a0d09a928d9a06d1cf569efc7da6",
+    "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_phi_read_scope_gaps.py": "78b62fed059895ae1f67c59a91e7a7891071ebf27898e0e0fa7a63863b9c615f",
+    "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_compliance_evidence.py": "af2dbda95a086f44e0e701721e9df1c334efb4db4e82c1a44f0d46e9cd2bc498",
+    "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_clinic_schedule.py": "4541f06da13957c6c085e961f8472a3222b93e9d6234615bfa81393157105ef3",
+    "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_offline_clinical_records.py": "d462805bdc3ed1dd0c97e48a7c18450bcb295874d59c81f5927754f35ad19054",
+    "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_record_governance.py": "81fce56312790a5f6aa195fced0c20b01e49bd38bda24dcbe97c72868e1671e1",
+    "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_local_operations.py": "156f0274455f9a0be1f969f8336522bb01b655e040d2b9d2117a3e5fafc28588",
+    "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/test_infection_surveillance.py": "0607161aa1fec804c70ff9ea07a49a0a5f8ddff6e678c29af39b9c0a0920c67f",
+    "/Users/samuelmorningstar/Documents/Projects/Orb/server/tests/scope_inventory.py": "c7321d1a1548f3e6805ca0f3a642cd82659cd32dac13cc3f1e0c0a4fb3f1d6c9"
+  },
+  "logs": {
+    "orb-caller-patient-scope-before-20261012.log": {
+      "path": "/private/tmp/orb-caller-patient-scope-before-20261012.log",
+      "sha256": "7ec65b8d1a72387bb21b44b186123895df4e9b58bfed875ee03c9d6d196cd236"
+    },
+    "orb-caller-phi-scope-final-20261012.log": {
+      "path": "/private/tmp/orb-caller-phi-scope-final-20261012.log",
+      "sha256": "464477add692ea44d91919eb3282402cea38f93651997099cb9be00628b8ae6d"
+    },
+    "orb-scope-inventory-fixtures-final-20261012.log": {
+      "path": "/private/tmp/orb-scope-inventory-fixtures-final-20261012.log",
+      "sha256": "e52aec325c97cf30e088655946e44974fed1b8010066b200a9faafc447b23d6f"
+    }
+  },
+  "limits": [
+    "Static call presence does not prove arbitrary Python control flow; live domain scope/transaction tests remain authoritative.",
+    "No application authorization, clinical policy, live database, model or external-service behavior was changed.",
+    "Only disposable test databases were used; inherited ORB_DB_PATH was removed."
+  ]
+}

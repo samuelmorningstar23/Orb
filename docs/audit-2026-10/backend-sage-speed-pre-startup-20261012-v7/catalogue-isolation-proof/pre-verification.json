@@ -1,0 +1,16 @@
+{
+  "command": [
+    "/private/tmp/orb-ml-upgrade-20261012/bin/python",
+    "-m",
+    "pytest",
+    "-q",
+    "--tb=short",
+    "tests/test_helix_stock_rules.py::test_heparin_stockout_never_suggests_warfarin",
+    "tests/test_patient_specific_screen.py::test_the_prose_lexicon_contains_no_drug_name"
+  ],
+  "cwd": "/private/tmp/orb-prose-catalogue-isolation-20261012-iqyvrnwd/source/server",
+  "state": "/private/tmp/orb-prose-catalogue-isolation-20261012-iqyvrnwd/pre-state",
+  "log": "/private/tmp/orb-prose-catalogue-isolation-20261012-iqyvrnwd/pre.log",
+  "exit_code": 1,
+  "isolation": "Owned source/DB/uploads/FHIR/watchdog/cache, closed Ollama port9 and offline HF; no live data/models."
+}

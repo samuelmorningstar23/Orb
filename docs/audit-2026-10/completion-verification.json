@@ -1,0 +1,306 @@
+{
+  "schema": "orb.audit.offline-completion/1",
+  "date": "2026-10-12",
+  "scope": "Follow-up offline engineering fixes and synthetic browser acceptance; held clinical decisions and external transport excluded",
+  "isolation": {
+    "synthetic_only": true,
+    "live_environment_modified": false,
+    "live_database_modified": false,
+    "models_trained_or_downloaded": false,
+    "external_transport_added": false,
+    "managed_servers_reuse_existing": false
+  },
+  "frontend": {
+    "files": 366,
+    "passed": 3700,
+    "failed": 0,
+    "unhandled_errors": 0,
+    "seconds": 32.13,
+    "command": "node node_modules/vitest/vitest.mjs run",
+    "log": {
+      "path": "/private/tmp/orb-rest-frontend-final.log",
+      "sha256": "3883c21517abd304bb6017b59a1f2441d958b25a6f58fc4101c6a870bcbb48dc"
+    }
+  },
+  "typecheck": {
+    "command": "node node_modules/typescript/bin/tsc -b",
+    "exit_code": 0,
+    "log": {
+      "path": "/private/tmp/orb-rest-types-final.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  "build": {
+    "command": "node node_modules/vite/bin/vite.js build",
+    "exit_code": 0,
+    "dist_index_sha256": "c7a759ed29e706bb547eae838157a4de3919393fd8c88d521d13054d2a7577d2",
+    "log": {
+      "path": "/private/tmp/orb-rest-build-final.log",
+      "sha256": "9ca87b76f77f04ebd3538fa156bcc8d25b5cb027463fc77e1733bba5d020e730"
+    }
+  },
+  "lint": {
+    "command": "node scripts/lint-ratchet.mjs",
+    "exit_code": 0,
+    "problems": 8,
+    "errors": 0,
+    "baseline_before": 9,
+    "baseline_after": 8,
+    "log": {
+      "path": "/private/tmp/orb-rest-lint-final.log",
+      "sha256": "28ceaf35fd4a6d4751f3e829efd72e0b6beceb009903b5268a2708bbd3d1cc2b"
+    }
+  },
+  "sage_history": {
+    "new_browsing_tests": {
+      "path": "server/tests/test_sage_history_browsing.py",
+      "passed": 2,
+      "seconds": 1.73
+    },
+    "related_selection": {
+      "passed": 278,
+      "seconds": 96.72,
+      "log": {
+        "path": "/private/tmp/orb-rest-sage-history.log",
+        "sha256": "aff6eb7af5f0e5a2b4d1f51b0c163fd141e7600b75a5d162b1e26c4ca30cdeda"
+      },
+      "note": "A focused prior selection; exact invocation not copied into this combined manifest. Do not aggregate as unique tests."
+    },
+    "process_cleanup_isolated": {
+      "passed": 7,
+      "seconds": 2.05,
+      "note": "Executed separately because combined Torch-importing selection triggers macOS OpenMP shared-memory at-fork abort. This records isolated test evidence, not whole-process concurrency certification."
+    }
+  },
+  "real_browser_before_transitive_upgrade": {
+    "passed": 11,
+    "failed": 0,
+    "seconds": 28.2,
+    "command": "ORB_E2E_NO_WEBSERVER=1 ORB_E2E_BASE_URL=http://127.0.0.1:18011 node node_modules/@playwright/test/cli.js test",
+    "log": {
+      "path": "/private/tmp/orb-rest-real-browser-verified.log",
+      "sha256": "26983db519f555e94b4806f243b72f2085c5ace0cf40f6707ae205c2a279dfd1"
+    },
+    "screenshots": "browser-evidence/real-offline-workflows/screenshots.json",
+    "api_mocks": false,
+    "requests": "loopback-only",
+    "server": "scripts/e2e_server.py --host127.0.0.1 --port18011 --offline-modules; owned disposable checkout and database; child stopped and directory cleaned"
+  },
+  "other_evidence": {
+    "media_import_asr_backend": "backend-completion-verification.json",
+    "backups_wer_release_quality": "operations-completion-verification.json",
+    "strict_visuals": "offline-browser-verification.json",
+    "api_contracts": "offline-browser-api-contracts.json",
+    "http_framework_compatibility": "http-dependency-compatibility.json",
+    "python_runtime_before": "python-resolved-runtime-before-20261011.json",
+    "python_runtime_after": "python-resolved-runtime-after-20261011.json",
+    "independent_quality_review": "independent-quality-gate-review.json"
+  },
+  "counts_overlap": true,
+  "limits": [
+    "No full15408-test backend run asserted",
+    "No clean Linux hosted CI run",
+    "No real model inference or training acceptance",
+    "No site clinical or device acceptance",
+    "No live backup/power-loss/escrow drill",
+    "PostgreSQL unsupported",
+    "R026 and held clinical decisions unchanged",
+    "A17 session policy unresolved",
+    "Coordinated ML dependency migration remains open"
+  ],
+  "runtime": {
+    "python_executable": "/private/tmp/orb-core-upgrade-20261011/bin/python",
+    "python_version": "3.12.13",
+    "platform": "macOS-26.5.2-arm64-arm-64bit",
+    "packages": {
+      "fastapi": "0.133.0",
+      "starlette": "1.3.1",
+      "pydantic": "2.13.4",
+      "anyio": "4.14.2",
+      "httpx": "0.28.1",
+      "python-multipart": "0.0.31",
+      "uvicorn": "0.34.2",
+      "python-socketio": "5.16.4",
+      "urllib3": "2.8.0",
+      "multidict": "6.9.1"
+    },
+    "installation_scope": "Owned prepared /private/tmp interpreter only; no user/project virtual environment edits."
+  },
+  "offline_backend_before_transitive_upgrade": {
+    "passed": 573,
+    "failed": 0,
+    "seconds": 94.75,
+    "command": [
+      "python",
+      "-m",
+      "pytest",
+      "server/tests/test_local_operations.py",
+      "server/tests/test_reporting_finance.py",
+      "server/tests/test_offline_clinical_records.py",
+      "server/tests/test_record_governance.py",
+      "server/tests/test_radiation_safety.py",
+      "server/tests/test_local_workflow_privacy_export.py",
+      "server/tests/test_infection_surveillance.py",
+      "server/tests/test_vigil_labelled_extract.py",
+      "server/tests/test_offline_module_integration.py",
+      "server/tests/test_offline_patient_picker.py",
+      "server/tests/test_billing.py",
+      "server/tests/test_billing_op_patients.py",
+      "server/tests/test_invoice_supplier_snapshot.py",
+      "server/tests/test_billing_bed_days_and_encounter.py",
+      "server/tests/test_billing_permissions.py",
+      "server/tests/test_billing_reversal_refresh.py",
+      "server/tests/test_bridge_admission_only.py",
+      "server/tests/test_bridge_appointments.py",
+      "server/tests/test_bridge_current_stay.py",
+      "server/tests/test_bridge_red_flag_delivery.py",
+      "server/tests/test_bridge_vitals_no_verdict.py",
+      "server/tests/test_bridge_vitals_timestamp.py",
+      "server/tests/test_opt_in_platform.py",
+      "server/tests/test_db_exception_aliases.py",
+      "server/tests/test_migrations.py",
+      "server/tests/test_consent_quarantine_retention.py",
+      "server/tests/test_retention_gst_documents.py",
+      "server/tests/test_dpdp_compliance.py",
+      "server/tests/test_request_limits.py",
+      "server/tests/test_unauthenticated_surface.py",
+      "-q"
+    ],
+    "log": {
+      "path": "/private/tmp/orb-rest-offline-backend-final.log",
+      "sha256": "7f58c95c2dcca12dc04dfa39bfec24b37743516565ee8ea7ddd7228f7d35ad1a"
+    },
+    "runtime": "Prepared Python3.12.13 environment before final transitive dependency follow-up; synthetic disposable SQLite"
+  },
+  "offline_backend": {
+    "command": [
+      "/private/tmp/orb-core-upgrade-20261011/bin/python",
+      "-m",
+      "pytest",
+      "server/tests/test_local_operations.py",
+      "server/tests/test_reporting_finance.py",
+      "server/tests/test_offline_clinical_records.py",
+      "server/tests/test_record_governance.py",
+      "server/tests/test_radiation_safety.py",
+      "server/tests/test_local_workflow_privacy_export.py",
+      "server/tests/test_infection_surveillance.py",
+      "server/tests/test_vigil_labelled_extract.py",
+      "server/tests/test_offline_module_integration.py",
+      "server/tests/test_offline_patient_picker.py",
+      "server/tests/test_billing.py",
+      "server/tests/test_billing_op_patients.py",
+      "server/tests/test_invoice_supplier_snapshot.py",
+      "server/tests/test_billing_bed_days_and_encounter.py",
+      "server/tests/test_billing_permissions.py",
+      "server/tests/test_billing_reversal_refresh.py",
+      "server/tests/test_bridge_admission_only.py",
+      "server/tests/test_bridge_appointments.py",
+      "server/tests/test_bridge_current_stay.py",
+      "server/tests/test_bridge_red_flag_delivery.py",
+      "server/tests/test_bridge_vitals_no_verdict.py",
+      "server/tests/test_bridge_vitals_timestamp.py",
+      "server/tests/test_opt_in_platform.py",
+      "server/tests/test_db_exception_aliases.py",
+      "server/tests/test_migrations.py",
+      "server/tests/test_consent_quarantine_retention.py",
+      "server/tests/test_retention_gst_documents.py",
+      "server/tests/test_dpdp_compliance.py",
+      "server/tests/test_request_limits.py",
+      "server/tests/test_unauthenticated_surface.py",
+      "-q"
+    ],
+    "shell_command": "/private/tmp/orb-core-upgrade-20261011/bin/python -m pytest server/tests/test_local_operations.py server/tests/test_reporting_finance.py server/tests/test_offline_clinical_records.py server/tests/test_record_governance.py server/tests/test_radiation_safety.py server/tests/test_local_workflow_privacy_export.py server/tests/test_infection_surveillance.py server/tests/test_vigil_labelled_extract.py server/tests/test_offline_module_integration.py server/tests/test_offline_patient_picker.py server/tests/test_billing.py server/tests/test_billing_op_patients.py server/tests/test_invoice_supplier_snapshot.py server/tests/test_billing_bed_days_and_encounter.py server/tests/test_billing_permissions.py server/tests/test_billing_reversal_refresh.py server/tests/test_bridge_admission_only.py server/tests/test_bridge_appointments.py server/tests/test_bridge_current_stay.py server/tests/test_bridge_red_flag_delivery.py server/tests/test_bridge_vitals_no_verdict.py server/tests/test_bridge_vitals_timestamp.py server/tests/test_opt_in_platform.py server/tests/test_db_exception_aliases.py server/tests/test_migrations.py server/tests/test_consent_quarantine_retention.py server/tests/test_retention_gst_documents.py server/tests/test_dpdp_compliance.py server/tests/test_request_limits.py server/tests/test_unauthenticated_surface.py -q > /private/tmp/orb-fastapi-starlette-offline-compatibility.log 2>&1",
+    "working_directory": "/Users/samuelmorningstar/Documents/Projects/Orb",
+    "test_files": [
+      "server/tests/test_local_operations.py",
+      "server/tests/test_reporting_finance.py",
+      "server/tests/test_offline_clinical_records.py",
+      "server/tests/test_record_governance.py",
+      "server/tests/test_radiation_safety.py",
+      "server/tests/test_local_workflow_privacy_export.py",
+      "server/tests/test_infection_surveillance.py",
+      "server/tests/test_vigil_labelled_extract.py",
+      "server/tests/test_offline_module_integration.py",
+      "server/tests/test_offline_patient_picker.py",
+      "server/tests/test_billing.py",
+      "server/tests/test_billing_op_patients.py",
+      "server/tests/test_invoice_supplier_snapshot.py",
+      "server/tests/test_billing_bed_days_and_encounter.py",
+      "server/tests/test_billing_permissions.py",
+      "server/tests/test_billing_reversal_refresh.py",
+      "server/tests/test_bridge_admission_only.py",
+      "server/tests/test_bridge_appointments.py",
+      "server/tests/test_bridge_current_stay.py",
+      "server/tests/test_bridge_red_flag_delivery.py",
+      "server/tests/test_bridge_vitals_no_verdict.py",
+      "server/tests/test_bridge_vitals_timestamp.py",
+      "server/tests/test_opt_in_platform.py",
+      "server/tests/test_db_exception_aliases.py",
+      "server/tests/test_migrations.py",
+      "server/tests/test_consent_quarantine_retention.py",
+      "server/tests/test_retention_gst_documents.py",
+      "server/tests/test_dpdp_compliance.py",
+      "server/tests/test_request_limits.py",
+      "server/tests/test_unauthenticated_surface.py"
+    ],
+    "selected_file_count": 30,
+    "passed": 573,
+    "failed": 0,
+    "skipped": 0,
+    "exit_code": 0,
+    "seconds": 94.48,
+    "warnings": 1,
+    "warning_note": "StarletteDeprecationWarning: httpx TestClient support is deprecated in favor of httpx2; existing pinned httpx0.28.1 remains functional.",
+    "log": {
+      "path": "/private/tmp/orb-fastapi-starlette-offline-compatibility.log",
+      "sha256": "a6cb4937d0e5611f8a42705e899a8d379d1972cba8f4d5afe8b3f425bedc37b9"
+    }
+  },
+  "http_framework_compatibility": {
+    "passed": 675,
+    "failed": 0,
+    "seconds": 93.48,
+    "selected_files": 36,
+    "evidence": "http-dependency-compatibility.json",
+    "warning": "Supported httpx TestClient path deprecated in favor of httpx2; no warning suppressed",
+    "counts_overlap_with_offline_backend": true
+  },
+  "real_browser": {
+    "passed": 11,
+    "failed": 0,
+    "seconds": 26.5,
+    "command": "ORB_E2E_NO_WEBSERVER=1 ORB_E2E_BASE_URL=http://127.0.0.1:18011 node node_modules/@playwright/test/cli.js test",
+    "log": {
+      "path": "/private/tmp/orb-rest-real-browser-patched.log",
+      "sha256": "aa6ab3a9b62e4b5c74b5213d315ed33b8022982abc4ed3b058ea269ec7c0a47c"
+    },
+    "durable_log": "browser-evidence/real-offline-workflows/playwright.log",
+    "screenshots": "browser-evidence/real-offline-workflows/screenshots.json",
+    "csv": "browser-evidence/real-offline-workflows/synthetic-cohort.csv",
+    "api_mocks": false,
+    "requests": "loopback-only",
+    "runtime": "Python3.12.13/FastAPI0.133.0/Starlette1.3.1",
+    "frontend_dist_index_sha256": "c7a759ed29e706bb547eae838157a4de3919393fd8c88d521d13054d2a7577d2",
+    "server": "scripts/e2e_server.py --host 127.0.0.1 --port 18011 --offline-modules",
+    "isolation": "Owned disposable checkout and synthetic SQLite; final child stopped with SIGTERM, parent exited241, owned temporary directory removed and port18011 has no listener",
+    "reviewed_images": [
+      "real-care-plan-persisted.png",
+      "real-reporting-preview.png",
+      "real-feedback-persisted.png",
+      "real-radiology-signed.png",
+      "real-infection-surveillance.png"
+    ]
+  },
+  "security_summary": {
+    "installed_environment_advisory_matches_before": 72,
+    "installed_environment_advisory_matches_after": 61,
+    "http_advisory_matches_removed": 11,
+    "declared_or_transitive_ml_advisory_matches_remaining": 47,
+    "inherited_orphan_pypdf_advisory_matches": 14,
+    "pypdf_is_repository_dependency": false,
+    "http_constraints_advisory_matches": 0,
+    "security_gate_passes": false,
+    "evidence": "operations-completion-verification.json",
+    "note": "Local prepared macOS environment is not a clean Linux installation or a complete locked Apple production resolution; advisory counts are matches rather than distinct unique CVEs"
+  }
+}

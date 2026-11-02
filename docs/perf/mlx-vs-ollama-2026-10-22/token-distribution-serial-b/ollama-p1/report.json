@@ -1,0 +1,325 @@
+{
+  "created_at": "2026-10-22T08:57:10.942376+00:00",
+  "engine": "ollama",
+  "hardware_runtime": {
+    "platform": "macOS-26.5.2-arm64-arm-64bit",
+    "machine": "arm64",
+    "python": "3.12.13",
+    "cpu_count": 12,
+    "client_hardware_only": true,
+    "server_hardware_verified": false,
+    "memory_bytes": "68719476736",
+    "chip": "Apple M2 Max",
+    "git_commit": "a5bae8bcba38280134be5970d25d8c314027f682",
+    "source_sha256": {
+      "scripts/loadtest_capacity.py": "5c6fbdd33a87e75155e455cc79683e0c0d467bc7997cf24433843f0a8ae13d1f",
+      "scripts/loadtest_capacity_fixture.py": "2759bfcee94bbcc0047b8c0988fb8ce6429ebe18b33c3c61cf7f745b278c0730",
+      "scripts/capacity_profiler.py": "0651e872e13a76cdf7da927f781a68ea666e0417b3fdd280de6ac4eb7d7a1c09",
+      "scripts/capacity_retrieval_fixture.py": "99f50a6fbdd0061aa16992229ab4780387f4e76fc91af14fdbbde1e9b9fe62ef",
+      "scripts/e2e_server.py": "90cde4f221b159a951c836e6a60ba46c2ca1eb650c52909cb1ef9178e1e0c755",
+      "server/main.py": "53b263d405648a35a4abe9fdf9f0430799c44f442ece39d359fa60973e563083",
+      "server/config.py": "d2d442b4fd885b669f571329592891f103b77dece689cb821270109fa6be5208",
+      "server/database.py": "ff8cce6f457f01d40c68205e8242770d6f273f9c53016cd68a3145a956d0498b",
+      "server/request_admission.py": "006b2f205224de525fdc8e2948f4897e16f52d680a9c1a0435dd405968619c37",
+      "server/services/local_inference_pool.py": "1de3328222463b5e585ae5dd8bf21212ec2e207df7b28c54b5c2760325d14715",
+      "server/services/ollama_gateway.py": "ae1ae77e28fb5bd7251dab3de39cc595d8fa3d4b39cf121431fbfd4e65e221bc",
+      "server/services/local_inference_routing.py": "37b719b7161ce7b69d4d1fac7f58bb223ce4b450b19026fd7a330672d7174dbd",
+      "server/services/llm_providers.py": "7d046094300312482e6eb386ec9b5a3dae5129f093efb8dc6769fc4ad634389e",
+      "server/services/local_model_http.py": "82e9c726246e2783855c5c0e679c926a3f2c5f6b11d082e7ebd0791dd9aef415",
+      "server/services/model_router.py": "ab5cdd5ae99d2186fd038c66649fea43eb8c768215a2fee29862caa95ee1acf3",
+      "server/services/ai_governance.py": "27460ff15d77501a1ac55ea8628f1c4781e6f8e90eca990020ffbc5b2899b8c3",
+      "server/services/sage_retrieval_executor.py": "84db008f3bae24699be093758975a02c7619e1f7c0d7af7cec0b54463f071971",
+      "server/services/clinical_knowledge.py": "25151f2fd1613627621be9615a1377b73990b79ee222fd73f1d77ffcade9bb9c",
+      "server/services/knowledge_worker.py": "83324343294c9d0b656ba2c4e8ee91da36f77e51897dea4ec98723b6fd1ea887",
+      "server/services/local_transformers.py": "6dcc60d8d841f6f75cf53e5e7b7588691b4d8a5540a4f00ba3e669426565a8b9",
+      "server/services/thinking_mode.py": "07cacbea0632a791af87b193f91e195967584a27943ca9be7cb558b2ea563d8b",
+      "server/services/sage_service.py": "15bd1f77632b53676a3705354fc506d1652d1632a099644b20457d85102786d3",
+      "server/services/llm_queue_service.py": "d606d1c9be8f15628b24236f5eb0230a2f9806ed3c760d7b6f1efaa8bacdb992",
+      "server/services/gpu_coordinator.py": "239fa29a4b16fb7d2da658c3f27a1e27a82088e46703c489a3dffc422ec30bd0",
+      "server/services/patient_summary_service.py": "891c96cb2c3073b8d1ca1d54fc4f92ef84ac6e2abd52a40385a01619315f9ad6",
+      "server/routes/sage_routes.py": "31762dd09d13c676bc4f385d9cce3e825019efbac09028093680e0c733ca9353",
+      "server/routes/patient_summary_routes.py": "5b3fa1c31e024972cfb9e705e4a4e98e9961e446bd8cb4e88c873bd820022c83",
+      "server/migrations_his/m0089_patient_summary_snapshots.py": "e976d75a918d17847f36e8c0780c326df2fb5f95cb215ea1a261d108ccbeccf5",
+      "server/migrations_his/m0090_sage_retrieval_indexes.py": "923a566d27345583123931caf286fcbb6a7865ac370fed0b4b79ee4304641540",
+      "server/auth.py": "99d57740ede219a4466765332db6f16769adb26d63c98424827cf1478a7f2067",
+      "server/permissions.py": "816f8a8f37eaafb72a1595f38ce39369e523abd03131f83668925c6e4468c98c",
+      "server/db_backend.py": "a58259db992fcf8300d6c95c649f86b0731b5b982cd179a602ddf024fabbe2f5"
+    },
+    "httpx_version": "0.28.1"
+  },
+  "scope": "engine_only_exact_captured_synthetic_inputs_not_Orb_SLA",
+  "profile": {
+    "parallel": 1,
+    "phases": [
+      {
+        "name": "distribution",
+        "status": "complete",
+        "diagnostic_status": "diagnostic_recorded",
+        "path": "/Users/samuelmorningstar/Documents/Projects/Orb/docs/perf/mlx-vs-ollama-2026-10-22/token-distribution-serial-b/ollama-p1/token-distribution.json",
+        "timing_qualification": false
+      }
+    ],
+    "preparation_memory": {
+      "total_bytes": 68719476736,
+      "free_percentage": 84,
+      "estimated_available_bytes": 57724360458,
+      "vm_stat": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                  1461342.\nPages active:                                 841338.\nPages inactive:                              1183664.\nPages speculative:                              9889.\nPages throttled:                                   0.\nPages wired down:                             222543.\nPages purgeable:                               10661.\n\"Translation faults\":                     2861640641.\nPages copy-on-write:                       167341122.\nPages zero filled:                        5899272261.\nPages reactivated:                          27372434.\nPages purged:                               52585730.\nFile-backed pages:                            667279.\nAnonymous pages:                             1367612.\nPages stored in compressor:                  1410983.\nPages occupied by compressor:                 418525.\nDecompressions:                             19757333.\nCompressions:                               34119278.\nPageins:                                    99699119.\nPageouts:                                      99820.\nSwapins:                                      719903.\nSwapouts:                                    1012357.\n"
+    },
+    "preflight": {
+      "memory": {
+        "total_bytes": 68719476736,
+        "free_percentage": 84,
+        "estimated_available_bytes": 57724360458,
+        "vm_stat": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                  1461333.\nPages active:                                 841120.\nPages inactive:                              1183664.\nPages speculative:                              9971.\nPages throttled:                                   0.\nPages wired down:                             222690.\nPages purgeable:                               10562.\n\"Translation faults\":                     2861645299.\nPages copy-on-write:                       167341800.\nPages zero filled:                        5899273882.\nPages reactivated:                          27372434.\nPages purged:                               52585730.\nFile-backed pages:                            667360.\nAnonymous pages:                             1367395.\nPages stored in compressor:                  1410982.\nPages occupied by compressor:                 418525.\nDecompressions:                             19757334.\nCompressions:                               34119278.\nPageins:                                    99699133.\nPageouts:                                      99820.\nSwapins:                                      719903.\nSwapouts:                                    1012357.\n"
+      },
+      "memory_sample_stage": "immediately_before_launch_after_validation_and_metadata",
+      "model": {
+        "model": "medgemma:27b",
+        "model_digest": "sha256:4b97da6b21a8fb1405a0d1efee462bfd6c4d3c46307bac8b34373835f07ca758",
+        "weight_bytes": 17397211520,
+        "manifest_sha256": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+        "quantization": "Q4_K_M"
+      },
+      "required_available_bytes_estimate": 43167015296
+    },
+    "pressure_samples": [
+      {
+        "monotonic": 328241.991393958,
+        "total_bytes": 68719476736,
+        "free_percentage": 84,
+        "estimated_available_bytes": 57724360458,
+        "vm_stat": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                  1346268.\nPages active:                                 946138.\nPages inactive:                              1183374.\nPages speculative:                             12529.\nPages throttled:                                   0.\nPages wired down:                             230353.\nPages purgeable:                                9427.\n\"Translation faults\":                     2861810189.\nPages copy-on-write:                       167344718.\nPages zero filled:                        5899367644.\nPages reactivated:                          27372448.\nPages purged:                               52585730.\nFile-backed pages:                            770712.\nAnonymous pages:                             1371329.\nPages stored in compressor:                  1410954.\nPages occupied by compressor:                 418520.\nDecompressions:                             19757362.\nCompressions:                               34119278.\nPageins:                                    99802970.\nPageouts:                                      99820.\nSwapins:                                      719903.\nSwapouts:                                    1012357.\n",
+        "swapout_bytes": 16586457088,
+        "compressed_bytes": 6857031680
+      },
+      {
+        "monotonic": 328244.00025725,
+        "total_bytes": 68719476736,
+        "free_percentage": 84,
+        "estimated_available_bytes": 57724360458,
+        "vm_stat": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                  1027740.\nPages active:                                1184361.\nPages inactive:                              1262557.\nPages speculative:                             17718.\nPages throttled:                                   0.\nPages wired down:                             226226.\nPages purgeable:                               10214.\n\"Translation faults\":                     2862143242.\nPages copy-on-write:                       167345314.\nPages zero filled:                        5899372117.\nPages reactivated:                          27372448.\nPages purged:                               52585730.\nFile-backed pages:                           1097236.\nAnonymous pages:                             1367399.\nPages stored in compressor:                  1410953.\nPages occupied by compressor:                 418519.\nDecompressions:                             19757362.\nCompressions:                               34119278.\nPageins:                                   100129397.\nPageouts:                                      99820.\nSwapins:                                      719903.\nSwapouts:                                    1012357.\n",
+        "swapout_bytes": 16586457088,
+        "compressed_bytes": 6857015296
+      },
+      {
+        "monotonic": 328246.009027666,
+        "total_bytes": 68719476736,
+        "free_percentage": 84,
+        "estimated_available_bytes": 57724360458,
+        "vm_stat": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                   711407.\nPages active:                                1188480.\nPages inactive:                              1569067.\nPages speculative:                             22610.\nPages throttled:                                   0.\nPages wired down:                             227113.\nPages purgeable:                                9839.\n\"Translation faults\":                     2862462506.\nPages copy-on-write:                       167345660.\nPages zero filled:                        5899375182.\nPages reactivated:                          27372453.\nPages purged:                               52585730.\nFile-backed pages:                           1413590.\nAnonymous pages:                             1366567.\nPages stored in compressor:                  1410948.\nPages occupied by compressor:                 418518.\nDecompressions:                             19757367.\nCompressions:                               34119278.\nPageins:                                   100445815.\nPageouts:                                      99820.\nSwapins:                                      719903.\nSwapouts:                                    1012357.\n",
+        "swapout_bytes": 16586457088,
+        "compressed_bytes": 6856998912
+      },
+      {
+        "monotonic": 328248.019811458,
+        "total_bytes": 68719476736,
+        "free_percentage": 56,
+        "estimated_available_bytes": 38482906972,
+        "vm_stat": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                   286214.\nPages active:                                 837539.\nPages inactive:                              1186025.\nPages speculative:                             11088.\nPages throttled:                                   0.\nPages wired down:                            1397924.\nPages purgeable:                                7185.\n\"Translation faults\":                     2862829818.\nPages copy-on-write:                       167345956.\nPages zero filled:                        5899547032.\nPages reactivated:                          27372461.\nPages purged:                               52585730.\nFile-backed pages:                            674180.\nAnonymous pages:                             1360472.\nPages stored in compressor:                  1410947.\nPages occupied by compressor:                 418518.\nDecompressions:                             19757368.\nCompressions:                               34119278.\nPageins:                                   100716275.\nPageouts:                                      99820.\nSwapins:                                      719903.\nSwapouts:                                    1012357.\n",
+        "swapout_bytes": 16586457088,
+        "compressed_bytes": 6856998912
+      },
+      {
+        "monotonic": 328250.028646708,
+        "total_bytes": 68719476736,
+        "free_percentage": 50,
+        "estimated_available_bytes": 34359738368,
+        "vm_stat": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                    21625.\nPages active:                                 862414.\nPages inactive:                              1186130.\nPages speculative:                             11097.\nPages throttled:                                   0.\nPages wired down:                            1637431.\nPages purgeable:                                9571.\n\"Translation faults\":                     2863105577.\nPages copy-on-write:                       167346318.\nPages zero filled:                        5899815641.\nPages reactivated:                          27372461.\nPages purged:                               52585730.\nFile-backed pages:                            674284.\nAnonymous pages:                             1385357.\nPages stored in compressor:                  1410947.\nPages occupied by compressor:                 418518.\nDecompressions:                             19757368.\nCompressions:                               34119278.\nPageins:                                   100716380.\nPageouts:                                      99820.\nSwapins:                                      719903.\nSwapouts:                                    1012357.\n",
+        "swapout_bytes": 16586457088,
+        "compressed_bytes": 6856998912
+      },
+      {
+        "monotonic": 328252.036877416,
+        "total_bytes": 68719476736,
+        "free_percentage": 50,
+        "estimated_available_bytes": 34359738368,
+        "vm_stat": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                    32653.\nPages active:                                 853101.\nPages inactive:                              1186131.\nPages speculative:                             11194.\nPages throttled:                                   0.\nPages wired down:                            1635751.\nPages purgeable:                                9610.\n\"Translation faults\":                     2863113321.\nPages copy-on-write:                       167347102.\nPages zero filled:                        5899820153.\nPages reactivated:                          27372461.\nPages purged:                               52585730.\nFile-backed pages:                            674503.\nAnonymous pages:                             1375923.\nPages stored in compressor:                  1410869.\nPages occupied by compressor:                 418504.\nDecompressions:                             19757446.\nCompressions:                               34119278.\nPageins:                                   100716601.\nPageouts:                                      99820.\nSwapins:                                      719903.\nSwapouts:                                    1012357.\n",
+        "swapout_bytes": 16586457088,
+        "compressed_bytes": 6856769536
+      },
+      {
+        "monotonic": 328254.045808458,
+        "total_bytes": 68719476736,
+        "free_percentage": 50,
+        "estimated_available_bytes": 34359738368,
+        "vm_stat": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                    39614.\nPages active:                                 846538.\nPages inactive:                              1186127.\nPages speculative:                             11202.\nPages throttled:                                   0.\nPages wired down:                            1635184.\nPages purgeable:                               10050.\n\"Translation faults\":                     2863116257.\nPages copy-on-write:                       167347366.\nPages zero filled:                        5899821309.\nPages reactivated:                          27372464.\nPages purged:                               52585730.\nFile-backed pages:                            674515.\nAnonymous pages:                             1369352.\nPages stored in compressor:                  1410859.\nPages occupied by compressor:                 418502.\nDecompressions:                             19757456.\nCompressions:                               34119278.\nPageins:                                   100716610.\nPageouts:                                      99820.\nSwapins:                                      719903.\nSwapouts:                                    1012357.\n",
+        "swapout_bytes": 16586457088,
+        "compressed_bytes": 6856736768
+      },
+      {
+        "monotonic": 328256.060025541,
+        "total_bytes": 68719476736,
+        "free_percentage": 50,
+        "estimated_available_bytes": 34359738368,
+        "vm_stat": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                    32212.\nPages active:                                 849267.\nPages inactive:                              1180637.\nPages speculative:                             11316.\nPages throttled:                                   0.\nPages wired down:                            1645333.\nPages purgeable:                                9102.\n\"Translation faults\":                     2863129176.\nPages copy-on-write:                       167347649.\nPages zero filled:                        5899867949.\nPages reactivated:                          27372464.\nPages purged:                               52585730.\nFile-backed pages:                            674497.\nAnonymous pages:                             1366723.\nPages stored in compressor:                  1410857.\nPages occupied by compressor:                 418502.\nDecompressions:                             19757458.\nCompressions:                               34119278.\nPageins:                                   100716612.\nPageouts:                                      99820.\nSwapins:                                      719903.\nSwapouts:                                    1012357.\n",
+        "swapout_bytes": 16586457088,
+        "compressed_bytes": 6856736768
+      },
+      {
+        "monotonic": 328258.069288625,
+        "total_bytes": 68719476736,
+        "free_percentage": 50,
+        "estimated_available_bytes": 34359738368,
+        "vm_stat": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                    34128.\nPages active:                                 861494.\nPages inactive:                              1180635.\nPages speculative:                             11328.\nPages throttled:                                   0.\nPages wired down:                            1631238.\nPages purgeable:                               10726.\n\"Translation faults\":                     2863145622.\nPages copy-on-write:                       167348055.\nPages zero filled:                        5899879095.\nPages reactivated:                          27372467.\nPages purged:                               52585730.\nFile-backed pages:                            674513.\nAnonymous pages:                             1378944.\nPages stored in compressor:                  1410852.\nPages occupied by compressor:                 418500.\nDecompressions:                             19757463.\nCompressions:                               34119278.\nPageins:                                   100716621.\nPageouts:                                      99820.\nSwapins:                                      719903.\nSwapouts:                                    1012357.\n",
+        "swapout_bytes": 16586457088,
+        "compressed_bytes": 6856704000
+      },
+      {
+        "monotonic": 328260.078694333,
+        "total_bytes": 68719476736,
+        "free_percentage": 50,
+        "estimated_available_bytes": 34359738368,
+        "vm_stat": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                    33981.\nPages active:                                 862332.\nPages inactive:                              1180654.\nPages speculative:                             11311.\nPages throttled:                                   0.\nPages wired down:                            1630593.\nPages purgeable:                               11755.\n\"Translation faults\":                     2863161917.\nPages copy-on-write:                       167348580.\nPages zero filled:                        5899889834.\nPages reactivated:                          27372467.\nPages purged:                               52585730.\nFile-backed pages:                            674518.\nAnonymous pages:                             1379779.\nPages stored in compressor:                  1410849.\nPages occupied by compressor:                 418500.\nDecompressions:                             19757466.\nCompressions:                               34119278.\nPageins:                                   100716630.\nPageouts:                                      99820.\nSwapins:                                      719903.\nSwapouts:                                    1012357.\n",
+        "swapout_bytes": 16586457088,
+        "compressed_bytes": 6856704000
+      },
+      {
+        "monotonic": 328262.08810675,
+        "total_bytes": 68719476736,
+        "free_percentage": 50,
+        "estimated_available_bytes": 34359738368,
+        "vm_stat": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                    40695.\nPages active:                                 854160.\nPages inactive:                              1180591.\nPages speculative:                             11361.\nPages throttled:                                   0.\nPages wired down:                            1631865.\nPages purgeable:                               10717.\n\"Translation faults\":                     2863165807.\nPages copy-on-write:                       167348956.\nPages zero filled:                        5899891393.\nPages reactivated:                          27372488.\nPages purged:                               52585730.\nFile-backed pages:                            674570.\nAnonymous pages:                             1371542.\nPages stored in compressor:                  1410849.\nPages occupied by compressor:                 418500.\nDecompressions:                             19757466.\nCompressions:                               34119278.\nPageins:                                   100716641.\nPageouts:                                      99820.\nSwapins:                                      719903.\nSwapouts:                                    1012357.\n",
+        "swapout_bytes": 16586457088,
+        "compressed_bytes": 6856704000
+      },
+      {
+        "monotonic": 328264.096921208,
+        "total_bytes": 68719476736,
+        "free_percentage": 50,
+        "estimated_available_bytes": 34359738368,
+        "vm_stat": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                    38678.\nPages active:                                 854401.\nPages inactive:                              1180592.\nPages speculative:                             11360.\nPages throttled:                                   0.\nPages wired down:                            1633795.\nPages purgeable:                               10931.\n\"Translation faults\":                     2863168971.\nPages copy-on-write:                       167349215.\nPages zero filled:                        5899895019.\nPages reactivated:                          27372557.\nPages purged:                               52585730.\nFile-backed pages:                            674568.\nAnonymous pages:                             1371785.\nPages stored in compressor:                  1410843.\nPages occupied by compressor:                 418500.\nDecompressions:                             19757472.\nCompressions:                               34119278.\nPageins:                                   100716643.\nPageouts:                                      99820.\nSwapins:                                      719903.\nSwapouts:                                    1012357.\n",
+        "swapout_bytes": 16586457088,
+        "compressed_bytes": 6856704000
+      }
+    ],
+    "owned_engine_pid": 37537,
+    "diagnostic_upstream": "http://127.0.0.1:59829",
+    "warmup": {
+      "purpose": "warmup_only_not_a_clinical_answer_or_target_pass",
+      "wall_s": 8.62680641602492,
+      "counters": {
+        "model": "medgemma:27b",
+        "done_reason": "length",
+        "load_duration": 8377991792,
+        "prompt_eval_count": 15,
+        "prompt_eval_duration": 211130000,
+        "eval_count": 1,
+        "eval_duration": 1000
+      },
+      "residency": {
+        "models": [
+          {
+            "name": "medgemma:27b",
+            "model": "medgemma:27b",
+            "size": 20549573016,
+            "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+            "details": {
+              "parent_model": "",
+              "format": "gguf",
+              "family": "gemma3",
+              "families": [
+                "gemma3"
+              ],
+              "parameter_size": "27.4B",
+              "quantization_level": "Q4_K_M"
+            },
+            "expires_at": "2026-10-22T14:57:20.301158+05:30",
+            "size_vram": 20549573016,
+            "context_length": 8192,
+            "runner": "llamacpp"
+          }
+        ]
+      }
+    },
+    "template_oracle": {
+      "status": "failed",
+      "error_type": "OracleRefused"
+    },
+    "post_memory": {
+      "total_bytes": 68719476736,
+      "free_percentage": 82,
+      "estimated_available_bytes": 56349970923,
+      "vm_stat": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                   369318.\nPages active:                                1174394.\nPages inactive:                              1854656.\nPages speculative:                             11385.\nPages throttled:                                   0.\nPages wired down:                             308870.\nPages purgeable:                               10883.\n\"Translation faults\":                     2863171378.\nPages copy-on-write:                       167349479.\nPages zero filled:                        5899897930.\nPages reactivated:                          27372557.\nPages purged:                               52585730.\nFile-backed pages:                           1684016.\nAnonymous pages:                             1356419.\nPages stored in compressor:                  1410782.\nPages occupied by compressor:                 418485.\nDecompressions:                             19757533.\nCompressions:                               34119278.\nPageins:                                   100716645.\nPageouts:                                      99820.\nSwapins:                                      719903.\nSwapouts:                                    1012357.\n"
+    },
+    "system_pressure_summary": {
+      "scope": "system_wide_not_daemon_rss_or_gpu_peak",
+      "samples": 14,
+      "minimum_os_free_percentage": 50,
+      "maximum_compressed_bytes": 6857113600,
+      "maximum_compression_growth_bytes": 0,
+      "swapout_growth_bytes": 0
+    },
+    "ports_closed_after": {
+      "59829": true,
+      "59830": true
+    },
+    "runner_token_timings": {
+      "source": "owned_llama_server_log",
+      "available": true,
+      "tasks": [
+        {
+          "task_id": 0,
+          "slot_id": 0,
+          "prompt_tokens": 15,
+          "prompt_seconds": 0.21112999999999998,
+          "prompt_tokens_per_second": 71.04627480699095,
+          "decode_tokens": 1,
+          "decode_seconds": 0.0,
+          "decode_tokens_per_second": null,
+          "stop_event_seen": true,
+          "final_context_tokens": 15,
+          "truncated": false
+        },
+        {
+          "task_id": 2,
+          "slot_id": 0,
+          "prompt_tokens": 280,
+          "prompt_seconds": 2.85648,
+          "prompt_tokens_per_second": 98.02274127597603,
+          "decode_tokens": 90,
+          "decode_seconds": 12.61764,
+          "decode_tokens_per_second": 7.132871123284545,
+          "stop_event_seen": true,
+          "final_context_tokens": 369,
+          "truncated": false
+        }
+      ],
+      "interpretation": "Includes warmup and potentially cancelled streams; HTTP/SSE rows determine answer success. These engine IDs are not clinical request IDs."
+    }
+  },
+  "status": "complete",
+  "synthetic_data_only": true,
+  "runtime_network": "owned_loopback_only_no_cloud_inference",
+  "unused_transformers_frameworks_disabled_in_mlx_inference_only": false,
+  "limitations": [
+    "Disposable unencrypted database; no production encryption/network qualification",
+    "No summary-refresh, ASR or imaging workload",
+    "MLX conversion is not identical quantised weights; speed alone cannot qualify clinical quality",
+    "Separate fixture timestamps can change prompts; use captured exact-body replay for engine-only parity"
+  ],
+  "script_sha256": "8126b846cf6a651e9ff9756818596d0658b014a3c57cc1f42aa28977323be9f0",
+  "comparison_source_sha256": {
+    "benchmark_mlx_ollama.py": "8126b846cf6a651e9ff9756818596d0658b014a3c57cc1f42aa28977323be9f0",
+    "serve_mlx_benchmark.py": "abfdfbcaeaa13ac539abb7fb3195e335a1d69816e823a44fd1ea3139934451ac",
+    "mlx_ollama_benchmark_proxy.py": "fe5df10e4bfa2f2f87b38275d8c5673040510c97ffdf61600680b6a3626da1d1",
+    "convert_medgemma_gguf_mlx.py": "3655f444fd6b47b54343ecadb6923d7f7b48e94b4b073ce866f2c39fff606da7",
+    "llm_fidelity_cases.py": "f78e58370b9c01c3f5b8d2d4a27f8a06a7ff2d1aaa88a070800c2e0349f19d2f",
+    "replay_llm_benchmark.py": "013a7c8c0dfe49c3aeb7f71560bc83495e45e334e0a64a8654e1bf87b5b91538",
+    "replay_200_llm_benchmark.py": "762809c931bd622fb77dd26c74b123d7ce2ec3f6b98f260c6bfddbd3dd1bded1",
+    "ollama_template_oracle.py": "5704360753336bc572a6bfef330fcd61a7150ee297dec5c9551650cd37b273e9",
+    "serve_ollama_candidate.py": "2a256355adc41044fac6d03e6b3907969b88893c83d1e8184bcb4ad99d3cbbd1",
+    "serve_mlx_benchmark_staged.py": "c9311445d21cbbbeb89aa0cf7a82ab0afb7d7dfb79869e6429de0b142a374ed4",
+    "qualify_ollama_serving.py": "37a596b8c82b423b20fd177a597242b878f8a3b7a8149cf220fd7bb875815528",
+    "serve_mlx_benchmark_trace.py": "adcb706bba52024b47fce769d96d9f23ec149caad0895a8594effe21f64bb2b9",
+    "mlx_startup_trace.py": "567b104b08d7d8ce410a652201c04c3e09ebc62ca0efe3e1a7e8a42385d13faf",
+    "serve_mlx_benchmark_precision.py": "57bebc97f759de61c871d92cf033922384799824261212aaa321205515d83421",
+    "mlx_gemma3_precision.py": "559eab7cd52e34bf8adab443a63803ffbe143b2b95aa0f0fef93d2b9cbdeea95",
+    "serve_mlx_benchmark_serial.py": "2d64b05d9c848cadfc9e5f7d4d998bbbe08e45698670a7fbb404f90f48da3145",
+    "probe_native_penalties.py": "fe0a79289dd0c31159c0f0325a0b167d1b7feca3fa6001e1fc94c29ec14ac09a",
+    "probe_engine_token_distribution.py": "b61cc36ca73ded4f71ccdff3abd535ad01680b3dd36812321333e362a23fa496"
+  },
+  "full_retrieval_integrity_verified": false,
+  "strict_200_latency_targets_demonstrated": false,
+  "clinical_equivalence_qualified": false,
+  "production_purchase_gate_passed": false
+}

@@ -1,0 +1,35 @@
+{
+  "scope": "tiny synthetic fixture only; unchanged safetensors weights/dtypes",
+  "descriptor_used_after_rename": true,
+  "source_removed_before_second_evaluation": true,
+  "checks": [
+    {
+      "tensor": "half",
+      "dtype": "float16",
+      "shape": [
+        4
+      ],
+      "bitwise_equal": true,
+      "sha256": "e6c55998fb4486838137bbda41c8c0567cd1be739448be04ed55c77cc701915d"
+    },
+    {
+      "tensor": "norm",
+      "dtype": "float32",
+      "shape": [
+        4
+      ],
+      "bitwise_equal": true,
+      "sha256": "26499292a726929d5b198a49ea606a5bbf556841401c75e62eba1fabeabc69fe"
+    },
+    {
+      "tensor": "packed",
+      "dtype": "uint32",
+      "shape": [
+        4
+      ],
+      "bitwise_equal": true,
+      "sha256": "384f9d328de55c892797c9f7a229d99964dd24ee2724e267f792c7bf47f76db3"
+    }
+  ],
+  "passed": true
+}

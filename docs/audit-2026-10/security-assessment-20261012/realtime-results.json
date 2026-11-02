@@ -1,0 +1,39 @@
+{
+  "schema": "orb.security.realtime-mfa-regressions/1",
+  "isolation": "In-process actual Engine.IO/Socket.IO polling; owned DB and synthetic records. No native network/model calls.",
+  "revoked_device_wire_handshake": {
+    "accepted": true,
+    "wire_packet_type": "Socket.IO namespace connect 40",
+    "token": "Fixture token deliberately omitted",
+    "device_fixture": "Existing revoked enrolled_devices row"
+  },
+  "live_socket_revocation": {
+    "rest_after_user_revocation": 401,
+    "fresh_socket_auth_after_revocation": false,
+    "previously_connected_socket_received_event": "vitals:update",
+    "patient_name_received": true,
+    "ordinary_socket_wire": "42[\"vitals:update\",{\"patient_id\":\"REVIEW-PAT-A\",\"heart_rate\":72,\"risk\":{\"level\":\"low\"},\"patient_name\":\"Synthetic Review Patient A\"}]",
+    "revoked_device_socket_wire": "42[\"vitals:update\",{\"patient_id\":\"REVIEW-PAT-A\",\"heart_rate\":72,\"risk\":{\"level\":\"low\"},\"patient_name\":\"Synthetic Review Patient A\"}]",
+    "scope": "Actual wire deliveries after token_version bump; expiry/department-change variants source-reviewed separately."
+  },
+  "totp_concurrent_single_use": {
+    "same_step_results": [
+      true,
+      true
+    ],
+    "sequential_replay_result": false,
+    "controlled_scheduling": "Barrier after each actual SELECT fetchone; no change to verification/UPDATE/commit logic.",
+    "verification_level": "Actual consume_totp function and SQLite connections; complete login HTTP race not run."
+  },
+  "socket_disconnect_handler": {
+    "module": "ws.scribe_stream",
+    "name": "handle_scribe_disconnect"
+  },
+  "source_sha256": {
+    "server/ws/realtime.py": "16f85cf28a97266262d219bef0388e358cf79d29ad4e1dc97f43ec16007c510f",
+    "server/ws/scribe_stream.py": "017482e72f942e737ed2781439cf12f167a32c9d1b85338ca09a66fcbdc9bdd1",
+    "server/routes/auth_routes.py": "e15371d1bc53761aa21c16dc1f04e765d2fb6675d0c4e577ef090412675d6709",
+    "server/database.py": "23ab4bd0bce5f8f2c94efc440ad5e2c36e61d50127445b0ef9dc182e9b92dabb"
+  },
+  "cleanup": "Both owned Socket.IO namespaces and Engine.IO sessions explicitly closed; server service tasks stopped."
+}

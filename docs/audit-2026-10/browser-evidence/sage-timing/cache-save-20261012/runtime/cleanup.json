@@ -1,0 +1,18 @@
+{
+  "schema": "orb.sage.owned-runtime-cleanup/1",
+  "timestamp_utc": "2026-10-12T09:09:48.642767+00:00",
+  "controller_exit_code": 0,
+  "owned_daemon_pid": 41550,
+  "owned_daemon_exit_code": 0,
+  "owned_port_11436_connect_ex": 61,
+  "owned_port_closed": true,
+  "shared_api_ps": {
+    "models": []
+  },
+  "launcher_unchanged": true,
+  "runner_config_unchanged": true,
+  "model_file_count": 33,
+  "model_files_unchanged": true,
+  "private_home_copied": false,
+  "cleanup_scope": "Only owned PID/process group, no shared service changes."
+}

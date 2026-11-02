@@ -1,0 +1,133 @@
+{
+  "status": "failed latency baseline; partial harness evidence retained",
+  "interpretation": "first readable answer targets general<3000ms, patient<5000ms, department<10000ms; full successful completion required",
+  "qualification": "host quiet; background model jobs disabled; normal synthetic downtime maintenance retained",
+  "runtime": "/private/tmp/orb-ml-upgrade-20261012/bin/python",
+  "bundle_sha256": "c7a759ed29e706bb547eae838157a4de3919393fd8c88d521d13054d2a7577d2",
+  "launcher": {
+    "url": "http://127.0.0.1:11434",
+    "model": {
+      "name": "medgemma:27b",
+      "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+      "size": 17397224125,
+      "details": {
+        "parent_model": "",
+        "format": "gguf",
+        "family": "gemma3",
+        "families": [
+          "gemma3"
+        ],
+        "parameter_size": "27.4B",
+        "quantization_level": "Q4_K_M",
+        "context_length": 131072,
+        "embedding_length": 5376
+      }
+    },
+    "background_model_jobs": false,
+    "thinking": true,
+    "safety_floor": true,
+    "model_fallback": false,
+    "scope": "idle synthetic qualification",
+    "embedding_snapshot": "/Users/samuelmorningstar/.cache/huggingface/hub/models--BAAI--bge-m3/snapshots/5617a9f61b028005a4858fdac845db406aefb181",
+    "reranker_snapshot": "/Users/samuelmorningstar/.cache/huggingface/hub/models--BAAI--bge-reranker-v2-m3/snapshots/953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e",
+    "retrieval": "installed snapshots with a new synthetic corpus"
+  },
+  "knowledge_corpus": {
+    "sources": 19,
+    "vectors": 19,
+    "fingerprint": "e85261d5dc762d793b10470056b9cfcec365d679d3bda7a3ba0c208d8ef7ded2"
+  },
+  "turns": [
+    {
+      "category": "general",
+      "residency": "not resident/cold runner",
+      "firstVisibleMs": 19772.599999964237,
+      "completedVisibleMs": 23814.899999976158,
+      "success": true,
+      "failures": [],
+      "targetMs": 3000,
+      "targetMet": false,
+      "completionWithinSameTarget": false
+    },
+    {
+      "category": "general",
+      "residency": "resident/warm runner",
+      "firstVisibleMs": 1705.800000011921,
+      "completedVisibleMs": 6230.899999976158,
+      "success": true,
+      "failures": [],
+      "targetMs": 3000,
+      "targetMet": true,
+      "completionWithinSameTarget": false
+    },
+    {
+      "category": "patient",
+      "residency": "resident/warm runner",
+      "firstVisibleMs": 6389.699999988079,
+      "completedVisibleMs": 60134.799999952316,
+      "success": true,
+      "failures": [],
+      "targetMs": 5000,
+      "targetMet": false,
+      "completionWithinSameTarget": false
+    },
+    {
+      "category": "department",
+      "residency": "resident/warm runner",
+      "firstVisibleMs": 42274.10000002384,
+      "completedVisibleMs": 42274.10000002384,
+      "success": false,
+      "failures": [
+        "response.body: Protocol error (Network.getResponseBody): No data found for resource with given identifier",
+        "explicit successful Sage done frame missing",
+        "nonempty model answer missing",
+        "successful visible answer missing",
+        "actual query scope differs from scenario",
+        "careful27b provenance missing or downgraded"
+      ],
+      "targetMs": 10000,
+      "targetMet": false,
+      "completionWithinSameTarget": false
+    }
+  ],
+  "department_failure": {
+    "server_reason": "Local model answer exceeded its response budget.",
+    "interactive_lane_ms": 42261,
+    "provider_first_token_ms": 5616,
+    "successful_completion": false,
+    "raw_sse": "unavailable: initial CDP body-buffer capture failed; corrected in subsequent harness"
+  },
+  "maintenance_overlap": {
+    "snapshot_patients": 30,
+    "fhir_export_bytes_approx": 2900000,
+    "duration_seconds": 7.5,
+    "overlapped": "warm general and patient"
+  },
+  "real_browser_journeys": {
+    "stats": {
+      "startTime": "2026-10-11T21:58:15.311Z",
+      "duration": 28146.673,
+      "expected": 11,
+      "skipped": 0,
+      "unexpected": 0,
+      "flaky": 0
+    },
+    "titles": [
+      "clinician logs in and sees the Vigil patient list",
+      "clinician opens Scribe and the compose + structure UI renders",
+      "clinician creates a coded order and it appears with a status chip",
+      "pharmacist opens the Verify Queue and it renders",
+      "admin opens Flight Recorder and sees timeline + chain-integrity badge",
+      "all thirteen local module screens render against real authenticated APIs",
+      "complaint statement persists and resolution survives reload with immutable history",
+      "care plan intervention records a completed outcome and reopens from storage",
+      "radiology report signs, locks editing and appends an audited addendum",
+      "doctor cannot open administrative feedback, governance or finance tools",
+      "saved report definitions reopen and export the previewed synthetic cohort"
+    ]
+  },
+  "harness_limitation": "After all11 journeys completed, a missed file-stream finish event stalled the harness join. Verified owned harness was signaled TERM; backend and knowledge worker shut down gracefully. timings.json was not emitted. This report reconstructs only printed live validation/timings and saved launcher/corpus/test evidence; it does not fabricate missing wire metadata. Native fetch clone, checkpointing and stream joins were fixed for the three-repeat run.",
+  "artifacts": "/private/tmp/orb-sage-browser-baseline-20261012",
+  "console_log": "/private/tmp/orb-sage-browser-baseline-20261012.log",
+  "cleanup": "Application shutdown complete; knowledge worker reaped; owned serverPID94176 finished"
+}

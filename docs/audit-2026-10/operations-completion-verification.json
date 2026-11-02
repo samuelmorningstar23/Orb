@@ -1,0 +1,456 @@
+{
+  "schema": "orb.audit.operations-completion/1",
+  "date": "2026-10-11",
+  "scope": [
+    "A19 backup publication and receipt-aware retention",
+    "A34 disposable WER benchmark state",
+    "A20 candidate-only release foundation",
+    "A20 bounded Python lint/format/strict typing/branch coverage and installed dependency visibility"
+  ],
+  "runtime": {
+    "python": "3.12.13",
+    "pytest": "9.0.3",
+    "pytest_asyncio": "1.3.0",
+    "interpreter": "/private/tmp/orb-core-upgrade-20261011/bin/python",
+    "fastapi": "0.133.0",
+    "starlette": "1.3.1",
+    "urllib3": "2.8.0",
+    "multidict": "6.9.1"
+  },
+  "operational_selection": {
+    "cwd": "server",
+    "command": "/private/tmp/orb-core-upgrade-20261011/bin/python -m pytest -q tests/test_admin_ops.py tests/test_backup_atomicity.py tests/test_backup_receipt.py tests/test_backup_ward_packs.py tests/test_benchmark_wer_isolation.py tests/test_release_candidate.py tests/test_ops_health.py",
+    "log": "/private/tmp/orb-operations-follow-up-20261011.log",
+    "passed": 79,
+    "failed": 0,
+    "skipped": 0,
+    "seconds": 26.11,
+    "execution": "Normal macOS execution was required by installed native libraries. All database, media, reference, repository and artifact inputs were owned synthetic temporary fixtures.",
+    "snapshot_note": "Historical completed A19/A34/candidate selection before the A20 HTTP upgrade and seven additional release CLI regressions; not silently recounted or presented as a fresh patched-framework run.",
+    "http_runtime_snapshot": {
+      "fastapi": "0.115.12",
+      "starlette": "0.46.2"
+    }
+  },
+  "restore_compatibility_selection": {
+    "cwd": "server",
+    "command": "ORB_DB_ENCRYPTION_KEY='' /private/tmp/orb-core-upgrade-20261011/bin/python -m pytest -q tests/test_warm_standby.py::test_restores_a_good_backup_end_to_end tests/test_warm_standby.py::test_receipt_is_written_on_success_and_on_failure tests/test_warm_standby.py::test_media_archive_is_restored_alongside_the_database tests/test_warm_standby.py::test_every_backup_dir_resolver_agrees",
+    "log": "/private/tmp/orb-operations-restore-compatibility-20261011.log",
+    "passed": 7,
+    "failed": 0,
+    "skipped": 0,
+    "seconds": 3.51,
+    "execution": "Explicit node selection excludes the real-backup test. The empty outer encryption-key override prevents collection-time discovery of real backups; each restore fixture supplies its synthetic key. An initial sandbox invocation had 3 socket-binding PermissionErrors and 4 passing path-resolver cases. The identical selection passed after normal localhost socket access was granted.",
+    "snapshot_note": "Historical completed A19/A34/candidate selection before the A20 HTTP upgrade and seven additional release CLI regressions; not silently recounted or presented as a fresh patched-framework run.",
+    "http_runtime_snapshot": {
+      "fastapi": "0.115.12",
+      "starlette": "0.46.2"
+    }
+  },
+  "static_validation": {
+    "bash_n_backup_sh": "passed",
+    "py_compile": [
+      "scripts/release_candidate.py",
+      "scripts/lib/verify_restore.py",
+      "server/scripts/backup_db.py",
+      "server/scripts/benchmark_wer.py",
+      "server/routes/backup_routes.py",
+      "server/services/ops_health_service.py"
+    ],
+    "diff_check": "passed for changed operational files",
+    "workflow_yaml_and_contract": {
+      "result": "passed",
+      "parser": "PyYAML BaseLoader",
+      "jobs": {
+        "ci.yml": 4,
+        "security.yml": 3,
+        "release-candidate.yml": 4
+      },
+      "assertions": [
+        "All three workflows have contents:read permissions only",
+        "CI and security accept an optional verified ref and use it for every checkout",
+        "Candidate CI and security reuse the existing complete workflows at the resolved commit",
+        "Candidate bundle needs resolve, CI and security",
+        "Visual CI invokes offline-fixtures-regression.cjs alongside existing checker and driver regressions",
+        "Backend CI retains full pytest after the explicit two-file lint, format, strict typing and coverage gate",
+        "Coverage gate requires exactly the two declared utility files and 100% statements and branches",
+        "Security keeps strict production/test pin gates, adds quality-tool pin audit and an installed slim Linux runtime transitive audit",
+        "Runtime dependencies and scanner use separate venvs; installed audit uses --strict --path with no advisory ignores or automatic fixes"
+      ]
+    }
+  },
+  "behavior_verified": {
+    "backup": [
+      "Same-second concurrent snapshots are unique, complete and private",
+      "Exclusive publication refuses overwrite and failed integrity checks leave no published snapshot",
+      "Common process lock serializes manual, admin and scheduled producers",
+      "New backup must have a parsed passing receipt matching its filename and byte size before retention",
+      "Failed, unchecked, malformed and mismatched receipts do not authorize pruning",
+      "Verified database, receipt and available media companions rotate together",
+      "Offsite copies publish complete private files without overwrite and copy the verdict last",
+      "Media archives are mode0600 from their first write even under caller umask022",
+      "Operations status does not report foreign, stale or invalid receipts as verified"
+    ],
+    "wer": [
+      "Fresh subprocess binds application imports to a token-marked disposable database",
+      "Seed operations are transactional and failures stop the run before ASR or success reporting",
+      "Cleanup cannot target a configured application database",
+      "Local reference input is opened read-only and copied privately before use",
+      "Daemon attachment and model downloads are disabled",
+      "Empty or failed ASR cannot be scored as a successful empty transcript",
+      "Owned database and files are removed on normal completion, failures and handled interruption"
+    ],
+    "candidate": [
+      "Existing semantic-version tag must match package.json at its commit",
+      "Tag and checked-out commit must still match the verified SHA before packaging",
+      "Only regular frontend build files and an explicit acceptance manifest enter the archive",
+      "Checksums cover the archive and manifest",
+      "Existing candidate output and symlink build inputs are refused",
+      "No publish, deploy, signing or production-data packaging step exists"
+    ]
+  },
+  "changed_files": [
+    "scripts/backup.sh",
+    "server/scripts/backup_db.py",
+    "server/routes/backup_routes.py",
+    "scripts/lib/verify_restore.py",
+    "server/services/ops_health_service.py",
+    "server/scripts/benchmark_wer.py",
+    "scripts/release_candidate.py",
+    ".github/workflows/ci.yml",
+    ".github/workflows/security.yml",
+    ".github/workflows/release-candidate.yml",
+    "server/tests/test_admin_ops.py",
+    "server/tests/test_backup_atomicity.py",
+    "server/tests/test_backup_receipt.py",
+    "server/tests/test_backup_ward_packs.py",
+    "server/tests/test_ops_health.py",
+    "server/tests/test_benchmark_wer_isolation.py",
+    "server/tests/test_release_candidate.py",
+    "e2e/06-offline-workflows.spec.ts",
+    "e2e/README.md",
+    "server/routes/import_mapping.py",
+    "server/requirements-quality.txt",
+    "tools/python-quality/pyproject.toml",
+    "tools/python-quality/README.md",
+    ".gitignore",
+    "docs/audit-2026-10/python-resolved-runtime-before-20261011.json",
+    "server/constraints-security.txt",
+    "server/requirements.txt",
+    "server/requirements-dev.txt",
+    "server/tests/test_http_dependency_security.py",
+    "docs/audit-2026-10/python-resolved-runtime-after-20261011.json"
+  ],
+  "independent_review": {
+    "operations": "Backend reviewer found and closed transient media archive permission exposure; no additional material backup or WER isolation issues found after the fix.",
+    "browser_harness": {
+      "scope": [
+        "e2e/06-offline-workflows.spec.ts",
+        "scripts/e2e_server.py",
+        "playwright.config.ts",
+        "tests/visual/driver.cjs",
+        "tests/visual/fixtures.cjs",
+        "tests/visual/offline-fixtures.cjs",
+        "tests/visual/offline-scenarios.cjs",
+        "tests/visual/offline-fixtures-regression.cjs"
+      ],
+      "result": "No additional material disposable-server or child-process ownership defect found. Three concrete evidence-contract gaps were reported. Root authorized this agent to repair only the CSV cohort assertion and document the eleven journeys; frontend owns mutation rejection and clinical role fixture corrections.",
+      "reported_gaps": [
+        "Unknown API GET/POST requests now fail the strict visual gate, with permanent actual-runner regressions; no generic mutation success fallback remains.",
+        "CSV cohort assertion repaired: exported patient IDs must match every API-preview and rendered-table patient ID; real-browser rerun is reported separately by root.",
+        "Clinical visual metadata now reflects the real clinical read/write role instead of writable admin fixtures; strengthened fixtures are covered by permanent regressions."
+      ],
+      "csv_assertion_static_verification": {
+        "typescript": "passed with --noEmit --target ES2022 --moduleResolution bundler --module esnext --esModuleInterop --skipLibCheck",
+        "playwright_list": "Six tests discovered in e2e/06-offline-workflows.spec.ts",
+        "synthetic_parser_checks": 6,
+        "parser_inputs": [
+          "UTF-8 BOM",
+          "CRLF records",
+          "quoted commas",
+          "quoted embedded newlines and escaped quotes",
+          "empty final fields",
+          "malformed or unclosed quote rejection"
+        ],
+        "diff_check": "passed",
+        "browser_execution": "Not rerun by this agent; root owns corrected reporting journey and complete eleven-journey run"
+      },
+      "latest_owner_evidence": "docs/audit-2026-10/offline-browser-verification.json",
+      "latest_owner_summary": "Frontend owner reports13permanent regressions passed; exact effective156new+245legacy capture manifests have0gatefindings, no newly added allowlist exemptions. Full browser metadata/counts are owned by that linked evidence and are not reaggregated here.",
+      "real_browser_patched_runtime_owner_result": {
+        "reported_by": "root",
+        "passed": 11,
+        "failed": 0,
+        "seconds": 26.5,
+        "evidence": "Root reports five screenshots and CSV persisted; root owns final artifact paths and browser completion manifest."
+      }
+    }
+  },
+  "limits": [
+    "These selections are focused verification and overlap broader repository evidence; no all-green repository aggregate is asserted.",
+    "Historical October 11 limit, superseded by the October 12 fresh-candidate migration: Hosted GitHub Actions and a real release candidate were not executed. Known ML dependency advisories remain blocking in the existing strict security workflow.",
+    "Python quality scope supersedes the earlier baseline-only tooling note: lint, formatting, strict typing and 100% statement/branch coverage now gate exactly two utility files; adoption across the remaining backend is still open.",
+    "No live database, .env, uploads, backups, model weights or restricted datasets were read or modified. No real benchmark, training, deployment or site restore drill was run.",
+    "Admin/manual backup remains database-only; scheduled backup carries available media and ward packs. Missing optional archives remain loud warnings.",
+    "Verification receipts bind filename and size; they are verification records rather than signed tamper-proof attestations.",
+    "File publication and producer locks are tested on local Mac/Linux filesystems. Power-loss behavior, network filesystem semantics, site key escrow and hardware recovery require site acceptance.",
+    "A SIGKILL may leave a disposable benchmark directory; it cannot redirect benchmark seeding to a configured application database.",
+    "Browser journeys, screenshot capture and final visual findings are owned and reported separately by root/frontend agents.",
+    "Historical October 11 limit, superseded by the October 12 fresh-candidate migration: The final installed macOS scan remains red (61matches/4packages:47retainedML,14orphanpypdfoutside declaredruntime).11HTTP/transitive matches were fixed. This is not the new hosted Linux slim runtime scan and does not assert green security."
+  ],
+  "python_quality": {
+    "scope": [
+      "server/routes/import_mapping.py",
+      "scripts/release_candidate.py"
+    ],
+    "scope_limit": "Explicit two-file adoption gate; no whole-backend formatting, lint, strict typing or coverage claim.",
+    "tools": {
+      "ruff": "0.17.0",
+      "mypy": "2.4.0",
+      "coverage": "7.16.2"
+    },
+    "requirements": "server/requirements-quality.txt",
+    "tool_dependencies": "All eight tool/direct transitive versions pinned; installed only into /private/tmp/orb-quality-tools-20261011 for local verification, not appliance/shared runtime.",
+    "sources": [
+      "https://pypi.org/project/ruff/0.17.0/",
+      "https://pypi.org/project/mypy/2.4.0/",
+      "https://pypi.org/project/coverage/7.16.2/"
+    ],
+    "cwd": ".",
+    "local_command_prefix": "PYTHONPATH=/private/tmp/orb-quality-tools-20261011 /private/tmp/orb-core-upgrade-20261011/bin/python -m",
+    "checks": [
+      {
+        "command": "ruff check --config tools/python-quality/pyproject.toml server/routes/import_mapping.py scripts/release_candidate.py",
+        "result": "passed"
+      },
+      {
+        "command": "ruff format --check --config tools/python-quality/pyproject.toml server/routes/import_mapping.py scripts/release_candidate.py",
+        "result": "passed: 2 files already formatted"
+      },
+      {
+        "command": "mypy --config-file tools/python-quality/pyproject.toml",
+        "result": "passed: strict mode, 2 source files"
+      },
+      {
+        "command": "coverage run --rcfile=tools/python-quality/pyproject.toml -m pytest -q server/tests/test_import_and_time_compatibility.py::test_both_importers_preserve_mapping_form_values server/tests/test_import_and_time_compatibility.py::test_both_importers_reject_ambiguous_mapping_types_with_422 server/tests/test_release_candidate.py",
+        "result": "passed",
+        "passed": 35,
+        "failed": 0,
+        "skipped": 0,
+        "seconds": 4.68,
+        "log": "/private/tmp/orb-python-quality-final-20261011.log"
+      },
+      {
+        "command": "coverage report --rcfile=tools/python-quality/pyproject.toml",
+        "result": "passed at fail_under=100"
+      },
+      {
+        "command": "coverage json --rcfile=tools/python-quality/pyproject.toml",
+        "result": "passed; both declared files present"
+      }
+    ],
+    "coverage_totals": {
+      "covered_lines": 90,
+      "num_statements": 90,
+      "percent_covered": 100.0,
+      "percent_covered_display": "100.00",
+      "missing_lines": 0,
+      "excluded_lines": 2,
+      "percent_statements_covered": 100.0,
+      "percent_statements_covered_display": "100.00",
+      "num_branches": 34,
+      "num_partial_branches": 0,
+      "covered_branches": 34,
+      "missing_branches": 0,
+      "percent_branches_covered": 100.0,
+      "percent_branches_covered_display": "100.00"
+    },
+    "coverage_files": {
+      "scripts/release_candidate.py": {
+        "covered_lines": 73,
+        "num_statements": 73,
+        "percent_covered": 100.0,
+        "percent_covered_display": "100.00",
+        "missing_lines": 0,
+        "excluded_lines": 2,
+        "percent_statements_covered": 100.0,
+        "percent_statements_covered_display": "100.00",
+        "num_branches": 26,
+        "num_partial_branches": 0,
+        "covered_branches": 26,
+        "missing_branches": 0,
+        "percent_branches_covered": 100.0,
+        "percent_branches_covered_display": "100.00"
+      },
+      "server/routes/import_mapping.py": {
+        "covered_lines": 17,
+        "num_statements": 17,
+        "percent_covered": 100.0,
+        "percent_covered_display": "100.00",
+        "missing_lines": 0,
+        "excluded_lines": 0,
+        "percent_statements_covered": 100.0,
+        "percent_statements_covered_display": "100.00",
+        "num_branches": 8,
+        "num_partial_branches": 0,
+        "covered_branches": 8,
+        "missing_branches": 0,
+        "percent_branches_covered": 100.0,
+        "percent_branches_covered_display": "100.00"
+      }
+    },
+    "coverage_exclusion": "Only conventional __main__ launcher (two lines). CLI main() resolve/output/bundle/error branches are exercised.",
+    "regression_rejection": {
+      "baseline": "Before seven missing release identity/CLI tests were added, 28 tests passed but scoped coverage was 80.65%; the 100% gate correctly exited 2.",
+      "tool_fault_injection": [
+        {
+          "check": "lint",
+          "exit_code": 1,
+          "rejected_regression": true
+        },
+        {
+          "check": "format",
+          "exit_code": 1,
+          "rejected_regression": true
+        },
+        {
+          "check": "strict_typing",
+          "exit_code": 1,
+          "rejected_regression": true
+        }
+      ],
+      "fixture_scope": "Owned disposable Python files only; no repository source mutations during fault injection."
+    },
+    "new_tests": "Seven release tests cover invalid resolved identity, malformed package shape, moved checkout, resolve output with/without GITHUB_OUTPUT, bundle refusal without verified SHA and successful gate-run provenance.",
+    "quality_pins_advisories": {
+      "scanner": "pip-audit==2.9.0",
+      "packages_audited": 8,
+      "advisory_matches": 0,
+      "exit_code": 0,
+      "report": "/private/tmp/orb-python-quality-pins-audit-20261011.json"
+    },
+    "hosted_ci": "Not executed; workflow YAML and scoped gate contracts validated locally.",
+    "patched_http_repeat": {
+      "passed": 35,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 5.24,
+      "log": "/private/tmp/orb-python-quality-patched-asgi-20261011.log",
+      "statement_coverage": "90/90",
+      "branch_coverage": "34/34",
+      "coverage_percent": 100,
+      "warning": "One unsuppressed Starlette TestClient httpx deprecation warning; existing httpx0.28.1 remains supported.",
+      "static_checks": "Ruff lint, Ruff format check and fresh-cache mypy strict all passed again after the HTTP dependency upgrade."
+    },
+    "independent_review": {
+      "result": "No material defect found; eight tool pins match installed versions, strict static checks independently passed, actual reduced-arc coverage exited2 and a one-file100% snapshot failed the exact CI scope assertion.",
+      "evidence": "/private/tmp/orb-independent-quality-gate-review.json",
+      "coverage": "/private/tmp/orb-independent-quality-coverage.json",
+      "coverage_failures_verified": [
+        "Reduced actual branch arcs rejected by coverage CLI with exit2",
+        "One-file100% coverage JSON rejected by the exact CI file-set assertion with exit1"
+      ]
+    }
+  },
+  "installed_dependency_scan": {
+    "workflow": "security.yml:python-runtime-audit",
+    "linux_job": "Installs requirements-dev.txt with CPU torch into an isolated runtime, checks dependencies, freezes resolved versions and scans the full site-packages from a separate pip-audit venv. Known failures are retained.",
+    "local_scope": "Actual macOS upgraded test runtime and inherited application site-packages, including ML/extras. This is not the Linux slim CI environment.",
+    "command": "/private/tmp/orb-dependency-audit-20261010/bin/python -m pip_audit --strict --path /private/tmp/orb-core-upgrade-20261011/lib/python3.12/site-packages --path /Users/samuelmorningstar/Documents/Projects/Orb/server/.venv/lib/python3.12/site-packages --format json --output /private/tmp/orb-core-resolved-runtime-after-20261011.json",
+    "exit_code": 1,
+    "packages_audited": 101,
+    "packages_skipped": 0,
+    "advisory_matches": 61,
+    "unique_advisory_ids": 61,
+    "sanitized_evidence": "docs/audit-2026-10/python-resolved-runtime-after-20261011.json",
+    "status": "The coordinated HTTP upgrade removes11matches (Starlette7, urllib3 3, multidict1). Remaining47MLmatches stay blocking;14orphanpypdfmatches are outside declared runtime.",
+    "full_linux_validation": "Hosted Linux runtime install/audit not run locally; new strict job must execute remotely.",
+    "local_before": {
+      "exit_code": 1,
+      "packages_audited": 100,
+      "packages_skipped": 0,
+      "advisory_matches": 72,
+      "unique_advisory_ids": 72,
+      "sanitized_evidence": "docs/audit-2026-10/python-resolved-runtime-before-20261011.json"
+    },
+    "after_command": "/private/tmp/orb-dependency-audit-20261010/bin/python -m pip_audit --strict --path /private/tmp/orb-core-upgrade-20261011/lib/python3.12/site-packages --path /Users/samuelmorningstar/Documents/Projects/Orb/server/.venv/lib/python3.12/site-packages --format json --output /private/tmp/orb-core-resolved-runtime-after-20261011.json",
+    "requirements_resolution": "Committed requirements-dev.txt relative -c constraints-security.txt resolves with no additional installs; python -m pip check passed on the actual upgraded temporary interpreter.",
+    "install_plan": "/private/tmp/orb-asgi-security-upgrade-plan-20261011.json",
+    "install_receipt": "/private/tmp/orb-asgi-security-upgrade-installed-20261011.json",
+    "production_direct_gate": {
+      "packages_audited": 18,
+      "advisory_matches": 46,
+      "affected": [
+        "torch==2.6.0",
+        "transformers==4.49.0"
+      ],
+      "exit_code": 1,
+      "report": "/private/tmp/orb-production-pins-after-asgi-20261011.json"
+    },
+    "test_direct_gate": {
+      "packages_audited": 17,
+      "advisory_matches": 22,
+      "affected": [
+        "torch==2.6.0"
+      ],
+      "exit_code": 1,
+      "report": "/private/tmp/orb-dev-pins-after-asgi-20261011.json"
+    },
+    "http_constraints_gate": {
+      "packages_audited": 3,
+      "advisory_matches": 0,
+      "exit_code": 0,
+      "report": "/private/tmp/orb-http-constraint-pins-audit-20261011.json"
+    }
+  },
+  "last_updated_local_date": "2026-10-12",
+  "http_security_regressions": {
+    "file": "server/tests/test_http_dependency_security.py",
+    "command": "/private/tmp/orb-core-upgrade-20261011/bin/python -m pytest -q tests/test_http_dependency_security.py",
+    "cwd": "server",
+    "passed": 11,
+    "failed": 0,
+    "skipped": 0,
+    "seconds": 1.73,
+    "log": "/private/tmp/orb-http-dependency-security-20261011.log",
+    "behavior": [
+      "Malformed Host cannot poison path/query or inject URL fragment",
+      "Valid host/port handling is preserved",
+      "Streamed urlencoded field count and cumulative name/value size limits reject before treating forms as parsed",
+      "Boundary and empty valid forms still succeed",
+      "Oversized suffix ranges clamp to actual file size and content range"
+    ],
+    "fixtures": "Tiny synthetic ASGI bodies and owned private temporary files; no app/model lifespan or network services.",
+    "broad_compatibility_evidence": "docs/audit-2026-10/http-dependency-compatibility.json",
+    "counts": "Separate focused11cases; do not sum with broader overlapping repository evidence.",
+    "independent_compatibility_summary": {
+      "core_selection": {
+        "files": 36,
+        "passed": 675,
+        "failed": 0,
+        "skipped": 0,
+        "seconds": 93.48
+      },
+      "offline_selection": {
+        "files": 30,
+        "passed": 573,
+        "failed": 0,
+        "skipped": 0,
+        "seconds": 94.48
+      },
+      "overlap": "request_limits and unauthenticated_surface overlap; no unique aggregate is asserted.",
+      "source": "docs/audit-2026-10/http-dependency-compatibility.json"
+    }
+  },
+  "ml_security_followup": {
+    "status": "Fresh candidate dependency migration verified; historical remaining-ML notes below are superseded for the fresh candidate only. Shared/live environment deliberately unchanged.",
+    "evidence": "docs/audit-2026-10/ml-security-verification.json",
+    "installed_packages_audited": 70,
+    "installed_advisory_matches": 0,
+    "apple_production_resolved_packages_audited": 76,
+    "apple_production_advisory_matches": 0,
+    "installer_passed": 15,
+    "utility_quality_passed": 35,
+    "count_limit": "Overlapping scoped evidence; do not add these counts to broader suite totals."
+  }
+}

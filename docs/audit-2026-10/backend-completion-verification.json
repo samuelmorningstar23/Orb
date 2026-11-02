@@ -1,0 +1,221 @@
+{
+  "schema_version": 1,
+  "audit_date": "2026-10-11",
+  "scope": [
+    "A18 backend media streaming completion, failure, cancellation and ASR protocol",
+    "A31 shared import parsing, bounded roster read and Pydantic/UTC compatibility",
+    "Confirmed eMAR explicit-offset parsing and recent-administration query correction"
+  ],
+  "environment": {
+    "working_directory": "/Users/samuelmorningstar/Documents/Projects/Orb/server",
+    "python_executable": "/private/tmp/orb-core-upgrade-20261011/bin/python",
+    "platform": "macOS arm64",
+    "execution_permissions": "Native dependency imports required sandbox escalation."
+  },
+  "final_affected_selection": {
+    "command": "/private/tmp/orb-core-upgrade-20261011/bin/python -m pytest tests/test_media_stream_contracts.py tests/test_import_and_time_compatibility.py tests/test_asr_failure_contracts.py tests/test_media_upload_errors.py tests/test_lens.py tests/test_lens_review_filing.py tests/test_lens_filed_disclaimer.py tests/test_scribe_pipeline.py tests/test_scribe_structuring_rules.py tests/test_scribe_placeholder_sections.py tests/test_history_import.py tests/test_roster_import.py tests/test_admission_form_choices.py tests/test_emar.py tests/test_dose_guard.py tests/test_helix_ward_receipt.py tests/test_helix_order_lifecycle.py tests/test_speech_offline.py tests/test_scribe_audio_tempfiles.py tests/test_whisper_audio_tempfiles.py tests/test_models_switch.py tests/test_event_loop_discipline.py tests/test_inference_audit_lanes.py -q",
+    "shell_command": "/private/tmp/orb-core-upgrade-20261011/bin/python -m pytest tests/test_media_stream_contracts.py tests/test_import_and_time_compatibility.py tests/test_asr_failure_contracts.py tests/test_media_upload_errors.py tests/test_lens.py tests/test_lens_review_filing.py tests/test_lens_filed_disclaimer.py tests/test_scribe_pipeline.py tests/test_scribe_structuring_rules.py tests/test_scribe_placeholder_sections.py tests/test_history_import.py tests/test_roster_import.py tests/test_admission_form_choices.py tests/test_emar.py tests/test_dose_guard.py tests/test_helix_ward_receipt.py tests/test_helix_order_lifecycle.py tests/test_speech_offline.py tests/test_scribe_audio_tempfiles.py tests/test_whisper_audio_tempfiles.py tests/test_models_switch.py tests/test_event_loop_discipline.py tests/test_inference_audit_lanes.py -q > /private/tmp/orb-backend-a18-a31-final.log 2>&1",
+    "test_files": [
+      "tests/test_media_stream_contracts.py",
+      "tests/test_import_and_time_compatibility.py",
+      "tests/test_asr_failure_contracts.py",
+      "tests/test_media_upload_errors.py",
+      "tests/test_lens.py",
+      "tests/test_lens_review_filing.py",
+      "tests/test_lens_filed_disclaimer.py",
+      "tests/test_scribe_pipeline.py",
+      "tests/test_scribe_structuring_rules.py",
+      "tests/test_scribe_placeholder_sections.py",
+      "tests/test_history_import.py",
+      "tests/test_roster_import.py",
+      "tests/test_admission_form_choices.py",
+      "tests/test_emar.py",
+      "tests/test_dose_guard.py",
+      "tests/test_helix_ward_receipt.py",
+      "tests/test_helix_order_lifecycle.py",
+      "tests/test_speech_offline.py",
+      "tests/test_scribe_audio_tempfiles.py",
+      "tests/test_whisper_audio_tempfiles.py",
+      "tests/test_models_switch.py",
+      "tests/test_event_loop_discipline.py",
+      "tests/test_inference_audit_lanes.py"
+    ],
+    "selected_file_count": 23,
+    "tests_passed": 1290,
+    "tests_failed": 0,
+    "tests_skipped": 0,
+    "exit_code": 0,
+    "duration_seconds": 39.05,
+    "log": {
+      "path": "/private/tmp/orb-backend-a18-a31-final.log",
+      "sha256": "f7c5c78d8b2dbb1c5f91a57e7a4d1b2be2d6168f4fd2add784f97ead392a7223"
+    }
+  },
+  "focused_subset": {
+    "test_files": [
+      "tests/test_media_stream_contracts.py",
+      "tests/test_import_and_time_compatibility.py",
+      "tests/test_asr_failure_contracts.py",
+      "tests/test_media_upload_errors.py"
+    ],
+    "tests_passed": 81,
+    "tests_failed": 0,
+    "duration_seconds": 5.91,
+    "log": {
+      "path": "/private/tmp/orb-backend-a18-a31-focused-final.log",
+      "sha256": "c2176ec3663d764c9f4a257fe460c1125249e4f3da7d57d5945f01b6ca104ae9"
+    },
+    "overlaps_final_selection": true,
+    "counting_note": "These 81 tests are included in the 1,290-test final selection; do not sum the counts."
+  },
+  "new_regression_modules": [
+    {
+      "path": "server/tests/test_media_stream_contracts.py",
+      "tests": 23
+    },
+    {
+      "path": "server/tests/test_import_and_time_compatibility.py",
+      "tests": 29
+    },
+    {
+      "path": "server/tests/test_asr_failure_contracts.py",
+      "tests": 21
+    }
+  ],
+  "runtime_files": [
+    "server/services/lens_service.py",
+    "server/routes/lens_routes.py",
+    "server/routes/scribe_routes.py",
+    "server/services/scribe_service.py",
+    "server/services/scribe_providers.py",
+    "server/ws/scribe_stream.py",
+    "server/routes/import_mapping.py",
+    "server/routes/admin_routes.py",
+    "server/routes/roster_import_routes.py",
+    "server/routes/admission_routes.py",
+    "server/services/helix_service.py",
+    "server/services/emar_service.py"
+  ],
+  "diff_check": {
+    "command": "git diff --check -- <the runtime and new regression files listed in this record>",
+    "exit_code": 0
+  },
+  "interpretation": [
+    "The working tree includes extensive pre-existing user and concurrent agent changes. Only surgical changes in the assigned scope are attributed to this pass.",
+    "All database fixtures, audio, images, model responses, subprocess results and provider failures used by these regressions are synthetic.",
+    "No live clinical database, .env values, uploads, backups, running ASR daemon or actual model inference was accessed.",
+    "Temporary log paths identify local verification evidence; they are not durable CI artifact URLs.",
+    "This selection is an affected-scope regression run, not a repository-wide backend acceptance claim."
+  ],
+  "remaining_acceptance": [
+    "R026 remains a candidate under review, not imported into main. Frozen-candidate and independent adversarial chart/history acceptance are still required.",
+    "PostgreSQL remains explicitly unsupported/fail-fast. Real dialect/migration/FTS-vector, transaction/concurrency and backup/restore parity acceptance was not performed.",
+    "Real GPU inference, MLX producer cancellation and model loading require hardware acceptance beyond these synthetic protocol/error/ownership tests."
+  ],
+  "client_completion_followup": {
+    "scope": [
+      "Sage text/voice completion and typed generic failure",
+      "Authenticated request ownership across all raw API callers",
+      "Shared binary/text/multipart session transport",
+      "Malformed HTTP refusal envelope normalization"
+    ],
+    "working_directory": "/Users/samuelmorningstar/Documents/Projects/Orb",
+    "command": "node node_modules/vitest/vitest.mjs run src/api/rawSessionStreams.test.ts src/api/rawWrapperOwnership.test.ts src/api/downtime.test.ts src/api/pharmacyStore/index.test.ts src/api/wardRecord.test.ts src/api/streamCompletion.test.ts src/api/domainTransport.test.ts src/api/sessionRefresh.test.ts src/api/client.errors.test.ts src/api/sse.test.ts src/api/structureNote.test.ts src/api/thinkingMode.test.ts src/api/browserPersistence.test.ts src/api/offlineQueueOwnership.test.ts src/api/bridgeClient.test.ts src/api/logoutSession.test.ts src/api/pinLogin401.test.ts src/api/localWorkbenchDownload.test.ts src/pages/panels/admin/RosterImport.test.tsx src/pages/panels/adt/CensusView.test.tsx src/components/helix/PharmacyVerifyQueue.test.tsx src/components/helix/PharmacyVerifyQueue.allergy.test.tsx src/pages/panels/nurse/ObsEntrySheet.test.tsx --reporter=default --reporter=json --outputFile.json=/private/tmp/orb-raw-wrapper-final-results.json",
+    "test_files": [
+      "src/api/rawSessionStreams.test.ts",
+      "src/api/rawWrapperOwnership.test.ts",
+      "src/api/downtime.test.ts",
+      "src/api/pharmacyStore/index.test.ts",
+      "src/api/wardRecord.test.ts",
+      "src/api/streamCompletion.test.ts",
+      "src/api/domainTransport.test.ts",
+      "src/api/sessionRefresh.test.ts",
+      "src/api/client.errors.test.ts",
+      "src/api/sse.test.ts",
+      "src/api/structureNote.test.ts",
+      "src/api/thinkingMode.test.ts",
+      "src/api/browserPersistence.test.ts",
+      "src/api/offlineQueueOwnership.test.ts",
+      "src/api/bridgeClient.test.ts",
+      "src/api/logoutSession.test.ts",
+      "src/api/pinLogin401.test.ts",
+      "src/api/localWorkbenchDownload.test.ts",
+      "src/pages/panels/admin/RosterImport.test.tsx",
+      "src/pages/panels/adt/CensusView.test.tsx",
+      "src/components/helix/PharmacyVerifyQueue.test.tsx",
+      "src/components/helix/PharmacyVerifyQueue.allergy.test.tsx",
+      "src/pages/panels/nurse/ObsEntrySheet.test.tsx"
+    ],
+    "selected_file_count": 23,
+    "tests_passed": 260,
+    "tests_failed": 0,
+    "tests_skipped": 0,
+    "exit_code": 0,
+    "duration_seconds": 2.22,
+    "log": {
+      "path": "/private/tmp/orb-raw-wrapper-final.log",
+      "sha256": "982aa3eac7d3b326d6290db9f14cfa0487767166402ea0ce16c6e817cfaeb454"
+    },
+    "machine_results": {
+      "path": "/private/tmp/orb-raw-wrapper-final-results.json",
+      "sha256": "bebc55a003201c5e99eda2ec770d23308346fb78f651487a52341c29e5300adf"
+    },
+    "new_regression_modules": [
+      {
+        "path": "src/api/rawSessionStreams.test.ts",
+        "tests": 69
+      },
+      {
+        "path": "src/api/rawWrapperOwnership.test.ts",
+        "tests": 44
+      }
+    ],
+    "production_files": [
+      "src/api/client.ts",
+      "src/api/downtime.ts",
+      "src/api/rosterImport.ts",
+      "src/api/adt/census.ts",
+      "src/api/pharmacyStore/index.ts",
+      "src/api/wardRecord.ts",
+      "src/api/nurse.ts",
+      "src/api/pharmacy.ts",
+      "src/api/localWorkbenchDownload.ts"
+    ],
+    "existing_test_adjustments": [
+      "src/api/downtime.test.ts",
+      "src/pages/panels/adt/CensusView.test.tsx",
+      "src/pages/panels/pharmacyStore/NdpsView.test.tsx"
+    ],
+    "interpretation": [
+      "This frontend selection overlaps earlier103/168-test runs. Only the final260-test result is counted here.",
+      "The113 new cases (69 stream/session and44 wrapper cases) are included in260, not additive.",
+      "Only synthetic responses, identities, files and utterances were used. No live clinical data or models were accessed.",
+      "Production dist remained untouched by this agent; final rebuild and real-browser acceptance belong to the root agent."
+    ],
+    "diff_check_exit_code": 0,
+    "compiler_note": "Full project typecheck/build are coordinated by the root agent; do not infer their result from this API test selection.",
+    "shell_command": "node node_modules/vitest/vitest.mjs run src/api/rawSessionStreams.test.ts src/api/rawWrapperOwnership.test.ts src/api/downtime.test.ts src/api/pharmacyStore/index.test.ts src/api/wardRecord.test.ts src/api/streamCompletion.test.ts src/api/domainTransport.test.ts src/api/sessionRefresh.test.ts src/api/client.errors.test.ts src/api/sse.test.ts src/api/structureNote.test.ts src/api/thinkingMode.test.ts src/api/browserPersistence.test.ts src/api/offlineQueueOwnership.test.ts src/api/bridgeClient.test.ts src/api/logoutSession.test.ts src/api/pinLogin401.test.ts src/api/localWorkbenchDownload.test.ts src/pages/panels/admin/RosterImport.test.tsx src/pages/panels/adt/CensusView.test.tsx src/components/helix/PharmacyVerifyQueue.test.tsx src/components/helix/PharmacyVerifyQueue.allergy.test.tsx src/pages/panels/nurse/ObsEntrySheet.test.tsx --reporter=default --reporter=json --outputFile.json=/private/tmp/orb-raw-wrapper-final-results.json > /private/tmp/orb-raw-wrapper-final.log 2>&1",
+    "typecheck": {
+      "command": "node node_modules/typescript/bin/tsc -b",
+      "exit_code": 0,
+      "log_path": "/private/tmp/orb-raw-wrapper-typecheck.log",
+      "note": "Started just before root requested sole compiler ownership; no further compiler started by this agent. Root owns final build."
+    },
+    "ndps_test_double_followup": {
+      "command": "node node_modules/vitest/vitest.mjs run src/pages/panels/pharmacyStore/NdpsView.test.tsx",
+      "test_files": [
+        "src/pages/panels/pharmacyStore/NdpsView.test.tsx"
+      ],
+      "tests_passed": 9,
+      "tests_failed": 0,
+      "exit_code": 0,
+      "log": {
+        "path": "/private/tmp/orb-ndps-export-test-double.log",
+        "sha256": "cb9e459ddd7c45d406baaedb6ddacb8e71cd2142483665d2066274e4f6127d5f"
+      },
+      "reason": "The old whole-client mock omitted apiFetchBlob and ApiIdentityChangedError; a partial mock keeps the actual export transport. The assertion now names the real origin-rooted URL with the same path and query.",
+      "production_source_changed": false,
+      "counting_note": "This separate 9-test module is outside the 260-test affected selection above; root owns the later full frontend suite. Do not add this focused result to repository-wide totals."
+    }
+  }
+}

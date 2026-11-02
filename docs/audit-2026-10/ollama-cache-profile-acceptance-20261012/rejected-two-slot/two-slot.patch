@@ -1,0 +1,133 @@
+--- a/scripts/serve-ollama.sh
++++ b/scripts/serve-ollama.sh
+@@ -12,10 +12,15 @@
+ Usage: scripts/serve-ollama.sh
+ 
+ Executes `ollama serve` on loopback, with cloud features disabled, startup
+-pruning disabled, one request per model, and f16 KV cache. No model is pulled.
++pruning disabled, and f16 KV cache. The qualified full-SWA profile provides two
++live cache slots, each with Orb's 8192-token context; Orb retains one inference
++request owner. Other profiles keep one slot. No model is pulled.
+ ORB_OLLAMA_SWA_FULL=auto|on|off (default auto): full SWA cache is qualified only
+ for Ollama 0.35.1 on Apple Silicon with at least 64 GiB unified memory. The
+ qualification covers Orb's 8192-token interactive context and cached 27B model.
++Two slots require separate KV buffers: explicit unified KV is rejected when
++full SWA is enabled. Full-size f16 KV for both slots is 7936 MiB, plus weights,
++scratch buffers, and RAM prompt snapshots.
+ Explicit LLAMA_ARG_SWA_FULL is respected or a conflicting setting is rejected.
+ Off means this launcher does not enable full SWA; llama.cpp config.ini can
+ independently enable it. An already-running daemon must be configured separately.
+@@ -88,10 +93,20 @@
+   enable_full=1
+ fi
+ if [ "$enable_full" -eq 1 ]; then
++  # Unified KV clears idle slots after saving RAM snapshots. Separate buffers
++  # keep the general/patient prefix live while a department prompt uses slot 2.
++  if [ "${LLAMA_ARG_KV_UNIFIED+x}" = x ]; then
++    case "$LLAMA_ARG_KV_UNIFIED" in
++      0|false|off|disabled) ;;
++      1|true|on|enabled) fail 'Full SWA cache slots require LLAMA_ARG_KV_UNIFIED=false; explicit unified KV conflicts.' ;;
++      *) fail 'For full SWA cache slots, LLAMA_ARG_KV_UNIFIED must be 0/false/off/disabled.' ;;
++    esac
++  fi
++  export OLLAMA_NUM_PARALLEL=2 LLAMA_ARG_KV_UNIFIED=false
+   if [ "$explicit" = unset ]; then export LLAMA_ARG_SWA_FULL=1; fi
+   info 'Full SWA cache enabled for the qualified 64 GiB Apple Silicon profile (Ollama 0.35.1).'
+ else
+   info 'Full SWA is not enabled by this launcher; runner config.ini may independently enable it.'
+ fi
+-info "Executing Ollama $version on $OLLAMA_HOST; parallel=1, KV=f16, cloud disabled."
++info "Executing Ollama $version on $OLLAMA_HOST; cache slots=$OLLAMA_NUM_PARALLEL, Orb inference owner=1, per-slot context=8192, KV=f16, cloud disabled."
+ exec "$ollama_bin" serve
+--- a/server/tests/test_ollama_launcher.py
++++ b/server/tests/test_ollama_launcher.py
+@@ -36,7 +36,7 @@
+     elif sys.argv[1:] == ['serve']:
+         keys = ['OLLAMA_HOST', 'OLLAMA_NO_CLOUD', 'OLLAMA_NOPRUNE',
+                 'OLLAMA_NUM_PARALLEL', 'OLLAMA_KV_CACHE_TYPE',
+-                'LLAMA_ARG_SWA_FULL', 'OLLAMA_FLASH_ATTENTION',
++                'LLAMA_ARG_SWA_FULL', 'LLAMA_ARG_KV_UNIFIED', 'OLLAMA_FLASH_ATTENTION',
+                 'LLAMA_ARG_BATCH', 'LLAMA_ARG_UBATCH']
+         pathlib.Path(os.environ['LAUNCH_CAPTURE']).write_text(json.dumps({{
+             'argv':sys.argv[1:], 'pid':os.getpid(), 'env':{{key:os.environ.get(key) for key in keys}},
+@@ -118,8 +118,9 @@
+     assert payload["argv"] == ["serve"]
+     assert payload["env"] == {
+         "OLLAMA_HOST": "127.0.0.1:11434", "OLLAMA_NO_CLOUD": "1",
+-        "OLLAMA_NOPRUNE": "1", "OLLAMA_NUM_PARALLEL": "1",
++        "OLLAMA_NOPRUNE": "1", "OLLAMA_NUM_PARALLEL": "2",
+         "OLLAMA_KV_CACHE_TYPE": "f16", "LLAMA_ARG_SWA_FULL": "1",
++        "LLAMA_ARG_KV_UNIFIED": "false",
+         "OLLAMA_FLASH_ATTENTION": "auto", "LLAMA_ARG_BATCH": None,
+         "LLAMA_ARG_UBATCH": None,
+     }
+@@ -286,3 +287,57 @@
+     logs = list(launcher.directory.glob("orb-ollama-serve.*"))
+     assert len(logs) == 1
+     assert "Full SWA requires tested" in logs[0].read_text()
++
++
++@pytest.mark.parametrize("profile", ["auto", "on"])
++@pytest.mark.parametrize("explicit", [None, "0", "false", "off", "disabled"])
++def test_qualified_full_profile_keeps_two_separate_live_cache_slots(launcher, profile, explicit):
++    overrides = {"ORB_OLLAMA_SWA_FULL": profile, "OLLAMA_NUM_PARALLEL": "99"}
++    if explicit is not None:
++        overrides["LLAMA_ARG_KV_UNIFIED"] = explicit
++    result, payload, calls = launcher(overrides)
++    assert result.returncode == 0, result.stderr
++    assert payload["env"]["OLLAMA_NUM_PARALLEL"] == "2"
++    assert payload["env"]["LLAMA_ARG_KV_UNIFIED"] == "false"
++    assert "cache slots=2, Orb inference owner=1, per-slot context=8192" in result.stderr
++    assert calls == [["--version"], ["serve"]]
++
++
++@pytest.mark.parametrize("explicit", ["1", "true", "on", "enabled", "", "surprise", "FALSE", "2"])
++def test_full_profile_rejects_conflicting_or_malformed_unified_kv_before_serve(launcher, explicit):
++    result, payload, calls = launcher({"LLAMA_ARG_KV_UNIFIED": explicit})
++    assert result.returncode == 1
++    assert "LLAMA_ARG_KV_UNIFIED" in result.stderr
++    assert payload is None
++    assert calls == [["--version"]]
++
++
++@pytest.mark.parametrize("overrides", [
++    {"ORB_OLLAMA_SWA_FULL": "off"},
++    {"LLAMA_ARG_SWA_FULL": "false"},
++    {"FAKE_OS": "Linux"},
++    {"FAKE_MEMORY": str(32 * 2**30)},
++    {"FAKE_VERSION": "ollama version is 0.36.0"},
++])
++@pytest.mark.parametrize("unified", [None, "false", "1"])
++def test_single_slot_fallback_preserves_independent_kv_setting(launcher, overrides, unified):
++    values = {**overrides, "OLLAMA_NUM_PARALLEL": "99"}
++    if unified is not None:
++        values["LLAMA_ARG_KV_UNIFIED"] = unified
++    result, payload, calls = launcher(values)
++    assert result.returncode == 0, result.stderr
++    assert payload["env"]["OLLAMA_NUM_PARALLEL"] == "1"
++    assert payload["env"]["LLAMA_ARG_KV_UNIFIED"] == unified
++    assert "cache slots=1" in result.stderr
++    assert calls == [["--version"], ["serve"]]
++
++
++def test_help_explains_live_slots_and_preserves_app_single_owner_without_commands(launcher):
++    result, payload, calls = launcher(arguments=("--help",))
++    assert result.returncode == 0
++    assert "two\nlive cache slots" in result.stdout
++    assert "8192-token context" in result.stdout
++    assert "one inference\nrequest owner" in result.stdout
++    assert "7936 MiB" in result.stdout
++    assert payload is None
++    assert calls == []
+--- a/server/tests/test_run_orb_launcher.py
++++ b/server/tests/test_run_orb_launcher.py
+@@ -142,7 +142,8 @@
+     result, payload, calls = stack()
+     assert result.returncode == 0, result.stdout + result.stderr
+     assert payload["host"] == "http://localhost:11434"
+-    assert payload["swa"] == payload["cloud"] == payload["parallel"] == "1"
++    assert payload["swa"] == payload["cloud"] == "1"
++    assert payload["parallel"] == "2"
+     assert [call["args"] for call in calls if call["tool"] == "ollama"] == [["--version"], ["serve"]]
+     with pytest.raises(ProcessLookupError):
+         os.kill(payload["pid"], 0)

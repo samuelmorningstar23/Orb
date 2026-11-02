@@ -1,0 +1,713 @@
+{
+  "schema": "orb.audit.sage-browser-latency-cache-save/1",
+  "recorded_at_utc": "2026-10-12T09:14:09.851385+00:00",
+  "status": "PASSED_WARM_TARGETS_WITH_COLD_AND_CHART_PREPARATION_LIMITS",
+  "qualification": "idle synthetic local inference; not busy-ward acceptance",
+  "summary": "All nine warm first-readable targets passed, all 11 actual LLM turns completed successfully, and all 11 real browser journeys passed. Cold start missed at 19.982s. Separate chart submit-to-readable passed at 2.039s; chart preparation took 23.255s and chart-open to readable 25.409s. These limits remain explicit; this is not a universal SLA.",
+  "timing_target_interpretation": "strict submit-to-first-readable-visible-answer; successful completion required",
+  "strict_targets_ms": {
+    "general": 3000,
+    "patient": 5000,
+    "department": 10000
+  },
+  "initial_observation_retained": true,
+  "cold_policy": "Initial nonresident runner is shown separately with its target miss retained. No manufactured unload or hidden answer warmup.",
+  "warm_counts": {
+    "observations": 9,
+    "passed": 9,
+    "failed": 0
+  },
+  "warm_by_category": {
+    "general": {
+      "first_readable_ms": [
+        1631.3,
+        723,
+        969.1
+      ],
+      "passes": 3,
+      "observations": 3
+    },
+    "patient": {
+      "first_readable_ms": [
+        3544.8,
+        3531.9,
+        3416
+      ],
+      "passes": 3,
+      "observations": 3
+    },
+    "department": {
+      "first_readable_ms": [
+        5377,
+        431.8,
+        429.4
+      ],
+      "passes": 3,
+      "observations": 3
+    }
+  },
+  "observations": [
+    {
+      "index": 0,
+      "category": "general",
+      "repeat": null,
+      "phase": "initial residency diagnostic; excluded from warm SLA",
+      "query": "What does oxygen saturation measure? Answer briefly.",
+      "first_readable_ms": 19982.1,
+      "full_completion_ms": 24214.9,
+      "target_ms": 3000,
+      "target_met": false,
+      "successful_completion": true,
+      "server_timing": {
+        "retrieval_ms": 5779,
+        "ttft_ms": 19707,
+        "first_content_ms": 19901,
+        "total_ms": 24187
+      },
+      "provider_split": {
+        "backend_log_line": 804,
+        "model": "medgemma:27b",
+        "prompt_evaluated_tokens": 697,
+        "prompt_evaluation_ms": 4548,
+        "decode_tokens": 70,
+        "decode_ms": 4480,
+        "prompt_total_tokens": 697,
+        "prompt_cached_tokens": 0
+      },
+      "screenshot": "00-general.png"
+    },
+    {
+      "index": 1,
+      "category": "general",
+      "repeat": 1,
+      "phase": "warm SLA",
+      "query": "What does oxygen saturation measure? Answer briefly.",
+      "first_readable_ms": 1631.3,
+      "full_completion_ms": 5972.5,
+      "target_ms": 3000,
+      "target_met": true,
+      "successful_completion": true,
+      "server_timing": {
+        "retrieval_ms": 1268,
+        "ttft_ms": 1363,
+        "first_content_ms": 1560,
+        "total_ms": 5956
+      },
+      "provider_split": {
+        "backend_log_line": 847,
+        "model": "medgemma:27b",
+        "prompt_evaluated_tokens": 1,
+        "prompt_evaluation_ms": 79,
+        "decode_tokens": 71,
+        "decode_ms": 4594,
+        "prompt_total_tokens": 697,
+        "prompt_cached_tokens": 696
+      },
+      "screenshot": "01-general.png"
+    },
+    {
+      "index": 2,
+      "category": "patient",
+      "repeat": 1,
+      "phase": "warm SLA",
+      "query": "Summarize Ananya Kapoor's current chart and the recorded facts that need clinician review. Answer briefly.",
+      "first_readable_ms": 3544.8,
+      "full_completion_ms": 36278.4,
+      "target_ms": 5000,
+      "target_met": true,
+      "successful_completion": true,
+      "server_timing": {
+        "retrieval_ms": 319,
+        "ttft_ms": 3120,
+        "first_content_ms": 3328,
+        "total_ms": 36259
+      },
+      "provider_split": {
+        "backend_log_line": 860,
+        "model": "medgemma:27b",
+        "prompt_evaluated_tokens": 432,
+        "prompt_evaluation_ms": 2748,
+        "decode_tokens": 498,
+        "decode_ms": 33139,
+        "prompt_total_tokens": 1005,
+        "prompt_cached_tokens": 573
+      },
+      "screenshot": "02-patient.png"
+    },
+    {
+      "index": 3,
+      "category": "department",
+      "repeat": 1,
+      "phase": "warm SLA",
+      "query": "Give a concise overview of my department's admitted patients and identify recorded concerns for clinician review.",
+      "first_readable_ms": 5377,
+      "full_completion_ms": 22285.6,
+      "target_ms": 10000,
+      "target_met": true,
+      "successful_completion": true,
+      "server_timing": {
+        "retrieval_ms": 3,
+        "ttft_ms": 5153,
+        "first_content_ms": 5153,
+        "total_ms": 22269
+      },
+      "provider_split": {
+        "backend_log_line": 868,
+        "model": "medgemma:27b",
+        "prompt_evaluated_tokens": 821,
+        "prompt_evaluation_ms": 5090,
+        "decode_tokens": 258,
+        "decode_ms": 17115,
+        "prompt_total_tokens": 824,
+        "prompt_cached_tokens": 3
+      },
+      "screenshot": "03-department.png"
+    },
+    {
+      "index": 4,
+      "category": "general",
+      "repeat": 2,
+      "phase": "warm SLA",
+      "query": "What does oxygen saturation measure? Answer briefly.",
+      "first_readable_ms": 723,
+      "full_completion_ms": 5072.7,
+      "target_ms": 3000,
+      "target_met": true,
+      "successful_completion": true,
+      "server_timing": {
+        "retrieval_ms": 297,
+        "ttft_ms": 466,
+        "first_content_ms": 650,
+        "total_ms": 5058
+      },
+      "provider_split": {
+        "backend_log_line": 879,
+        "model": "medgemma:27b",
+        "prompt_evaluated_tokens": 1,
+        "prompt_evaluation_ms": 64,
+        "decode_tokens": 74,
+        "decode_ms": 4591,
+        "prompt_total_tokens": 697,
+        "prompt_cached_tokens": 696
+      },
+      "screenshot": "04-general.png"
+    },
+    {
+      "index": 5,
+      "category": "patient",
+      "repeat": 2,
+      "phase": "warm SLA",
+      "query": "Summarize Ananya Kapoor's current chart and the recorded facts that need clinician review. Answer briefly.",
+      "first_readable_ms": 3531.9,
+      "full_completion_ms": 47260.3,
+      "target_ms": 5000,
+      "target_met": true,
+      "successful_completion": true,
+      "server_timing": {
+        "retrieval_ms": 309,
+        "ttft_ms": 3141,
+        "first_content_ms": 3338,
+        "total_ms": 47245
+      },
+      "provider_split": {
+        "backend_log_line": 893,
+        "model": "medgemma:27b",
+        "prompt_evaluated_tokens": 432,
+        "prompt_evaluation_ms": 2735,
+        "decode_tokens": 688,
+        "decode_ms": 44104,
+        "prompt_total_tokens": 1005,
+        "prompt_cached_tokens": 573
+      },
+      "screenshot": "05-patient.png"
+    },
+    {
+      "index": 6,
+      "category": "department",
+      "repeat": 2,
+      "phase": "warm SLA",
+      "query": "Give a concise overview of my department's admitted patients and identify recorded concerns for clinician review.",
+      "first_readable_ms": 431.8,
+      "full_completion_ms": 17931.3,
+      "target_ms": 10000,
+      "target_met": true,
+      "successful_completion": true,
+      "server_timing": {
+        "retrieval_ms": 3,
+        "ttft_ms": 214,
+        "first_content_ms": 214,
+        "total_ms": 17915
+      },
+      "provider_split": {
+        "backend_log_line": 903,
+        "model": "medgemma:27b",
+        "prompt_evaluated_tokens": 1,
+        "prompt_evaluation_ms": 70,
+        "decode_tokens": 276,
+        "decode_ms": 17702,
+        "prompt_total_tokens": 824,
+        "prompt_cached_tokens": 823
+      },
+      "screenshot": "06-department.png"
+    },
+    {
+      "index": 7,
+      "category": "general",
+      "repeat": 3,
+      "phase": "warm SLA",
+      "query": "What does oxygen saturation measure? Answer briefly.",
+      "first_readable_ms": 969.1,
+      "full_completion_ms": 4995.6,
+      "target_ms": 3000,
+      "target_met": true,
+      "successful_completion": true,
+      "server_timing": {
+        "retrieval_ms": 451,
+        "ttft_ms": 709,
+        "first_content_ms": 894,
+        "total_ms": 4985
+      },
+      "provider_split": {
+        "backend_log_line": 916,
+        "model": "medgemma:27b",
+        "prompt_evaluated_tokens": 1,
+        "prompt_evaluation_ms": 65,
+        "decode_tokens": 68,
+        "decode_ms": 4276,
+        "prompt_total_tokens": 697,
+        "prompt_cached_tokens": 696
+      },
+      "screenshot": "07-general.png"
+    },
+    {
+      "index": 8,
+      "category": "patient",
+      "repeat": 3,
+      "phase": "warm SLA",
+      "query": "Summarize Ananya Kapoor's current chart and the recorded facts that need clinician review. Answer briefly.",
+      "first_readable_ms": 3416,
+      "full_completion_ms": 39808.2,
+      "target_ms": 5000,
+      "target_met": true,
+      "successful_completion": true,
+      "server_timing": {
+        "retrieval_ms": 279,
+        "ttft_ms": 3026,
+        "first_content_ms": 3219,
+        "total_ms": 39791
+      },
+      "provider_split": {
+        "backend_log_line": 931,
+        "model": "medgemma:27b",
+        "prompt_evaluated_tokens": 432,
+        "prompt_evaluation_ms": 2719,
+        "decode_tokens": 557,
+        "decode_ms": 36765,
+        "prompt_total_tokens": 1005,
+        "prompt_cached_tokens": 573
+      },
+      "screenshot": "08-patient.png"
+    },
+    {
+      "index": 9,
+      "category": "department",
+      "repeat": 3,
+      "phase": "warm SLA",
+      "query": "Give a concise overview of my department's admitted patients and identify recorded concerns for clinician review.",
+      "first_readable_ms": 429.4,
+      "full_completion_ms": 25623,
+      "target_ms": 10000,
+      "target_met": true,
+      "successful_completion": true,
+      "server_timing": {
+        "retrieval_ms": 3,
+        "ttft_ms": 186,
+        "first_content_ms": 186,
+        "total_ms": 25606
+      },
+      "provider_split": {
+        "backend_log_line": 943,
+        "model": "medgemma:27b",
+        "prompt_evaluated_tokens": 1,
+        "prompt_evaluation_ms": 65,
+        "decode_tokens": 396,
+        "decode_ms": 25422,
+        "prompt_total_tokens": 824,
+        "prompt_cached_tokens": 823
+      },
+      "screenshot": "09-department.png"
+    },
+    {
+      "index": "chart-prewarm",
+      "category": "patient",
+      "repeat": null,
+      "phase": "additional real chart-open prefix prewarm; baseline observations remain separate",
+      "query": "Summarize Ananya Kapoor's current chart and the recorded facts that need clinician review. Answer briefly.",
+      "first_readable_ms": 2039.3,
+      "full_completion_ms": 33976.5,
+      "target_ms": 5000,
+      "target_met": true,
+      "successful_completion": true,
+      "server_timing": {
+        "retrieval_ms": 987,
+        "ttft_ms": 1632,
+        "first_content_ms": 1830,
+        "total_ms": 33957
+      },
+      "provider_split": {
+        "backend_log_line": 1007,
+        "model": "medgemma:27b",
+        "prompt_evaluated_tokens": 67,
+        "prompt_evaluation_ms": 629,
+        "decode_tokens": 505,
+        "decode_ms": 32325,
+        "prompt_total_tokens": 1011,
+        "prompt_cached_tokens": 944
+      },
+      "screenshot": "chart-prewarm-patient.png"
+    }
+  ],
+  "chart_preparation": {
+    "patientId": "PAT-2DA335E9",
+    "prefetchResponse": {
+      "status": "warmed",
+      "patient_id": "PAT-2DA335E9"
+    },
+    "prefetchDurationMs": 23255.19999998808,
+    "openToSubmitMs": 23369.30000001192,
+    "openToFirstReadableMs": 25408.600000023842,
+    "prefixWarmEvidence": {
+      "patientId": "PAT-2DA335E9",
+      "model": "medgemma:27b",
+      "durationMs": 470,
+      "promptTokens": 960,
+      "promptEvaluationMs": 272
+    },
+    "prefixConfirmed": true,
+    "screenshot": "prewarmed-patient-chart.png"
+  },
+  "journeys": {
+    "exitCode": 0,
+    "stats": {
+      "startTime": "2026-10-12T09:08:22.987Z",
+      "duration": 28642.299000000003,
+      "expected": 11,
+      "skipped": 0,
+      "unexpected": 0,
+      "flaky": 0
+    },
+    "report": "journeys.json",
+    "artifacts": "journey-artifacts"
+  },
+  "browser_errors": {
+    "page": [],
+    "console": [],
+    "external_requests": []
+  },
+  "runtime": {
+    "version": "0.35.1",
+    "primary_and_ambient_model": "medgemma:27b",
+    "model_digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+    "context_cells": 8192,
+    "parallel_live_slots": 1,
+    "kv_type": "f16",
+    "kv_unified": false,
+    "full_swa_cache": true,
+    "swa_cache_mib": 3328,
+    "non_swa_cache_mib": 640,
+    "ram_prompt_cache_mib": 8192,
+    "slot_prompt_similarity": 0.6,
+    "allocation_evidence": "runtime/ollama.log:239-247",
+    "configuration_evidence": "runtime/ollama.log:1-3,35,307-314",
+    "launcher_sha256": "3f0dddbf51af4ae5475b5ef1634d69e16244c7f7c2a3769d2ef191a3f22f6985",
+    "runner_config_sha256": "c8807fc49c7a03431fa38f8b4c0fcbce1cd612ccba2b97a2521515eac274a4c0",
+    "cleanup_attestation": "runtime/cleanup.json",
+    "background_model_jobs": false,
+    "normal_maintenance": "ordinary non-model maintenance remains enabled; overlap is retained in backend.log"
+  },
+  "manual_protected_posture_verification": [
+    {
+      "index": 0,
+      "category": "general",
+      "checks": {
+        "thinking_enabled": true,
+        "thinking_requested": true,
+        "safety_floor_enabled": true,
+        "safety_floor_satisfied": true,
+        "model_preserved": true,
+        "no_downgrade": true,
+        "valid_wire_completion": true,
+        "valid_answer": true
+      }
+    },
+    {
+      "index": 1,
+      "category": "general",
+      "checks": {
+        "thinking_enabled": true,
+        "thinking_requested": true,
+        "safety_floor_enabled": true,
+        "safety_floor_satisfied": true,
+        "model_preserved": true,
+        "no_downgrade": true,
+        "valid_wire_completion": true,
+        "valid_answer": true
+      }
+    },
+    {
+      "index": 2,
+      "category": "patient",
+      "checks": {
+        "thinking_enabled": true,
+        "thinking_requested": true,
+        "safety_floor_enabled": true,
+        "safety_floor_satisfied": true,
+        "model_preserved": true,
+        "no_downgrade": true,
+        "valid_wire_completion": true,
+        "valid_answer": true
+      }
+    },
+    {
+      "index": 3,
+      "category": "department",
+      "checks": {
+        "thinking_enabled": true,
+        "thinking_requested": true,
+        "safety_floor_enabled": true,
+        "safety_floor_satisfied": true,
+        "model_preserved": true,
+        "no_downgrade": true,
+        "valid_wire_completion": true,
+        "valid_answer": true
+      }
+    },
+    {
+      "index": 4,
+      "category": "general",
+      "checks": {
+        "thinking_enabled": true,
+        "thinking_requested": true,
+        "safety_floor_enabled": true,
+        "safety_floor_satisfied": true,
+        "model_preserved": true,
+        "no_downgrade": true,
+        "valid_wire_completion": true,
+        "valid_answer": true
+      }
+    },
+    {
+      "index": 5,
+      "category": "patient",
+      "checks": {
+        "thinking_enabled": true,
+        "thinking_requested": true,
+        "safety_floor_enabled": true,
+        "safety_floor_satisfied": true,
+        "model_preserved": true,
+        "no_downgrade": true,
+        "valid_wire_completion": true,
+        "valid_answer": true
+      }
+    },
+    {
+      "index": 6,
+      "category": "department",
+      "checks": {
+        "thinking_enabled": true,
+        "thinking_requested": true,
+        "safety_floor_enabled": true,
+        "safety_floor_satisfied": true,
+        "model_preserved": true,
+        "no_downgrade": true,
+        "valid_wire_completion": true,
+        "valid_answer": true
+      }
+    },
+    {
+      "index": 7,
+      "category": "general",
+      "checks": {
+        "thinking_enabled": true,
+        "thinking_requested": true,
+        "safety_floor_enabled": true,
+        "safety_floor_satisfied": true,
+        "model_preserved": true,
+        "no_downgrade": true,
+        "valid_wire_completion": true,
+        "valid_answer": true
+      }
+    },
+    {
+      "index": 8,
+      "category": "patient",
+      "checks": {
+        "thinking_enabled": true,
+        "thinking_requested": true,
+        "safety_floor_enabled": true,
+        "safety_floor_satisfied": true,
+        "model_preserved": true,
+        "no_downgrade": true,
+        "valid_wire_completion": true,
+        "valid_answer": true
+      }
+    },
+    {
+      "index": 9,
+      "category": "department",
+      "checks": {
+        "thinking_enabled": true,
+        "thinking_requested": true,
+        "safety_floor_enabled": true,
+        "safety_floor_satisfied": true,
+        "model_preserved": true,
+        "no_downgrade": true,
+        "valid_wire_completion": true,
+        "valid_answer": true
+      }
+    },
+    {
+      "index": "chart-prewarm",
+      "category": "patient",
+      "checks": {
+        "thinking_enabled": true,
+        "thinking_requested": true,
+        "safety_floor_enabled": true,
+        "safety_floor_satisfied": true,
+        "model_preserved": true,
+        "no_downgrade": true,
+        "valid_wire_completion": true,
+        "valid_answer": true
+      }
+    }
+  ],
+  "retrieval": {
+    "description": "explicit installed embedder/reranker snapshots; real corpus initialized in disposable DB; isolated worker",
+    "corpus": {
+      "sources": 19,
+      "vectors": 19,
+      "fingerprint": "e85261d5dc762d793b10470056b9cfcec365d679d3bda7a3ba0c208d8ef7ded2"
+    }
+  },
+  "hardware": {
+    "platform": "darwin",
+    "architecture": "arm64",
+    "cpu": "Apple M2 Max",
+    "logicalCpus": 12,
+    "memoryBytes": 68719476736
+  },
+  "browser_version": "149.0.7827.55",
+  "started_at_utc": "2026-10-12T09:03:16.346Z",
+  "finished_at_utc": "2026-10-12T09:08:51.922Z",
+  "exit_code": 0,
+  "bundle_sha256": "c7a759ed29e706bb547eae838157a4de3919393fd8c88d521d13054d2a7577d2",
+  "harness_sha256": "679ba94194d723cb6a8a85277e307ac54a471edf521b5090e4605b366594d16d",
+  "source_acceptance": {
+    "baseline_results": "docs/audit-2026-10/backend-sage-speed-acceptance-20261012/results.json",
+    "baseline_results_sha256": "9c5023cb3684c8fd955ce8dfb4e0e105707574afd67fca296633dd62e8afde36",
+    "source_manifest": "docs/audit-2026-10/backend-sage-speed-acceptance-20261012/source-sha256.json",
+    "source_manifest_sha256": "edee0202111b45ba2276db7791be17f8f770428acc2d03550fb93eaf272e6b7d",
+    "observed_application_and_harness_source_matches": {
+      "server/routes/sage_routes.py": {
+        "sha256": "93f9fba9b99f2e2e102c8bce289cd3c064d71ff481ae6844d4865e000988e7a9",
+        "acceptance_sha256": "93f9fba9b99f2e2e102c8bce289cd3c064d71ff481ae6844d4865e000988e7a9",
+        "matches_acceptance": true
+      },
+      "server/services/sage_service.py": {
+        "sha256": "2f77ff28bf3c30551e634f58866e90ffe15ac47b78d245c4aa107d3cf88ab1ed",
+        "acceptance_sha256": "2f77ff28bf3c30551e634f58866e90ffe15ac47b78d245c4aa107d3cf88ab1ed",
+        "matches_acceptance": true
+      },
+      "server/services/llm_providers.py": {
+        "sha256": "13b39ac2a3cd6216486967ddf219a1a16bf4cd144f16994ea9b06590c7436d02",
+        "acceptance_sha256": "13b39ac2a3cd6216486967ddf219a1a16bf4cd144f16994ea9b06590c7436d02",
+        "matches_acceptance": true
+      },
+      "server/services/clinical_knowledge.py": {
+        "sha256": "c53a09ec88dd5ed0feee2cd7bfbbd417c8f0aac6cf6ecce61e7ac23e2f0275cc",
+        "acceptance_sha256": "c53a09ec88dd5ed0feee2cd7bfbbd417c8f0aac6cf6ecce61e7ac23e2f0275cc",
+        "matches_acceptance": true
+      },
+      "server/services/local_transformers.py": {
+        "sha256": "b5777652fb29de126e05eabf35312846fa1ebac108162b83d684993936ccbeca",
+        "acceptance_sha256": "b5777652fb29de126e05eabf35312846fa1ebac108162b83d684993936ccbeca",
+        "matches_acceptance": true
+      },
+      "scripts/sage_browser_timing.cjs": {
+        "sha256": "679ba94194d723cb6a8a85277e307ac54a471edf521b5090e4605b366594d16d",
+        "acceptance_sha256": "679ba94194d723cb6a8a85277e307ac54a471edf521b5090e4605b366594d16d",
+        "matches_acceptance": true
+      },
+      "scripts/sage_browser_timing.test.cjs": {
+        "sha256": "4a545020de316f4ac0a875d458319d13c20ee911130a69487880c6b5113254fb",
+        "acceptance_sha256": "4a545020de316f4ac0a875d458319d13c20ee911130a69487880c6b5113254fb",
+        "matches_acceptance": true
+      },
+      "scripts/sage_browser_timing.md": {
+        "sha256": "4efc1dabd58fcff9fc724a9d4c0792cf4abd16ab62a40689fe8e235237276fa5",
+        "acceptance_sha256": "4efc1dabd58fcff9fc724a9d4c0792cf4abd16ab62a40689fe8e235237276fa5",
+        "matches_acceptance": true
+      },
+      "scripts/e2e_server.py": {
+        "sha256": "90cde4f221b159a951c836e6a60ba46c2ca1eb650c52909cb1ef9178e1e0c755",
+        "acceptance_sha256": "90cde4f221b159a951c836e6a60ba46c2ca1eb650c52909cb1ef9178e1e0c755",
+        "matches_acceptance": true
+      }
+    },
+    "runtime_delta_parity": "docs/audit-2026-10/backend-sage-speed-runtime-delta-20261012.json",
+    "runtime_delta_parity_sha256": "f0db875a3071d9172f23c61a996d84646092b85bd71b9489c69667b0489fef96",
+    "runtime_delta_verification": "runtime/profile-verification.json",
+    "runtime_delta_focused_passes": 160,
+    "note": "Unchanged application/dist plus explicitly tested operational launcher/config delta. Focused cases overlap v8 and are not added as unique tests."
+  },
+  "screenshots_inspected": [
+    "04-general.png",
+    "08-patient.png",
+    "09-department.png",
+    "prewarmed-patient-chart.png"
+  ],
+  "evidence_directory": "docs/audit-2026-10/browser-evidence/sage-timing/cache-save-20261012",
+  "raw_timings": "timings.json",
+  "scope": "Synthetic isolated DB, installed read-only cached weights, actual Ollama/SSE/browser, no API mocks. Owned daemon/backend/browser stopped; all 33 model files unchanged, shared service untouched.",
+  "command": [
+    "node",
+    "scripts/sage_browser_timing.cjs",
+    "--python=/private/tmp/orb-ml-upgrade-20261012/bin/python",
+    "--inference-url=http://127.0.0.1:11436",
+    "--embedding-model=/Users/samuelmorningstar/.cache/huggingface/hub/models--BAAI--bge-m3/snapshots/5617a9f61b028005a4858fdac845db406aefb181",
+    "--reranker-model=/Users/samuelmorningstar/.cache/huggingface/hub/models--BAAI--bge-reranker-v2-m3/snapshots/953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e",
+    "--warm-runs=3",
+    "--timeout-ms=240000",
+    "--chart-prewarm=true",
+    "--journeys=true",
+    "--out=/private/tmp/orb-sage-browser-cache-save-20261012"
+  ],
+  "chart_preparation_limit": {
+    "description": "Timeline acquired the background lane first; prefix preparation waited behind it. Existing Timeline and FIFO/P3 behavior preserved.",
+    "evidence": "backend.log:973-990",
+    "timeline_lane_acquired_local": "2026-10-12 14:37:25.955",
+    "prefetch_queued_local": "2026-10-12 14:37:26.795",
+    "timeline_lane_released_local": "2026-10-12 14:37:47.809",
+    "timeline_lane_duration_ms": 21854,
+    "prefix_preparation_ms": 470,
+    "open_to_first_readable_ms": 25408.6,
+    "limitation": "Submit latency excludes real preceding chart preparation. Chart-open latency is retained separately and does not meet 5s if measured from opening the chart."
+  },
+  "comparison_limit": {
+    "prior_evidence": "docs/audit-2026-10/browser-evidence/sage-timing/full-swa-20261012",
+    "same_queries": true,
+    "fresh_synthetic_seed": true,
+    "paired_latency_claim": false,
+    "current_patient_prompt_tokens": {
+      "total": 1005,
+      "cached": 573,
+      "evaluated": 432
+    },
+    "prior_patient_prompt_tokens": {
+      "total": 1092,
+      "cached": 573,
+      "evaluated": 519
+    },
+    "description": "Same questions and unchanged application code; fresh synthetic DB/context differs. Do not attribute the entire patient latency difference to the runtime profile. General after department has the same 697-token prompt and now 696 cached."
+  }
+}

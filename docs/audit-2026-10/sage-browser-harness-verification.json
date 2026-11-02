@@ -1,0 +1,48 @@
+{
+  "scope": "Synthetic integrity/isolation verification; not evidence of local model latency.",
+  "runtime": "/private/tmp/orb-ml-upgrade-20261012/bin/python",
+  "overlap": "Executed during parent-owned backend CPU unit-test shards; no inference/model jobs.",
+  "checks": [
+    {
+      "command": "python -m pytest server/tests/test_e2e_isolation.py server/tests/test_e2e_process_cleanup.py -q",
+      "passed": 32,
+      "failed": 0,
+      "seconds": 1.87,
+      "log": "/private/tmp/orb-sage-launcher-regressions-final-20261012.log"
+    },
+    {
+      "command": "node --test scripts/sage_browser_timing.test.cjs",
+      "passed": 10,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 1.18675,
+      "log": "/private/tmp/orb-sage-timing-harness-regressions-post-completion-20261012.log"
+    },
+    {
+      "command": "python -m pytest tests/test_scribe_sign_ack_and_audit.py tests/test_money.py tests/test_procurement_helix_catalogue.py -q",
+      "scope": "Owned fresh source copy and orb_test_focused.db under /private/tmp/orb-focused-stale-contracts-20261012",
+      "passed": 278,
+      "failed": 0,
+      "warnings": 1,
+      "seconds": 9.31,
+      "log": "/private/tmp/orb-focused-stale-contracts-20261012/pytest-final.log"
+    },
+    {
+      "command": "python -m pytest tests/test_stay_keying.py -q",
+      "scope": "Owned fresh source copy and orb_test_registry.db under /private/tmp/orb-focused-stay-registry-20261012; registry correction and two negative current-stay portal regressions, no runtime-policy changes",
+      "passed": 24,
+      "failed": 0,
+      "warnings": 1,
+      "seconds": 5.91,
+      "log": "/private/tmp/orb-focused-stay-registry-20261012/pytest.log"
+    }
+  ],
+  "source_sha256": {
+    "scripts/e2e_server.py": "90cde4f221b159a951c836e6a60ba46c2ca1eb650c52909cb1ef9178e1e0c755",
+    "scripts/sage_browser_timing.cjs": "679ba94194d723cb6a8a85277e307ac54a471edf521b5090e4605b366594d16d",
+    "scripts/sage_browser_timing.test.cjs": "4a545020de316f4ac0a875d458319d13c20ee911130a69487880c6b5113254fb",
+    "server/tests/test_e2e_isolation.py": "c38b2bd60e5cb122ef1fcb2667a464c63a4b8190fe6dacb729b249b5e4d22fbe",
+    "server/tests/test_e2e_process_cleanup.py": "4b66c0ed2081475f32be093343c941eea7a2f8352278892662e482be7064a15a",
+    "scripts/sage_browser_timing.md": "4efc1dabd58fcff9fc724a9d4c0792cf4abd16ab62a40689fe8e235237276fa5"
+  }
+}

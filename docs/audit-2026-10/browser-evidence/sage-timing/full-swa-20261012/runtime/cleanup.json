@@ -1,0 +1,13 @@
+{
+  "recorded_at_utc": "2026-10-12T08:34:38.487748+00:00",
+  "owned_controller_exit_code": 0,
+  "owned_daemon_exit_code": 0,
+  "owned_port_11436_connect_ex": 61,
+  "shared_read_only_api_ps": {
+    "models": []
+  },
+  "model_cache_files_unchanged": true,
+  "model_cache_file_count": 33,
+  "launcher_unchanged": true,
+  "shared_service_changed": false
+}

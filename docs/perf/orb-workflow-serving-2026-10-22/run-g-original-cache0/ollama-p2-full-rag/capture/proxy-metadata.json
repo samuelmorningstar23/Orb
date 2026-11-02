@@ -1,0 +1,1 @@
+{"backend":"ollama","benchmark_only":true,"clinical_validation":"not_established_by_this_proxy","mlx_policy":null,"model":"medgemma:27b","model_loaded_by_proxy_import":false,"synthetic_data_only":true,"transport":"unchanged_ollama_passthrough","unqualified_mlx_diagnostic":false,"upstream":"http://127.0.0.1:57723"}

@@ -1,0 +1,181 @@
+{
+  "schema_version": 1,
+  "audit_date": "2026-10-11",
+  "environment": {
+    "platform": "macOS arm64",
+    "node": "24.19.0",
+    "python": "3.12.13",
+    "ci_declared_node": "22",
+    "ci_declared_python": "3.12",
+    "clean_linux_ci_executed_locally": false
+  },
+  "interpretation": [
+    "The working tree includes pre-existing user changes; results do not attribute all changes to this audit.",
+    "Backend selections and collection are recorded separately and overlapping counts must not be summed.",
+    "Browser data are synthetic. No clinical inference engine or deployment hardware was validated.",
+    "Temporary log paths identify local verification evidence and are not durable CI artifact URLs."
+  ],
+  "frontend_suite": {
+    "command": "node node_modules/vitest/vitest.mjs run",
+    "files_passed": 352,
+    "tests_passed": 3494,
+    "failures": 0,
+    "expected_failures": 0,
+    "duration_seconds": 108.44,
+    "started_at_local": "2026-10-11 00:54:16 Asia/Kolkata",
+    "log": {
+      "path": "/private/tmp/orb-complete-frontend-final.log",
+      "sha256": "18fa7705e02afba8d088f19880a85b6d66cc689a9a5bee0ec47599b412f47686"
+    },
+    "production_ts_css_changed_after_run": false
+  },
+  "typecheck": {
+    "command": "node node_modules/typescript/bin/tsc -b",
+    "exit_code": 0
+  },
+  "production_build": {
+    "command": "node node_modules/vite/bin/vite.js build",
+    "exit_code": 0,
+    "log": {
+      "path": "/private/tmp/orb-audit-build-final.log",
+      "sha256": "4645c46f847c06ec05097b964c71da1a47429ebfbc63253b7e5d95354257c8dc"
+    }
+  },
+  "lint": {
+    "command": "node scripts/lint-ratchet.mjs",
+    "exit_code": 0,
+    "errors": 0,
+    "warnings": 9,
+    "budget": 9
+  },
+  "documentation": {
+    "command": "python scripts/check-doc-citations.py",
+    "exit_code": 0,
+    "path_line_citations": {
+      "passed": 9020,
+      "total": 9020
+    },
+    "symbol_anchors": {
+      "passed": 490,
+      "total": 490
+    },
+    "limitation": "Configured guide/manual citation trees only; this is not a factual review of every historical statement."
+  },
+  "contrast": {
+    "command": "node scripts/check-contrast.mjs",
+    "exit_code": 0,
+    "token_surface_pairs": 378,
+    "themes": 3,
+    "component_calls": 3310,
+    "colour_background_pairs": 1154,
+    "hover_focus_surfaces": 96,
+    "state_fills": 33,
+    "log": {
+      "path": "/private/tmp/orb-audit-contrast-final.log",
+      "sha256": "9691e6c611b7de67e74f994d8ec81d89d6756c377478b13e576fac2fdbf0bbce"
+    }
+  },
+  "real_browser_journeys": {
+    "command": "node node_modules/@playwright/test/cli.js test",
+    "tests_passed": 5,
+    "failures": 0,
+    "duration_seconds": 36.1,
+    "log": {
+      "path": "/private/tmp/orb-audit-e2e-final-scope.log",
+      "sha256": "8329e48775a17c35a5d733f600c9419742a54a75e3f6d7ef4e438c72e1fb5b71"
+    },
+    "mode": "production bundle, copied application, real ASGI lifecycle, disposable seeded database",
+    "sigterm_teardown_and_disposable_cleanup_verified": true,
+    "scope_note": "Completed after final frontend identity/cache changes and proactive-insight authorization fix. The authorization fix also has separate focused scope regressions."
+  },
+  "configuration": {
+    "yaml_files_parsed": 4,
+    "json_manifests_parsed": 3,
+    "shell_syntax_exit_code": 0,
+    "git_diff_check_exit_code": 0,
+    "audit_evidence_json_files_parsed": 8
+  },
+  "mocked_visual_audit": {
+    "status": "passed",
+    "initial_discovery": {
+      "captures": 245,
+      "gating_findings": 66,
+      "existing_allowlist_matches": 89,
+      "informational_findings": 155,
+      "interpretation": "After honest startup/action console collection, all gating findings were explicit missing API fixtures. Earlier zero-gate discovery omitted those errors and is not final evidence."
+    },
+    "server": "production bundle served by Vite preview on loopback; owned server stopped after verification",
+    "coverage": {
+      "captureCount": 245,
+      "uniqueCaptureThemeKeys": 245,
+      "expectedCaptureThemeKeys": 245,
+      "scenarioCount": 49,
+      "captureStateCount": 133,
+      "themes": {
+        "dark": 121,
+        "light": 112,
+        "night": 12
+      },
+      "missing": [],
+      "extra": [],
+      "duplicate": []
+    },
+    "final_findings": {
+      "rawFindings": 173,
+      "findingsByType": {
+        "small-target": 66,
+        "aa-contrast": 74,
+        "chart-contrast": 23,
+        "console-error": 10
+      },
+      "gates": {
+        "gating": 0,
+        "allowlisted": 10,
+        "disabledExempt": 0,
+        "printExempt": 0,
+        "visualVerify": 0,
+        "informational": 163
+      }
+    },
+    "allowlist_note": "Ten console errors belong to explicit forced-failure or feature-off scenarios and match existing allowances. No new allowance or exemption was added. All 163 informational findings remain recorded.",
+    "partitions": [
+      {
+        "name": "clinical",
+        "captures": 150,
+        "raw_findings": 128,
+        "gating": 0,
+        "allowlisted": 3,
+        "informational": 125,
+        "completed_at_local": "2026-10-11 03:12:11 Asia/Kolkata",
+        "log": {
+          "path": "/private/tmp/orb-audit-visual-preview-clinical.log",
+          "sha256": "0be216c1d2adde1ba1cf8df995278a4da89397e08e3f1dacc553c97ee239ce2b"
+        },
+        "output_directory": "/private/tmp/orb-audit-visual-preview-clinical"
+      },
+      {
+        "name": "remaining",
+        "captures": 95,
+        "raw_findings": 45,
+        "gating": 0,
+        "allowlisted": 7,
+        "informational": 38,
+        "completed_at_local": "2026-10-11 03:10:51 Asia/Kolkata",
+        "log": {
+          "path": "/private/tmp/orb-audit-visual-preview-remaining.log",
+          "sha256": "aa620e718ba4c6e080a3dcc8775e512bbff77f7791137450e6e85ad809670e19"
+        },
+        "output_directory": "/private/tmp/orb-audit-visual-preview-remaining"
+      }
+    ],
+    "permanent_regressions": "visual-checker-verification.json",
+    "invalidated_development_runs": {
+      "reason": "Local development server accepted TCP but returned no HTTP bytes; browser navigation/capture failures followed. Cause not established; these runs are not green evidence.",
+      "log_paths": [
+        "/private/tmp/orb-audit-visual-verified-clinical.log",
+        "/private/tmp/orb-audit-visual-verified-remaining.log"
+      ]
+    }
+  },
+  "finalized_at_utc": "2026-10-10T21:45:51.856420+00:00"
+}

@@ -1,0 +1,624 @@
+{
+  "schema": "orb.audit.ml-security-migration/1",
+  "date": "2026-10-12",
+  "timezone": "Asia/Kolkata",
+  "scope": "Declared ML dependency migration, fresh isolated macOS slim runtime, complete Apple production metadata resolution, installer/bootstrap and bounded quality verification. Runtime adapter/model/browser/full-suite evidence is reported separately.",
+  "decisions": [
+    "Replace FlagEmbedding/sentence-transformers inference wrappers with the small local-only Transformers adapter, eliminating unused Accelerate/PEFT/datasets training dependencies.",
+    "Pin Torch 2.14.1 and Transformers 5.19.0 identically in production and slim requirements; exercise the adapter in CI using synthetic local models.",
+    "Pin pip 26.2.1 separately in bootstrap tooling and install it before package resolution in pip-based installer/CI environments.",
+    "Prefer safetensors; allow a provisioned local PyTorch checkpoint only with explicit weights_only=True, local_files_only=True and trust_remote_code=False. Never download or convert model weights during this audit."
+  ],
+  "runtime": {
+    "interpreter": "/private/tmp/orb-ml-upgrade-20261012/bin/python",
+    "python": "3.12.13",
+    "architecture": "macOS arm64",
+    "fresh_venv": true,
+    "inherited_site_packages": false,
+    "site_packages": "/private/tmp/orb-ml-upgrade-20261012/lib/python3.12/site-packages",
+    "requirements": "server/requirements-dev.txt",
+    "bootstrap": "server/requirements-bootstrap.txt",
+    "pip": "26.2.1",
+    "pip_check": {
+      "exit_code": 0,
+      "result": "No broken requirements found"
+    },
+    "installed_packages": 70,
+    "excluded_unused_packages": [
+      "FlagEmbedding",
+      "sentence-transformers",
+      "accelerate",
+      "peft",
+      "datasets"
+    ],
+    "orphan_environment_extra": "pypdf was not a declared project dependency; it is absent from the fresh environment by construction. The shared old environment was not modified.",
+    "install_report": "/private/tmp/orb-ml-core-installed-20261012.json",
+    "freeze": "/private/tmp/orb-ml-resolved-freeze-final-20261012.txt",
+    "freeze_sha256": "73f38d5db29f31174d0c054343aa2363381881afc34d5bb66daec0495fe4b90d"
+  },
+  "advisory_scanner": {
+    "version": "pip-audit==2.9.0",
+    "environment": "Separate /private/tmp/orb-dependency-audit-20261010 environment",
+    "ignores": [],
+    "strict": true,
+    "suppressed_findings": 0
+  },
+  "installed_tree_audit": {
+    "command": "/private/tmp/orb-dependency-audit-20261010/bin/python -m pip_audit --strict --path /private/tmp/orb-ml-upgrade-20261012/lib/python3.12/site-packages --format json --output /private/tmp/orb-ml-resolved-audit-final-20261012.json",
+    "exit_code": 0,
+    "packages_audited": 70,
+    "packages_skipped": 0,
+    "advisory_matches": 0,
+    "report": "docs/audit-2026-10/python-ml-resolved-runtime-20261012.json",
+    "raw_report_sha256": "ce9fc3c2be90f3e4c8a1b4a64adf133bf7b7c1bd003e4102cf28b3103d0560c8",
+    "initial_result": {
+      "packages_audited": 70,
+      "advisory_matches": 6,
+      "affected_package": "pip==25.0.1",
+      "disposition": "All six bootstrap installer findings removed by pip 26.2.1; repeated complete installed-tree scan passed.",
+      "raw_report": "/private/tmp/orb-ml-resolved-audit-20261012.json"
+    }
+  },
+  "declared_pin_audits": {
+    "command_template": "/private/tmp/orb-dependency-audit-20261010/bin/python -m pip_audit --strict --no-deps --disable-pip -r <requirements> --format json --output <report>",
+    "results": [
+      {
+        "scope": "production",
+        "requirements": "server/requirements.txt",
+        "exit_code": 0,
+        "packages_audited": 17,
+        "advisory_matches": 0,
+        "report": "/private/tmp/orb-ml-production-pins-audit-20261012.json",
+        "report_sha256": "e536bcb0792adf1efab76b8e0a33cd69a57ab777eb305fb94f486d203b181128"
+      },
+      {
+        "scope": "test",
+        "requirements": "server/requirements-dev.txt",
+        "exit_code": 0,
+        "packages_audited": 18,
+        "advisory_matches": 0,
+        "report": "/private/tmp/orb-ml-test-pins-audit-20261012.json",
+        "report_sha256": "0b2c78892c0213068c6d9351643821a7882e854883fd6eb7b2be93a91fd8940b"
+      },
+      {
+        "scope": "quality",
+        "requirements": "server/requirements-quality.txt",
+        "exit_code": 0,
+        "packages_audited": 8,
+        "advisory_matches": 0,
+        "report": "/private/tmp/orb-ml-quality-pins-audit-20261012.json",
+        "report_sha256": "c8be45d96bd47db17b56f23da60fb8f6fdccb51bc726a7871cf6092430915f15"
+      },
+      {
+        "scope": "http-constraints",
+        "requirements": "server/constraints-security.txt",
+        "exit_code": 0,
+        "packages_audited": 3,
+        "advisory_matches": 0,
+        "report": "/private/tmp/orb-ml-http-constraints-pins-audit-20261012.json",
+        "report_sha256": "40b191f27a541494d29cd3465c04dfe7a36f4c0d78dac491b1206c8d01ff526f"
+      },
+      {
+        "scope": "bootstrap",
+        "requirements": "server/requirements-bootstrap.txt",
+        "exit_code": 0,
+        "packages_audited": 1,
+        "advisory_matches": 0,
+        "report": "/private/tmp/orb-ml-bootstrap-pins-audit-20261012.json",
+        "report_sha256": "1ff850c0262ff138a9b7e9fa10050c81235fbed82374f7d504108e52cd53d5d3"
+      }
+    ],
+    "limit": "Direct pin audits are separate from the actual complete installed-tree scan and Apple resolved metadata scan; their package counts overlap and are not summed."
+  },
+  "apple_production_resolution": {
+    "command": "/private/tmp/orb-ml-upgrade-20261012/bin/python -m pip install --dry-run --ignore-installed --report /private/tmp/orb-ml-production-resolve-20261012.json -r server/requirements.txt",
+    "exit_code": 0,
+    "packages_resolved": 76,
+    "environment": {
+      "implementation_version": "3.12.13",
+      "platform_machine": "arm64",
+      "platform_system": "Darwin",
+      "python_full_version": "3.12.13",
+      "sys_platform": "darwin"
+    },
+    "speech_packages": {
+      "lightning-whisper-mlx": "0.0.10",
+      "tiktoken": "0.3.3",
+      "mlx": "0.32.3",
+      "mlx-metal": "0.32.3",
+      "numba": "0.68.0",
+      "llvmlite": "0.50.0",
+      "scipy": "1.18.1"
+    },
+    "resolved_pins": "/private/tmp/orb-ml-production-resolved-pins-20261012.txt",
+    "resolution_report": "/private/tmp/orb-ml-production-resolve-20261012.json",
+    "resolution_report_sha256": "9f05d8fdbd10a044d974e0adb881f463d2b86e5004f260dbed682bd4b9762b5a",
+    "advisory_command": "/private/tmp/orb-dependency-audit-20261010/bin/python -m pip_audit --strict --no-deps --disable-pip -r /private/tmp/orb-ml-production-resolved-pins-20261012.txt --format json --output /private/tmp/orb-ml-production-resolved-audit-20261012.json",
+    "advisory_exit_code": 0,
+    "packages_audited": 76,
+    "packages_skipped": 0,
+    "advisory_matches": 0,
+    "audit_report": "docs/audit-2026-10/python-apple-production-resolved-20261012.json",
+    "raw_audit_sha256": "ff0ba0780b60b95ff781bbdf537dd4dfbb73b5e83a1b553d0e3f0b5217bfa773",
+    "binary_only_attempt": {
+      "exit_code": 1,
+      "reason": "lightning-whisper-mlx==0.0.10 requires tiktoken==0.3.3, which publishes no CPython 3.12 wheel. Source metadata was successfully resolved in the subsequent dry run.",
+      "log": "/private/tmp/orb-ml-production-binary-resolve-20261012.log"
+    },
+    "limit": "Complete current-platform dependency metadata/advisory result, not an installed Apple speech stack, native tokenizer build, ASR accuracy test or transcription run."
+  },
+  "no_fixed_version_metadata_review": {
+    "baseline": "Historical inherited runtime reported 47 declared ML advisory matches: Torch 22, Transformers 24 and Accelerate 1.",
+    "meaning": "Sixteen earlier findings lack fix_versions entries but have finite last_affected ranges in the primary PyPA records below. Preserve their exact source values; an empty fix_versions field does not establish that the latest package version is affected. Current strict direct and complete resolved scans report zero matches. This does not assert all upstream algorithms or converter tools are intrinsically safe.",
+    "records": [
+      {
+        "package": "torch",
+        "id": "PYSEC-2026-139",
+        "source": "https://raw.githubusercontent.com/pypa/advisory-database/main/vulns/torch/PYSEC-2026-139.yaml",
+        "aliases": [
+          "CVE-2026-4538"
+        ],
+        "ranges": [
+          {
+            "events": [
+              {
+                "introduced": "0"
+              },
+              {
+                "last_affected": "2.10.0"
+              }
+            ],
+            "type": "ECOSYSTEM"
+          }
+        ],
+        "modified": "2026-05-21T14:54:45.309041Z"
+      },
+      {
+        "package": "torch",
+        "id": "PYSEC-2025-191",
+        "source": "https://raw.githubusercontent.com/pypa/advisory-database/main/vulns/torch/PYSEC-2025-191.yaml",
+        "aliases": [
+          "CVE-2025-2953",
+          "GHSA-3749-ghw9-m3mg"
+        ],
+        "ranges": [
+          {
+            "events": [
+              {
+                "introduced": "0"
+              },
+              {
+                "last_affected": "2.6.0+cu124"
+              }
+            ],
+            "type": "ECOSYSTEM"
+          }
+        ],
+        "modified": "2026-05-21T14:54:44.011147Z"
+      },
+      {
+        "package": "torch",
+        "id": "PYSEC-2025-189",
+        "source": "https://raw.githubusercontent.com/pypa/advisory-database/main/vulns/torch/PYSEC-2025-189.yaml",
+        "aliases": [
+          "CVE-2025-2148",
+          "GHSA-c678-jfcj-6jmf"
+        ],
+        "ranges": [
+          {
+            "type": "ECOSYSTEM",
+            "events": [
+              {
+                "introduced": "0"
+              },
+              {
+                "last_affected": "2.6.0-cu124"
+              }
+            ]
+          }
+        ],
+        "modified": "2026-02-24T19:52:04.730Z"
+      },
+      {
+        "package": "torch",
+        "id": "PYSEC-2025-190",
+        "source": "https://raw.githubusercontent.com/pypa/advisory-database/main/vulns/torch/PYSEC-2025-190.yaml",
+        "aliases": [
+          "CVE-2025-2149",
+          "GHSA-x3gm-94wq-g975"
+        ],
+        "ranges": [
+          {
+            "type": "ECOSYSTEM",
+            "events": [
+              {
+                "introduced": "0"
+              },
+              {
+                "last_affected": "2.6.0-cu124"
+              }
+            ]
+          }
+        ],
+        "modified": "2026-02-24T18:52:49.347Z"
+      },
+      {
+        "package": "torch",
+        "id": "PYSEC-2025-192",
+        "source": "https://raw.githubusercontent.com/pypa/advisory-database/main/vulns/torch/PYSEC-2025-192.yaml",
+        "aliases": [
+          "CVE-2025-2998",
+          "GHSA-f4hp-rmr7-r7v8"
+        ],
+        "ranges": [
+          {
+            "type": "ECOSYSTEM",
+            "events": [
+              {
+                "introduced": "0"
+              },
+              {
+                "last_affected": "2.6.0-NA"
+              }
+            ]
+          }
+        ],
+        "modified": "2025-05-29T15:53:57.197Z"
+      },
+      {
+        "package": "transformers",
+        "id": "PYSEC-2025-217",
+        "source": "https://raw.githubusercontent.com/pypa/advisory-database/main/vulns/transformers/PYSEC-2025-217.yaml",
+        "aliases": [
+          "CVE-2025-14929"
+        ],
+        "ranges": [
+          {
+            "events": [
+              {
+                "introduced": "0"
+              },
+              {
+                "last_affected": "5.0.0-rc0"
+              }
+            ],
+            "type": "ECOSYSTEM"
+          }
+        ],
+        "modified": "2026-05-21T14:54:45.826853Z"
+      },
+      {
+        "package": "transformers",
+        "id": "PYSEC-2025-214",
+        "source": "https://raw.githubusercontent.com/pypa/advisory-database/main/vulns/transformers/PYSEC-2025-214.yaml",
+        "aliases": [
+          "CVE-2025-14926"
+        ],
+        "ranges": [
+          {
+            "events": [
+              {
+                "introduced": "0"
+              },
+              {
+                "last_affected": "4.57.0"
+              }
+            ],
+            "type": "ECOSYSTEM"
+          }
+        ],
+        "modified": "2026-05-21T14:54:45.629967Z"
+      },
+      {
+        "package": "transformers",
+        "id": "PYSEC-2025-218",
+        "source": "https://raw.githubusercontent.com/pypa/advisory-database/main/vulns/transformers/PYSEC-2025-218.yaml",
+        "aliases": [
+          "CVE-2025-14930"
+        ],
+        "ranges": [
+          {
+            "events": [
+              {
+                "introduced": "0"
+              },
+              {
+                "last_affected": "4.57.1"
+              }
+            ],
+            "type": "ECOSYSTEM"
+          }
+        ],
+        "modified": "2026-05-21T14:54:45.892717Z"
+      },
+      {
+        "package": "transformers",
+        "id": "PYSEC-2025-211",
+        "source": "https://raw.githubusercontent.com/pypa/advisory-database/main/vulns/transformers/PYSEC-2025-211.yaml",
+        "aliases": [
+          "CVE-2025-14920"
+        ],
+        "ranges": [
+          {
+            "events": [
+              {
+                "introduced": "0"
+              },
+              {
+                "last_affected": "4.54.1"
+              }
+            ],
+            "type": "ECOSYSTEM"
+          }
+        ],
+        "modified": "2026-05-21T14:54:45.431334Z"
+      },
+      {
+        "package": "transformers",
+        "id": "PYSEC-2025-212",
+        "source": "https://raw.githubusercontent.com/pypa/advisory-database/main/vulns/transformers/PYSEC-2025-212.yaml",
+        "aliases": [
+          "CVE-2025-14921"
+        ],
+        "ranges": [
+          {
+            "events": [
+              {
+                "introduced": "0"
+              },
+              {
+                "last_affected": "4.54.1"
+              }
+            ],
+            "type": "ECOSYSTEM"
+          }
+        ],
+        "modified": "2026-05-21T14:54:45.500050Z"
+      },
+      {
+        "package": "transformers",
+        "id": "PYSEC-2025-213",
+        "source": "https://raw.githubusercontent.com/pypa/advisory-database/main/vulns/transformers/PYSEC-2025-213.yaml",
+        "aliases": [
+          "CVE-2025-14924"
+        ],
+        "ranges": [
+          {
+            "events": [
+              {
+                "introduced": "0"
+              },
+              {
+                "last_affected": "4.55.0"
+              }
+            ],
+            "type": "ECOSYSTEM"
+          }
+        ],
+        "modified": "2026-05-21T14:54:45.564569Z"
+      },
+      {
+        "package": "transformers",
+        "id": "PYSEC-2025-215",
+        "source": "https://raw.githubusercontent.com/pypa/advisory-database/main/vulns/transformers/PYSEC-2025-215.yaml",
+        "aliases": [
+          "CVE-2025-14927"
+        ],
+        "ranges": [
+          {
+            "events": [
+              {
+                "introduced": "0"
+              },
+              {
+                "last_affected": "4.57.0"
+              }
+            ],
+            "type": "ECOSYSTEM"
+          }
+        ],
+        "modified": "2026-05-21T14:54:45.696586Z"
+      },
+      {
+        "package": "transformers",
+        "id": "PYSEC-2025-216",
+        "source": "https://raw.githubusercontent.com/pypa/advisory-database/main/vulns/transformers/PYSEC-2025-216.yaml",
+        "aliases": [
+          "CVE-2025-14928"
+        ],
+        "ranges": [
+          {
+            "events": [
+              {
+                "introduced": "0"
+              },
+              {
+                "last_affected": "4.57.0"
+              }
+            ],
+            "type": "ECOSYSTEM"
+          }
+        ],
+        "modified": "2026-05-21T14:54:45.762786Z"
+      },
+      {
+        "package": "transformers",
+        "id": "PYSEC-2026-2290",
+        "source": "https://raw.githubusercontent.com/pypa/advisory-database/main/vulns/transformers/PYSEC-2026-2290.yaml",
+        "aliases": [
+          "CVE-2026-5241",
+          "GHSA-fgcw-684q-jj6r"
+        ],
+        "ranges": [
+          {
+            "type": "ECOSYSTEM",
+            "events": [
+              {
+                "introduced": "0"
+              },
+              {
+                "last_affected": "5.2.0"
+              }
+            ]
+          }
+        ],
+        "modified": "2026-07-13T05:52:14.826934Z"
+      },
+      {
+        "package": "transformers",
+        "id": "PYSEC-2026-4174",
+        "source": "https://raw.githubusercontent.com/pypa/advisory-database/main/vulns/transformers/PYSEC-2026-4174.yaml",
+        "aliases": [
+          "CVE-2026-80047",
+          "GHSA-x9r9-c232-4q39"
+        ],
+        "ranges": [
+          {
+            "type": "ECOSYSTEM",
+            "events": [
+              {
+                "introduced": "4.49.0"
+              },
+              {
+                "last_affected": "5.8.1"
+              }
+            ]
+          }
+        ],
+        "modified": "2026-10-01T17:10:44.917354Z"
+      },
+      {
+        "package": "accelerate",
+        "id": "PYSEC-2026-3804",
+        "source": "https://raw.githubusercontent.com/pypa/advisory-database/main/vulns/accelerate/PYSEC-2026-3804.yaml",
+        "aliases": [
+          "CVE-2026-69112",
+          "GHSA-4j2p-28q2-5m79"
+        ],
+        "ranges": [
+          {
+            "type": "ECOSYSTEM",
+            "events": [
+              {
+                "introduced": "0"
+              },
+              {
+                "last_affected": "1.14.0"
+              }
+            ]
+          }
+        ],
+        "modified": "2026-09-10T11:01:55.277764Z"
+      }
+    ],
+    "accelerate_disposition": "Removed from the required inference dependency graph rather than ignored. Application uses no Accelerate model-dispatch API."
+  },
+  "verification": {
+    "installer": {
+      "command": "/private/tmp/orb-ml-upgrade-20261012/bin/python -m pytest -q tests/test_install_script.py",
+      "cwd": "server",
+      "passed": 15,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 3.47,
+      "log": "/private/tmp/orb-ml-install-script-tests-final-20261012.log",
+      "log_sha256": "2ff198c526a0ded7a8111e9b59eb5429dba61f3c44dd04985081c8cc18743cba",
+      "behaviors": [
+        "Bootstrap failure and backend dependency failure both stop before secrets/certificates/migrations.",
+        "Production/test pins match for eleven security/runtime packages including Torch and Transformers.",
+        "Mac filtered requirements remain private and beside relative constraints, and are removed on success and failure."
+      ]
+    },
+    "utility_quality": {
+      "scope": [
+        "server/routes/import_mapping.py",
+        "scripts/release_candidate.py"
+      ],
+      "command": "PYTHONPATH=/private/tmp/orb-quality-tools-20261011 COVERAGE_FILE=/private/tmp/orb-ml-quality-20261012.coverage /private/tmp/orb-ml-upgrade-20261012/bin/python -m coverage run --rcfile=tools/python-quality/pyproject.toml -m pytest -q server/tests/test_import_and_time_compatibility.py::test_both_importers_preserve_mapping_form_values server/tests/test_import_and_time_compatibility.py::test_both_importers_reject_ambiguous_mapping_types_with_422 server/tests/test_release_candidate.py",
+      "passed": 35,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 4.27,
+      "log": "/private/tmp/orb-ml-quality-tests-20261012.log",
+      "log_sha256": "40580365c9e89ba8746e000e1d9fb2995fa5ad2f0819fa348127ceb30a48c017",
+      "coverage_totals": {
+        "covered_lines": 90,
+        "num_statements": 90,
+        "percent_covered": 100.0,
+        "percent_covered_display": "100.00",
+        "missing_lines": 0,
+        "excluded_lines": 2,
+        "percent_statements_covered": 100.0,
+        "percent_statements_covered_display": "100.00",
+        "num_branches": 34,
+        "num_partial_branches": 0,
+        "covered_branches": 34,
+        "missing_branches": 0,
+        "percent_branches_covered": 100.0,
+        "percent_branches_covered_display": "100.00"
+      },
+      "coverage_report": "/private/tmp/orb-ml-quality-coverage-20261012.json",
+      "scope_limit": "Only two declared pure utilities; no whole-backend quality claim.",
+      "static_checks": [
+        {
+          "command": "PYTHONPATH=/private/tmp/orb-quality-tools-20261011 /private/tmp/orb-ml-upgrade-20261012/bin/python -m ruff check --config tools/python-quality/pyproject.toml server/routes/import_mapping.py scripts/release_candidate.py",
+          "exit_code": 0
+        },
+        {
+          "command": "PYTHONPATH=/private/tmp/orb-quality-tools-20261011 /private/tmp/orb-ml-upgrade-20261012/bin/python -m ruff format --check --config tools/python-quality/pyproject.toml server/routes/import_mapping.py scripts/release_candidate.py",
+          "exit_code": 0
+        },
+        {
+          "command": "PYTHONPATH=/private/tmp/orb-quality-tools-20261011 /private/tmp/orb-ml-upgrade-20261012/bin/python -m mypy --config-file tools/python-quality/pyproject.toml --cache-dir /private/tmp/orb-ml-quality-mypy-20261012",
+          "exit_code": 0
+        }
+      ]
+    },
+    "shell_syntax": "bash -n install.sh setup-mac.sh passed",
+    "workflow_contract": "CI/security/release-candidate YAML parsed. The exact Apple CI resolution guard accepted all 76 package rows and rejected an omitted tiktoken dependency.",
+    "linux_cpu_wheel": {
+      "method": "HEAD; no wheel or weights downloaded",
+      "url": "https://download.pytorch.org/whl/cpu/torch-2.14.1%2Bcpu-cp312-cp312-manylinux_2_28_x86_64.whl",
+      "http_status": 200,
+      "content_length": 196253677,
+      "limit": "Existence only; Linux installation and hosted CI not executed locally."
+    }
+  },
+  "ci_changes": [
+    "Torch CPU pin updated in backend, E2E and installed-runtime audit jobs.",
+    "Shared patched pip bootstrap consumed before pip installs, audited as its own explicit pin set.",
+    "Complete Apple production dry-run resolution and all-resolved-pins audit added on macos-26, with required speech/ML package presence guard and artifact upload.",
+    "Existing strict direct and installed Linux transitive scans remain mandatory with no ignore/continue-on-error.",
+    "Real Chromium regression job includes Sage browser timing harness-integrity tests."
+  ],
+  "changed_files": {
+    "server/requirements.txt": "e0b4425934e40efc27abfeac99be2d6e78ed4ae96ace50978a16ba1378a88cf4",
+    "server/requirements-dev.txt": "6816f760acc92a785e332e80f32ce7e036d721aad286bdb3f4128818d95af293",
+    "server/requirements-bootstrap.txt": "38d13f93c5144d0958c18cc6b9f7b7b6e5332f1f9088b99310527fd2e43f0634",
+    ".github/workflows/ci.yml": "829b119cd522ffb4606bfdef916511b3032075479045e6c353fc21695ca017e4",
+    ".github/workflows/security.yml": "63e6c253c208e78401e7edb16f0bee6125890ea7f5c6f5ba7d96383c3845cb5b",
+    "install.sh": "81c45851bbdb99dbea0c4863d383dedf96e80c96c5ebb62b69be3d59c381f1e8",
+    "setup-mac.sh": "81a7abac85acdcfa49c4ae772ba483b481929003237ff8493801eb0a210d052f",
+    "server/tests/test_install_script.py": "e2aea9b36759ed9851dc1339e75483b6863377b99c99d2230e41bc5c92a62ece",
+    "docs/SETUP.md": "561d1de15396ee6e7493bf553becbe4b4e00453209c7fa45e3c5d62e92f00fb1"
+  },
+  "primary_sources": [
+    "https://pypi.org/project/torch/2.14.1/",
+    "https://github.com/pytorch/pytorch/releases/tag/v2.14.1",
+    "https://pypi.org/project/transformers/5.19.0/",
+    "https://github.com/huggingface/transformers/releases/tag/v5.19.0",
+    "https://github.com/huggingface/transformers/blob/v5.19.0/src/transformers/modeling_utils.py",
+    "https://github.com/pytorch/pytorch/security/policy",
+    "https://pypi.org/project/pip/26.2.1/",
+    "https://pypi.org/pypi/lightning-whisper-mlx/0.0.10/json",
+    "https://pypi.org/pypi/tiktoken/0.3.3/json",
+    "https://docs.github.com/en/actions/reference/runners/github-hosted-runners"
+  ],
+  "limits": [
+    "The shared/live server/.venv and old inherited temporary environment were not modified; they retain historical packages. Provision a fresh reviewed environment before deployment.",
+    "No model weights or restricted datasets were downloaded. This dependency/installer verification did not read model weights, live .env, application DBs, uploads or backups.",
+    "Full-suite, real local-model acceptance and browser latency results are owned separately by root/backend/frontend and are not inferred from dependency scans.",
+    "Hosted CI/release/deploy was not executed. Current macOS results do not establish Linux installed-tree results; CI verifies that platform independently.",
+    "Advisory results are a timestamped known-vulnerability snapshot, not proof of absence of all software vulnerabilities."
+  ]
+}

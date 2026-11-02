@@ -1,0 +1,28 @@
+{
+  "schema": "orb.sage.canonical-owned-runtime/1",
+  "started_at_utc": "2026-10-12T08:26:03.521972+00:00",
+  "launcher": "scripts/serve-ollama.sh",
+  "launcher_sha256": "031f233edbbbe8e5d92e7f038adbc8a6c10dc9540cad2e9e81569531b1a33a38",
+  "endpoint": "http://127.0.0.1:11436",
+  "explicit_environment": {
+    "PATH": "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin",
+    "HOME": "/private/tmp/orb-sage-swa-runtime-20261012-u_uscil0/home",
+    "TMPDIR": "/private/tmp/orb-sage-swa-runtime-20261012-u_uscil0",
+    "OLLAMA_HOST": "127.0.0.1:11436",
+    "OLLAMA_MODELS": "/Users/samuelmorningstar/.ollama/models",
+    "ORB_OLLAMA_SWA_FULL": "auto"
+  },
+  "log": "/private/tmp/orb-sage-swa-runtime-20261012-u_uscil0/ollama.log",
+  "control": "Owned daemon; no shared service stop/restart/configuration, no pull or model write.",
+  "model_file_count_before": 33,
+  "owned_pid": 37230,
+  "api_version": {
+    "version": "0.35.1"
+  },
+  "canonical_full_swa_profile_applied": true,
+  "ready_at_utc": "2026-10-12T08:26:04.191337+00:00",
+  "stopped_at_utc": "2026-10-12T08:34:19.744954+00:00",
+  "exit_code": 0,
+  "launcher_unchanged": true,
+  "model_files_unchanged": true
+}

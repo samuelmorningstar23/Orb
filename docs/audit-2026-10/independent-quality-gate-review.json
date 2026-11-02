@@ -1,0 +1,24 @@
+{
+  "coverage_miss_exit_code": 2,
+  "partial_file_set_guard_exit_code": 1,
+  "config": "tools/python-quality/pyproject.toml",
+  "measurement": "Copied ops coverage data; no tests or repository files modified.",
+  "date": "2026-10-12",
+  "scope": "Independent read-only review of scoped quality and transitive-security workflows",
+  "lint_format_strict_typing_exit_codes": [
+    0,
+    0,
+    0
+  ],
+  "exact_pinned_quality_packages_verified": 8,
+  "coverage": {
+    "statements_covered": 90,
+    "statements": 90,
+    "branches_covered": 34,
+    "branches": 34,
+    "test_execution": "Copied operations-agent measurement, no independent35-test rerun"
+  },
+  "security_review": "Installed slim tree audit is strict and separate from direct Apple/ML pins; no ignore or continue-on-error escape",
+  "clean_linux_execution": false,
+  "repository_source_changes": false
+}

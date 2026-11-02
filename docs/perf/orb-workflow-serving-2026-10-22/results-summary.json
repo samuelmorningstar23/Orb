@@ -1,0 +1,4354 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-10-22T14:33:51.381009+00:00",
+  "evidence_kind": "derived_saved_offline_synthetic_workflow_benchmarks_not_clinical_validation",
+  "selected_runs": {
+    "MLX": "run-k-mlx-bounded",
+    "Original native": "run-j-original-reclaim"
+  },
+  "targets_seconds": {
+    "general": 3.0,
+    "patient": 5.0,
+    "department": 15.0
+  },
+  "complete_valid_answer_scope": "Saved automatic transport and synthetic lexical task gates only; not full source grounding or clinical validation",
+  "selected_runs_are_exact_body_paired": false,
+  "clinical_equivalence_established": false,
+  "hardware_purchase_qualified": false,
+  "cpu_verification": {
+    "recorded_test_groups": {
+      "summary_related": 202,
+      "disconnect": 24,
+      "knowledge_cache": 72,
+      "native_controls": 130,
+      "last_lease": 39
+    },
+    "counts_are_additive": false,
+    "clinical_case_count": false,
+    "interpretation": "Engineering regression groups overlap; these counts cannot be added and are not clinical cases."
+  },
+  "engineering_source_review": {
+    "run-j-original-reclaim": {
+      "status": "source_grounding_unqualified",
+      "phase": "sequential",
+      "lane": "patient",
+      "saved_report_evidence": "profile.phases[1].requests[1].synthetic_answer",
+      "automated_task_check_result": "12/12 lexical fixture checks passed; not full source grounding",
+      "issues": [
+        {
+          "actual_snippet": "No active medications are listed, so there is no change history to report.",
+          "finding": "An empty active-medication list does not establish absence of medication-change history; the causal inference is unsupported."
+        },
+        {
+          "actual_snippet": "No recent Scribe notes indicate any ongoing tasks have been formally recorded.",
+          "finding": "Scribe-note absence is not an authoritative unresolved-task ledger; the summary ambiguously uses notes as a proxy."
+        }
+      ],
+      "clinical_validation": false,
+      "raw_reports_or_checker_thresholds_changed": false
+    },
+    "run-k-mlx-bounded": {
+      "status": "source_grounding_unqualified",
+      "phase": "sequential",
+      "lane": "patient",
+      "saved_report_evidence": "profile.phases[1].requests[1].synthetic_answer",
+      "automated_task_check_result": "12/12 lexical fixture checks passed; not full source grounding",
+      "issues": [
+        {
+          "actual_snippet": "No recent imaging has been performed.",
+          "finding": "The source documents imaging unavailable, not absence of a performed procedure; missing evidence was converted to an unsupported negative event claim."
+        }
+      ],
+      "medication_history_note": {
+        "actual_snippet": "No active medication list is provided, so any change history is unknown.",
+        "interpretation": "Cautious unknown wording avoids J's asserted absence, but an active-list proxy does not validate change-history completeness."
+      },
+      "clinical_validation": false,
+      "raw_reports_or_checker_thresholds_changed": false
+    }
+  },
+  "all_saved_runs_restored": true,
+  "snapshots": [
+    {
+      "name": "sources-final",
+      "manifest": "sources-final/manifest.json",
+      "file_count": 39,
+      "snapshot_hash_mismatches": [],
+      "current_workspace_differences": [
+        "scripts/benchmark_mlx_ollama.py",
+        "scripts/serve_ollama_candidate.py",
+        "scripts/benchmark_model_residency_lease.py",
+        "scripts/loadtest_capacity.py",
+        "server/services/sage_service.py",
+        "server/services/knowledge_worker.py"
+      ]
+    },
+    {
+      "name": "sources-final-bounded-mlx",
+      "manifest": "sources-final-bounded-mlx/manifest.json",
+      "file_count": 64,
+      "snapshot_hash_mismatches": [],
+      "current_workspace_differences": []
+    },
+    {
+      "name": "sources-final-cache0",
+      "manifest": "sources-final-cache0/manifest.json",
+      "file_count": 64,
+      "snapshot_hash_mismatches": [],
+      "current_workspace_differences": [
+        "scripts/benchmark_model_residency_lease.py",
+        "server/services/sage_service.py"
+      ]
+    },
+    {
+      "name": "sources-final-compact-native",
+      "manifest": "sources-final-compact-native/manifest.json",
+      "file_count": 39,
+      "snapshot_hash_mismatches": [],
+      "current_workspace_differences": [
+        "scripts/benchmark_mlx_ollama.py",
+        "scripts/serve_ollama_candidate.py",
+        "scripts/benchmark_model_residency_lease.py",
+        "scripts/loadtest_capacity.py",
+        "server/services/sage_service.py",
+        "server/services/knowledge_worker.py"
+      ]
+    },
+    {
+      "name": "sources-final-complete-summary",
+      "manifest": "sources-final-complete-summary/manifest.json",
+      "file_count": 64,
+      "snapshot_hash_mismatches": [],
+      "current_workspace_differences": [
+        "scripts/benchmark_model_residency_lease.py"
+      ]
+    },
+    {
+      "name": "sources-qualified-rerun",
+      "manifest": "sources-qualified-rerun/manifest.json",
+      "file_count": 64,
+      "snapshot_hash_mismatches": [],
+      "current_workspace_differences": [
+        "scripts/benchmark_mlx_ollama.py",
+        "scripts/serve_ollama_candidate.py",
+        "scripts/benchmark_model_residency_lease.py",
+        "server/services/sage_service.py"
+      ]
+    },
+    {
+      "name": "sources-run-a",
+      "manifest": "sources-run-a/manifest.json",
+      "file_count": 39,
+      "snapshot_hash_mismatches": [],
+      "current_workspace_differences": [
+        "scripts/benchmark_mlx_ollama.py",
+        "scripts/serve_ollama_candidate.py",
+        "scripts/benchmark_model_residency_lease.py",
+        "scripts/loadtest_capacity.py",
+        "scripts/capacity_answer_quality.py",
+        "server/services/sage_service.py",
+        "server/services/knowledge_worker.py"
+      ]
+    }
+  ],
+  "runs": [
+    {
+      "run": "run-a",
+      "engine": "mlx",
+      "status": "aborted",
+      "report": "run-a/mlx-p8-full-rag/report.json",
+      "report_sha256": "b0313a89c2357c885a969371adb748ee311843d0832639faa63561880bac0e62",
+      "engineering_source_review": null,
+      "abort_reason": "compression_growth_over_4_gib",
+      "resource_guard_trigger": {
+        "pressure_sample_index": 8,
+        "reason": "compression_growth_over_4_gib",
+        "evidence": "recorded_before_owned_termination",
+        "monitor_exception_observed": true,
+        "monitor_state": "completed"
+      },
+      "model": {
+        "model": "medgemma:27b",
+        "kind": "same_source_separately_requantised_mlx_candidate",
+        "weights_bytes": 19478730384,
+        "kv_budget_bytes": 8858370048,
+        "kv_element_bytes": 2,
+        "activation_policy": "mixed_f32_residual_f16_projection",
+        "quantised_kv": false,
+        "clinical_equivalence": "not_qualified",
+        "loading_mode": "mixed-staged",
+        "checksum_io": {
+          "large_safetensors_uncached_fd_count": 435
+        },
+        "batching_enabled": true,
+        "prefix_cache_entry_limit": 0,
+        "prefix_cache_byte_limit": 8589934592,
+        "http_listen_backlog": 256,
+        "prefill_step_size": 256,
+        "mlx_allocator_cache_byte_limit": 1073741824,
+        "serving_admissions_per_decode_step": 8,
+        "request_scoped_disconnect_cancellation": true,
+        "source_gguf_sha256": "4b97da6b21a8fb1405a0d1efee462bfd6c4d3c46307bac8b34373835f07ca758",
+        "conversion_manifest_sha256": "2a6d9e1cd41375e54c614c0de05b2bd1715a2395ee0482b5ec979b22d7ae0206"
+      },
+      "parallel": 8,
+      "memory_preflight": {
+        "available_bytes": 54288386621,
+        "required_bytes": 49811936912
+      },
+      "flags": {
+        "full_retrieval_integrity_verified": false,
+        "summary_task_regression_passed": false,
+        "strict_200_latency_targets_demonstrated": false,
+        "clinical_equivalence_qualified": false,
+        "production_purchase_gate_passed": false
+      },
+      "phases": [],
+      "retrieval_call_counters": null,
+      "retrieval_output_reuse": null,
+      "retrieval_executor": null,
+      "retrieval_startup_proof": null,
+      "mps_unused_cache_release": null,
+      "system_pressure": {
+        "scope": "system_wide_not_daemon_rss_or_gpu_peak",
+        "samples": 11,
+        "minimum_os_free_percentage": 63,
+        "maximum_compressed_bytes": 17818337280,
+        "maximum_compression_growth_bytes": 7798259712,
+        "swapout_growth_bytes": 0
+      },
+      "native_storage_observations": null,
+      "matching_snapshots": [
+        {
+          "name": "sources-run-a",
+          "covered_recorded_sources": 35,
+          "recorded_source_count": 60
+        }
+      ],
+      "restoration": {
+        "lease_status": "experiment_finished",
+        "status": "restored_and_verified",
+        "all_original_residents_identity_and_context_verified": true,
+        "models": [
+          {
+            "name": "medgemma:27b",
+            "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+            "context_length": 8192,
+            "expires_at": "2319-02-01T18:47:20.190170807+05:30"
+          },
+          {
+            "name": "medgemma:4b",
+            "digest": "9fe4e9a6c9bda2d007bb595515550eafbc8e226622adff9257f3241eba334c4d",
+            "context_length": 4096,
+            "expires_at": "2319-02-01T16:16:11.862742807+05:30"
+          }
+        ],
+        "auto_reloaded_original_residents": []
+      }
+    },
+    {
+      "run": "run-b",
+      "engine": "mlx",
+      "status": "complete",
+      "report": "run-b/mlx-p8-full-rag/report.json",
+      "report_sha256": "4a9c4191d0181d007af06ab7a3dd00ba8929457511374d743a08de6cbec98e42",
+      "engineering_source_review": null,
+      "abort_reason": null,
+      "resource_guard_trigger": null,
+      "model": {
+        "model": "medgemma:27b",
+        "kind": "same_source_separately_requantised_mlx_candidate",
+        "weights_bytes": 19478730384,
+        "kv_budget_bytes": 8858370048,
+        "kv_element_bytes": 2,
+        "activation_policy": "mixed_f32_residual_f16_projection",
+        "quantised_kv": false,
+        "clinical_equivalence": "not_qualified",
+        "loading_mode": "mixed-staged",
+        "checksum_io": {
+          "large_safetensors_uncached_fd_count": 435
+        },
+        "batching_enabled": true,
+        "prefix_cache_entry_limit": 0,
+        "prefix_cache_byte_limit": 8589934592,
+        "http_listen_backlog": 256,
+        "prefill_step_size": 256,
+        "mlx_allocator_cache_byte_limit": 1073741824,
+        "serving_admissions_per_decode_step": 8,
+        "request_scoped_disconnect_cancellation": true,
+        "source_gguf_sha256": "4b97da6b21a8fb1405a0d1efee462bfd6c4d3c46307bac8b34373835f07ca758",
+        "conversion_manifest_sha256": "2a6d9e1cd41375e54c614c0de05b2bd1715a2395ee0482b5ec979b22d7ae0206"
+      },
+      "parallel": 8,
+      "memory_preflight": {
+        "available_bytes": 53601191854,
+        "required_bytes": 49811936912
+      },
+      "flags": {
+        "full_retrieval_integrity_verified": true,
+        "summary_task_regression_passed": false,
+        "strict_200_latency_targets_demonstrated": false,
+        "clinical_equivalence_qualified": false,
+        "production_purchase_gate_passed": false
+      },
+      "phases": [
+        {
+          "name": "quality",
+          "status": "complete",
+          "total": 8,
+          "completed_cases": 8,
+          "successful": 8,
+          "all_cases_passed": true,
+          "evidence": "Eight narrow synthetic factual-extraction fixtures; not clinical validation",
+          "observed_cases": 8,
+          "distinct_case_ids": 8,
+          "case_error_types": {
+            "none": 8
+          },
+          "completed_but_failed_validation": 0,
+          "completed_terminal_passed_cases": 8
+        },
+        {
+          "name": "sequential",
+          "status": "complete",
+          "planned": 3,
+          "observed": 3,
+          "unobserved": 0,
+          "hard_request_timeout_s": 60.0,
+          "transport_completed": 3,
+          "complete_valid_answers": 3,
+          "errors": {
+            "none": 3
+          },
+          "lanes": {
+            "general": {
+              "observed": 1,
+              "transport_completed": 1,
+              "complete_valid_answers": 1,
+              "meeting_target": 0,
+              "target_s": 3.0,
+              "successful_only_p50_s": 14.105905709031504,
+              "successful_only_p95_s": 14.105905709031504,
+              "successful_only_p99_s": 14.105905709031504,
+              "errors": {
+                "none": 1
+              },
+              "retrieval_observed": 1,
+              "retrieval_p50_ms": 882.0
+            },
+            "patient": {
+              "observed": 1,
+              "transport_completed": 1,
+              "complete_valid_answers": 1,
+              "meeting_target": 0,
+              "target_s": 5.0,
+              "successful_only_p50_s": 26.82977629103698,
+              "successful_only_p95_s": 26.82977629103698,
+              "successful_only_p99_s": 26.82977629103698,
+              "errors": {
+                "none": 1
+              },
+              "retrieval_observed": 1,
+              "retrieval_p50_ms": 290.0
+            },
+            "department": {
+              "observed": 1,
+              "transport_completed": 1,
+              "complete_valid_answers": 1,
+              "meeting_target": 0,
+              "target_s": 15.0,
+              "successful_only_p50_s": 22.413122042024042,
+              "successful_only_p95_s": 22.413122042024042,
+              "successful_only_p99_s": 22.413122042024042,
+              "errors": {
+                "none": 1
+              },
+              "retrieval_observed": 1,
+              "retrieval_p50_ms": 5.0
+            }
+          },
+          "rows": [
+            {
+              "lane": "general",
+              "transport_complete": true,
+              "complete_valid_answer": true,
+              "semantic_checked": false,
+              "semantic_passed": null,
+              "semantic_checks_passed": 0,
+              "semantic_checks_total": 0,
+              "semantic_failed_checks": [],
+              "error": null,
+              "full_s": 14.105905709031504,
+              "first_content_s": 5.456441709015053,
+              "first_readable_s": 6.058878084004391,
+              "terminal_completion_s": 14.096310499997344,
+              "retrieval_ms": 882,
+              "queue_ms": 0.17,
+              "target_s": 3.0,
+              "complete_valid_within_target": false,
+              "independent_clinical_validation": false
+            },
+            {
+              "lane": "patient",
+              "transport_complete": true,
+              "complete_valid_answer": true,
+              "semantic_checked": true,
+              "semantic_passed": true,
+              "semantic_checks_passed": 9,
+              "semantic_checks_total": 9,
+              "semantic_failed_checks": [],
+              "error": null,
+              "full_s": 26.82977629103698,
+              "first_content_s": 0.292950916045811,
+              "first_readable_s": 6.138939083029982,
+              "terminal_completion_s": 26.826342458021827,
+              "retrieval_ms": 290,
+              "queue_ms": 0.076,
+              "target_s": 5.0,
+              "complete_valid_within_target": false,
+              "independent_clinical_validation": false
+            },
+            {
+              "lane": "department",
+              "transport_complete": true,
+              "complete_valid_answer": true,
+              "semantic_checked": false,
+              "semantic_passed": null,
+              "semantic_checks_passed": 0,
+              "semantic_checks_total": 0,
+              "semantic_failed_checks": [],
+              "error": null,
+              "full_s": 22.413122042024042,
+              "first_content_s": 15.500833458034322,
+              "first_readable_s": 16.574610500014387,
+              "terminal_completion_s": 22.4101393330493,
+              "retrieval_ms": 5,
+              "queue_ms": 0.062,
+              "target_s": 15.0,
+              "complete_valid_within_target": false,
+              "independent_clinical_validation": false
+            }
+          ],
+          "workflow_quality": {
+            "required": true,
+            "patient_requests": 1,
+            "transport_completed": 1,
+            "task_checks_passed": 1,
+            "all_patient_requests_passed": true,
+            "clinical_accuracy_qualified": false
+          },
+          "post_request_retrieval_settle": {
+            "maximum_seconds": 10.0,
+            "wall_s": 0.018997457984369248,
+            "settled": true,
+            "initial": {
+              "executor": {
+                "workers": 4,
+                "max_outstanding": 200,
+                "active": 0,
+                "queued": 0,
+                "outstanding": 0,
+                "closed": false,
+                "admitted": 3,
+                "rejected": 0,
+                "completed": 3,
+                "failed": 0,
+                "cancelled_queued": 0,
+                "cancelled_running_waiters": 0,
+                "started": 3,
+                "queue_wait_avg_ms": 0.07355533307418227,
+                "queue_wait_max_ms": 0.11000002268701792,
+                "service_total_ms": 1167.8462089621462,
+                "service_max_ms": 875.1994589692913
+              },
+              "model_outputs": {
+                "submitted": 7,
+                "coalesced": 0,
+                "hits": 0,
+                "evicted": 0,
+                "embedding_batch_calls": 0,
+                "embedding_batched_requests": 0,
+                "embedding_batch_max": 0,
+                "embedding_batch_pending": 0,
+                "pending": 0,
+                "entries": 4,
+                "bytes": 8896,
+                "ttl_s": 30.0,
+                "max_entries": 128,
+                "max_bytes": 8388608,
+                "max_pending": 256
+              },
+              "calls": {
+                "embedding_calls": 2,
+                "embedding_completed": 2,
+                "embedding_failed": 0,
+                "rerank_calls": 2,
+                "rerank_completed": 2,
+                "rerank_failed": 0,
+                "results_cross_encoder": 24,
+                "results_lexical": 0,
+                "results_other": 0,
+                "embedding_elapsed_s": 0.12479029194219038,
+                "embedding_max_s": 0.07214104197919369,
+                "rerank_elapsed_s": 1.0112766670645215,
+                "rerank_max_s": 0.7824840000248514
+              }
+            },
+            "final": {
+              "executor": {
+                "workers": 4,
+                "max_outstanding": 200,
+                "active": 0,
+                "queued": 0,
+                "outstanding": 0,
+                "closed": false,
+                "admitted": 3,
+                "rejected": 0,
+                "completed": 3,
+                "failed": 0,
+                "cancelled_queued": 0,
+                "cancelled_running_waiters": 0,
+                "started": 3,
+                "queue_wait_avg_ms": 0.07355533307418227,
+                "queue_wait_max_ms": 0.11000002268701792,
+                "service_total_ms": 1167.8462089621462,
+                "service_max_ms": 875.1994589692913
+              },
+              "model_outputs": {
+                "submitted": 7,
+                "coalesced": 0,
+                "hits": 0,
+                "evicted": 0,
+                "embedding_batch_calls": 0,
+                "embedding_batched_requests": 0,
+                "embedding_batch_max": 0,
+                "embedding_batch_pending": 0,
+                "pending": 0,
+                "entries": 4,
+                "bytes": 8896,
+                "ttl_s": 30.0,
+                "max_entries": 128,
+                "max_bytes": 8388608,
+                "max_pending": 256
+              },
+              "calls": {
+                "embedding_calls": 2,
+                "embedding_completed": 2,
+                "embedding_failed": 0,
+                "rerank_calls": 2,
+                "rerank_completed": 2,
+                "rerank_failed": 0,
+                "results_cross_encoder": 24,
+                "results_lexical": 0,
+                "results_other": 0,
+                "embedding_elapsed_s": 0.12479029194219038,
+                "embedding_max_s": 0.07214104197919369,
+                "rerank_elapsed_s": 1.0112766670645215,
+                "rerank_max_s": 0.7824840000248514
+              }
+            },
+            "included_in_request_latency": false
+          },
+          "cleanup_is_excluded_from_latency": true
+        },
+        {
+          "name": "burst",
+          "status": "complete",
+          "planned": 200,
+          "observed": 200,
+          "unobserved": 0,
+          "hard_request_timeout_s": 20.0,
+          "transport_completed": 0,
+          "complete_valid_answers": 0,
+          "errors": {
+            "timeout": 148,
+            "capacity_rejected": 52
+          },
+          "lanes": {
+            "general": {
+              "observed": 67,
+              "transport_completed": 0,
+              "complete_valid_answers": 0,
+              "meeting_target": 0,
+              "target_s": 3.0,
+              "successful_only_p50_s": null,
+              "successful_only_p95_s": null,
+              "successful_only_p99_s": null,
+              "errors": {
+                "timeout": 53,
+                "capacity_rejected": 14
+              },
+              "retrieval_observed": 20,
+              "retrieval_p50_ms": 12647.0
+            },
+            "patient": {
+              "observed": 67,
+              "transport_completed": 0,
+              "complete_valid_answers": 0,
+              "meeting_target": 0,
+              "target_s": 5.0,
+              "successful_only_p50_s": null,
+              "successful_only_p95_s": null,
+              "successful_only_p99_s": null,
+              "errors": {
+                "capacity_rejected": 21,
+                "timeout": 46
+              },
+              "retrieval_observed": 23,
+              "retrieval_p50_ms": 8874.0
+            },
+            "department": {
+              "observed": 66,
+              "transport_completed": 0,
+              "complete_valid_answers": 0,
+              "meeting_target": 0,
+              "target_s": 15.0,
+              "successful_only_p50_s": null,
+              "successful_only_p95_s": null,
+              "successful_only_p99_s": null,
+              "errors": {
+                "timeout": 49,
+                "capacity_rejected": 17
+              },
+              "retrieval_observed": 22,
+              "retrieval_p50_ms": 7963.0
+            }
+          },
+          "rows": null,
+          "workflow_quality": {
+            "required": true,
+            "patient_requests": 67,
+            "transport_completed": 0,
+            "task_checks_passed": 0,
+            "all_patient_requests_passed": false,
+            "clinical_accuracy_qualified": false
+          },
+          "post_request_retrieval_settle": {
+            "maximum_seconds": 10.0,
+            "wall_s": 1.6933474579709582,
+            "settled": true,
+            "initial": {
+              "executor": {
+                "workers": 4,
+                "max_outstanding": 200,
+                "active": 4,
+                "queued": 0,
+                "outstanding": 4,
+                "closed": false,
+                "admitted": 203,
+                "rejected": 0,
+                "completed": 69,
+                "failed": 0,
+                "cancelled_queued": 130,
+                "cancelled_running_waiters": 5,
+                "started": 73,
+                "queue_wait_avg_ms": 8540.497666011144,
+                "queue_wait_max_ms": 19450.974499981385,
+                "service_total_ms": 77188.25887481216,
+                "service_max_ms": 1893.4139579650946
+              },
+              "model_outputs": {
+                "submitted": 101,
+                "coalesced": 0,
+                "hits": 0,
+                "evicted": 0,
+                "embedding_batch_calls": 0,
+                "embedding_batched_requests": 0,
+                "embedding_batch_max": 0,
+                "embedding_batch_pending": 0,
+                "pending": 4,
+                "entries": 90,
+                "bytes": 204160,
+                "ttl_s": 30.0,
+                "max_entries": 128,
+                "max_bytes": 8388608,
+                "max_pending": 256
+              },
+              "calls": {
+                "embedding_calls": 50,
+                "embedding_completed": 48,
+                "embedding_failed": 0,
+                "rerank_calls": 48,
+                "rerank_completed": 46,
+                "rerank_failed": 0,
+                "results_cross_encoder": 552,
+                "results_lexical": 0,
+                "results_other": 0,
+                "embedding_elapsed_s": 32.836688628653064,
+                "embedding_max_s": 1.248982666991651,
+                "rerank_elapsed_s": 44.5009622911457,
+                "rerank_max_s": 1.558234750002157
+              }
+            },
+            "final": {
+              "executor": {
+                "workers": 4,
+                "max_outstanding": 200,
+                "active": 0,
+                "queued": 0,
+                "outstanding": 0,
+                "closed": false,
+                "admitted": 203,
+                "rejected": 0,
+                "completed": 73,
+                "failed": 0,
+                "cancelled_queued": 130,
+                "cancelled_running_waiters": 5,
+                "started": 73,
+                "queue_wait_avg_ms": 8540.497666011144,
+                "queue_wait_max_ms": 19450.974499981385,
+                "service_total_ms": 84088.03137479117,
+                "service_max_ms": 1893.4139579650946
+              },
+              "model_outputs": {
+                "submitted": 103,
+                "coalesced": 0,
+                "hits": 0,
+                "evicted": 0,
+                "embedding_batch_calls": 0,
+                "embedding_batched_requests": 0,
+                "embedding_batch_max": 0,
+                "embedding_batch_pending": 0,
+                "pending": 0,
+                "entries": 96,
+                "bytes": 213504,
+                "ttl_s": 30.0,
+                "max_entries": 128,
+                "max_bytes": 8388608,
+                "max_pending": 256
+              },
+              "calls": {
+                "embedding_calls": 50,
+                "embedding_completed": 50,
+                "embedding_failed": 0,
+                "rerank_calls": 50,
+                "rerank_completed": 50,
+                "rerank_failed": 0,
+                "results_cross_encoder": 600,
+                "results_lexical": 0,
+                "results_other": 0,
+                "embedding_elapsed_s": 34.900186462677084,
+                "embedding_max_s": 1.248982666991651,
+                "rerank_elapsed_s": 48.33067433303222,
+                "rerank_max_s": 1.558234750002157
+              }
+            },
+            "included_in_request_latency": false
+          },
+          "cleanup_is_excluded_from_latency": true
+        }
+      ],
+      "retrieval_call_counters": {
+        "embedding_calls": 50,
+        "embedding_completed": 50,
+        "embedding_failed": 0,
+        "rerank_calls": 50,
+        "rerank_completed": 50,
+        "rerank_failed": 0,
+        "results_cross_encoder": 600,
+        "results_lexical": 0,
+        "results_other": 0,
+        "embedding_elapsed_s": 34.900186462677084,
+        "embedding_max_s": 1.248982666991651,
+        "rerank_elapsed_s": 48.33067433303222,
+        "rerank_max_s": 1.558234750002157
+      },
+      "retrieval_output_reuse": {
+        "submitted": 103,
+        "coalesced": 0,
+        "hits": 0,
+        "evicted": 0,
+        "embedding_batch_calls": 0,
+        "embedding_batched_requests": 0,
+        "embedding_batch_max": 0,
+        "embedding_batch_pending": 0,
+        "pending": 0,
+        "entries": 96,
+        "bytes": 213504,
+        "ttl_s": 30.0,
+        "max_entries": 128,
+        "max_bytes": 8388608,
+        "max_pending": 256
+      },
+      "retrieval_executor": {
+        "workers": 4,
+        "max_outstanding": 200,
+        "active": 0,
+        "queued": 0,
+        "outstanding": 0,
+        "closed": false,
+        "admitted": 203,
+        "rejected": 0,
+        "completed": 73,
+        "failed": 0,
+        "cancelled_queued": 130,
+        "cancelled_running_waiters": 5,
+        "started": 73,
+        "queue_wait_avg_ms": 8540.497666011144,
+        "queue_wait_max_ms": 19450.974499981385,
+        "service_total_ms": 84088.03137479117,
+        "service_max_ms": 1893.4139579650946
+      },
+      "retrieval_startup_proof": {
+        "embedding": {
+          "expected_model": "BAAI/bge-m3",
+          "architecture": "XLMRobertaModel",
+          "hidden_size": 1024,
+          "config_sha256": "26159e7ad065073448460117eb24b7a4572f6f4e78eadff65dc0a11c052449fa",
+          "snapshot_revision": "5617a9f61b028005a4858fdac845db406aefb181"
+        },
+        "reranker": {
+          "expected_model": "BAAI/bge-reranker-v2-m3",
+          "architecture": "XLMRobertaForSequenceClassification",
+          "hidden_size": 1024,
+          "config_sha256": "13dcd6c31d9fec9d1d8e158702072f62d7fa7d312a64b9fe057bec9a08cfe41a",
+          "snapshot_revision": "953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e"
+        },
+        "corpus_sources": 19,
+        "corpus_vectors": 19,
+        "corpus_fingerprint": "e85261d5dc762d793b10470056b9cfcec365d679d3bda7a3ba0c208d8ef7ded2",
+        "nonzero_corpus_vectors": 19,
+        "nonzero_embedding_probe": true,
+        "cross_encoder_probe": true,
+        "qualification_scope": "Installed full retrieval over the disposable seeded corpus; no clinical accuracy claim"
+      },
+      "mps_unused_cache_release": null,
+      "system_pressure": {
+        "scope": "system_wide_not_daemon_rss_or_gpu_peak",
+        "samples": 89,
+        "minimum_os_free_percentage": 32,
+        "maximum_compressed_bytes": 15186591744,
+        "maximum_compression_growth_bytes": 4253155328,
+        "swapout_growth_bytes": 0
+      },
+      "native_storage_observations": null,
+      "matching_snapshots": [
+        {
+          "name": "sources-run-a",
+          "covered_recorded_sources": 35,
+          "recorded_source_count": 60
+        }
+      ],
+      "restoration": {
+        "lease_status": "experiment_finished",
+        "status": "restored_and_verified",
+        "all_original_residents_identity_and_context_verified": true,
+        "models": [
+          {
+            "name": "medgemma:4b",
+            "digest": "9fe4e9a6c9bda2d007bb595515550eafbc8e226622adff9257f3241eba334c4d",
+            "context_length": 4096,
+            "expires_at": "2319-02-01T18:53:00.664512807+05:30"
+          },
+          {
+            "name": "medgemma:27b",
+            "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+            "context_length": 8192,
+            "expires_at": "2319-02-01T18:52:59.287218807+05:30"
+          }
+        ],
+        "auto_reloaded_original_residents": [
+          {
+            "name": "medgemma:4b",
+            "digest": "9fe4e9a6c9bda2d007bb595515550eafbc8e226622adff9257f3241eba334c4d",
+            "context_length": 4096,
+            "indefinite_residency_verified": true
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-c-original",
+      "engine": "ollama",
+      "status": "aborted",
+      "report": "run-c-original/ollama-p2-full-rag/report.json",
+      "report_sha256": "46958016e29aca8841a2dec71a5275dac82e144aa336006c8ac87f73b9b4594f",
+      "engineering_source_review": null,
+      "abort_reason": "compression_growth_over_4_gib",
+      "resource_guard_trigger": {
+        "pressure_sample_index": 6,
+        "reason": "compression_growth_over_4_gib",
+        "evidence": "recorded_before_owned_termination",
+        "monitor_exception_observed": true,
+        "monitor_state": "completed"
+      },
+      "model": {
+        "model": "medgemma:27b",
+        "model_digest": "sha256:4b97da6b21a8fb1405a0d1efee462bfd6c4d3c46307bac8b34373835f07ca758",
+        "weight_bytes": 17397211520,
+        "manifest_sha256": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+        "quantization": "Q4_K_M"
+      },
+      "parallel": 2,
+      "memory_preflight": {
+        "available_bytes": 53601191854,
+        "required_bytes": 47461982592
+      },
+      "flags": {
+        "full_retrieval_integrity_verified": false,
+        "summary_task_regression_passed": false,
+        "strict_200_latency_targets_demonstrated": false,
+        "clinical_equivalence_qualified": false,
+        "production_purchase_gate_passed": false
+      },
+      "phases": [],
+      "retrieval_call_counters": null,
+      "retrieval_output_reuse": null,
+      "retrieval_executor": null,
+      "retrieval_startup_proof": null,
+      "mps_unused_cache_release": null,
+      "system_pressure": {
+        "scope": "system_wide_not_daemon_rss_or_gpu_peak",
+        "samples": 9,
+        "minimum_os_free_percentage": 26,
+        "maximum_compressed_bytes": 20249542656,
+        "maximum_compression_growth_bytes": 9070886912,
+        "swapout_growth_bytes": 0
+      },
+      "native_storage_observations": {
+        "observed_kv_buffers_mib": [
+          1280.0,
+          6656.0
+        ],
+        "observed_total_kv_gib": 7.75,
+        "observed_context_per_sequence": [
+          8192
+        ],
+        "runner_confirmed_ram_prompt_cache_disabled": false,
+        "kv_is_active_generation_storage_not_optional_prompt_archive": true
+      },
+      "matching_snapshots": [
+        {
+          "name": "sources-final",
+          "covered_recorded_sources": 35,
+          "recorded_source_count": 60
+        }
+      ],
+      "restoration": {
+        "lease_status": "experiment_finished",
+        "status": "restored_and_verified",
+        "all_original_residents_identity_and_context_verified": true,
+        "models": [
+          {
+            "name": "medgemma:27b",
+            "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+            "context_length": 8192,
+            "expires_at": "2319-02-01T18:58:09.826735807+05:30"
+          },
+          {
+            "name": "medgemma:4b",
+            "digest": "9fe4e9a6c9bda2d007bb595515550eafbc8e226622adff9257f3241eba334c4d",
+            "context_length": 4096,
+            "expires_at": "2319-02-01T18:53:00.664512807+05:30"
+          }
+        ],
+        "auto_reloaded_original_residents": []
+      }
+    },
+    {
+      "run": "run-d-mlx",
+      "engine": "mlx",
+      "status": "complete",
+      "report": "run-d-mlx/mlx-p8-full-rag/report.json",
+      "report_sha256": "45658b199a348f7f7a030639fb682981645f5df14b1afc88f69ef4117500deb0",
+      "engineering_source_review": null,
+      "abort_reason": null,
+      "resource_guard_trigger": null,
+      "model": {
+        "model": "medgemma:27b",
+        "kind": "same_source_separately_requantised_mlx_candidate",
+        "weights_bytes": 19478730384,
+        "kv_budget_bytes": 8858370048,
+        "kv_element_bytes": 2,
+        "activation_policy": "mixed_f32_residual_f16_projection",
+        "quantised_kv": false,
+        "clinical_equivalence": "not_qualified",
+        "loading_mode": "mixed-staged",
+        "checksum_io": {
+          "large_safetensors_uncached_fd_count": 435
+        },
+        "batching_enabled": true,
+        "prefix_cache_entry_limit": 0,
+        "prefix_cache_byte_limit": 8589934592,
+        "http_listen_backlog": 256,
+        "prefill_step_size": 256,
+        "mlx_allocator_cache_byte_limit": 1073741824,
+        "serving_admissions_per_decode_step": 8,
+        "request_scoped_disconnect_cancellation": true,
+        "source_gguf_sha256": "4b97da6b21a8fb1405a0d1efee462bfd6c4d3c46307bac8b34373835f07ca758",
+        "conversion_manifest_sha256": "2a6d9e1cd41375e54c614c0de05b2bd1715a2395ee0482b5ec979b22d7ae0206"
+      },
+      "parallel": 8,
+      "memory_preflight": {
+        "available_bytes": 50165218017,
+        "required_bytes": 49811936912
+      },
+      "flags": {
+        "full_retrieval_integrity_verified": true,
+        "summary_task_regression_passed": false,
+        "strict_200_latency_targets_demonstrated": false,
+        "clinical_equivalence_qualified": false,
+        "production_purchase_gate_passed": false
+      },
+      "phases": [
+        {
+          "name": "quality",
+          "status": "complete",
+          "total": 8,
+          "completed_cases": 8,
+          "successful": 8,
+          "all_cases_passed": true,
+          "evidence": "Eight narrow synthetic factual-extraction fixtures; not clinical validation",
+          "observed_cases": 8,
+          "distinct_case_ids": 8,
+          "case_error_types": {
+            "none": 8
+          },
+          "completed_but_failed_validation": 0,
+          "completed_terminal_passed_cases": 8
+        },
+        {
+          "name": "sequential",
+          "status": "complete",
+          "planned": 3,
+          "observed": 3,
+          "unobserved": 0,
+          "hard_request_timeout_s": 60.0,
+          "transport_completed": 2,
+          "complete_valid_answers": 1,
+          "errors": {
+            "none": 1,
+            "summary_quality_failed": 1,
+            "timeout": 1
+          },
+          "lanes": {
+            "general": {
+              "observed": 1,
+              "transport_completed": 1,
+              "complete_valid_answers": 1,
+              "meeting_target": 0,
+              "target_s": 3.0,
+              "successful_only_p50_s": 12.917885958042461,
+              "successful_only_p95_s": 12.917885958042461,
+              "successful_only_p99_s": 12.917885958042461,
+              "errors": {
+                "none": 1
+              },
+              "retrieval_observed": 1,
+              "retrieval_p50_ms": 307.0
+            },
+            "patient": {
+              "observed": 1,
+              "transport_completed": 1,
+              "complete_valid_answers": 0,
+              "meeting_target": 0,
+              "target_s": 5.0,
+              "successful_only_p50_s": null,
+              "successful_only_p95_s": null,
+              "successful_only_p99_s": null,
+              "errors": {
+                "summary_quality_failed": 1
+              },
+              "retrieval_observed": 1,
+              "retrieval_p50_ms": 262.0
+            },
+            "department": {
+              "observed": 1,
+              "transport_completed": 0,
+              "complete_valid_answers": 0,
+              "meeting_target": 0,
+              "target_s": 15.0,
+              "successful_only_p50_s": null,
+              "successful_only_p95_s": null,
+              "successful_only_p99_s": null,
+              "errors": {
+                "timeout": 1
+              },
+              "retrieval_observed": 1,
+              "retrieval_p50_ms": 3.0
+            }
+          },
+          "rows": [
+            {
+              "lane": "general",
+              "transport_complete": true,
+              "complete_valid_answer": true,
+              "semantic_checked": false,
+              "semantic_passed": null,
+              "semantic_checks_passed": 0,
+              "semantic_checks_total": 0,
+              "semantic_failed_checks": [],
+              "error": null,
+              "full_s": 12.917885958042461,
+              "first_content_s": 4.913750125037041,
+              "first_readable_s": 5.552787292050198,
+              "terminal_completion_s": 12.913275917002466,
+              "retrieval_ms": 307,
+              "queue_ms": 0.091,
+              "target_s": 3.0,
+              "complete_valid_within_target": false,
+              "independent_clinical_validation": false
+            },
+            {
+              "lane": "patient",
+              "transport_complete": true,
+              "complete_valid_answer": false,
+              "semantic_checked": true,
+              "semantic_passed": false,
+              "semantic_checks_passed": 11,
+              "semantic_checks_total": 12,
+              "semantic_failed_checks": [
+                "documented_diagnosis_present"
+              ],
+              "error": "summary_quality_failed",
+              "full_s": 33.60155320802005,
+              "first_content_s": 0.2642572909826413,
+              "first_readable_s": 6.968094166019,
+              "terminal_completion_s": 33.5988831660361,
+              "retrieval_ms": 262,
+              "queue_ms": 0.089,
+              "target_s": 5.0,
+              "complete_valid_within_target": false,
+              "independent_clinical_validation": false
+            },
+            {
+              "lane": "department",
+              "transport_complete": false,
+              "complete_valid_answer": false,
+              "semantic_checked": false,
+              "semantic_passed": null,
+              "semantic_checks_passed": 0,
+              "semantic_checks_total": 0,
+              "semantic_failed_checks": [],
+              "error": "timeout",
+              "full_s": 60.002246833988465,
+              "first_content_s": 15.665550625009928,
+              "first_readable_s": 16.691767291980796,
+              "terminal_completion_s": null,
+              "retrieval_ms": 3,
+              "queue_ms": null,
+              "target_s": 15.0,
+              "complete_valid_within_target": false,
+              "independent_clinical_validation": false
+            }
+          ],
+          "workflow_quality": {
+            "required": true,
+            "patient_requests": 1,
+            "transport_completed": 1,
+            "task_checks_passed": 0,
+            "all_patient_requests_passed": false,
+            "clinical_accuracy_qualified": false
+          },
+          "post_request_retrieval_settle": {
+            "maximum_seconds": 10.0,
+            "wall_s": 0.009710083017125726,
+            "settled": true,
+            "initial": {
+              "executor": {
+                "workers": 4,
+                "max_outstanding": 200,
+                "active": 0,
+                "queued": 0,
+                "outstanding": 0,
+                "closed": false,
+                "admitted": 3,
+                "rejected": 0,
+                "completed": 3,
+                "failed": 0,
+                "cancelled_queued": 0,
+                "cancelled_running_waiters": 0,
+                "started": 3,
+                "queue_wait_avg_ms": 0.1093886870269974,
+                "queue_wait_max_ms": 0.15795801300555468,
+                "service_total_ms": 564.519957988523,
+                "service_max_ms": 300.5047499900684
+              },
+              "model_outputs": {
+                "submitted": 7,
+                "coalesced": 0,
+                "hits": 0,
+                "evicted": 0,
+                "embedding_batch_calls": 0,
+                "embedding_batched_requests": 0,
+                "embedding_batch_max": 0,
+                "embedding_batch_pending": 0,
+                "pending": 0,
+                "entries": 4,
+                "bytes": 8896,
+                "ttl_s": 30.0,
+                "max_entries": 128,
+                "max_bytes": 8388608,
+                "max_pending": 256
+              },
+              "calls": {
+                "embedding_calls": 2,
+                "embedding_completed": 2,
+                "embedding_failed": 0,
+                "rerank_calls": 2,
+                "rerank_completed": 2,
+                "rerank_failed": 0,
+                "results_cross_encoder": 24,
+                "results_lexical": 0,
+                "results_other": 0,
+                "embedding_elapsed_s": 0.09945637499913573,
+                "embedding_max_s": 0.059542124974541366,
+                "rerank_elapsed_s": 0.439421915973071,
+                "rerank_max_s": 0.22279512498062104
+              }
+            },
+            "final": {
+              "executor": {
+                "workers": 4,
+                "max_outstanding": 200,
+                "active": 0,
+                "queued": 0,
+                "outstanding": 0,
+                "closed": false,
+                "admitted": 3,
+                "rejected": 0,
+                "completed": 3,
+                "failed": 0,
+                "cancelled_queued": 0,
+                "cancelled_running_waiters": 0,
+                "started": 3,
+                "queue_wait_avg_ms": 0.1093886870269974,
+                "queue_wait_max_ms": 0.15795801300555468,
+                "service_total_ms": 564.519957988523,
+                "service_max_ms": 300.5047499900684
+              },
+              "model_outputs": {
+                "submitted": 7,
+                "coalesced": 0,
+                "hits": 0,
+                "evicted": 0,
+                "embedding_batch_calls": 0,
+                "embedding_batched_requests": 0,
+                "embedding_batch_max": 0,
+                "embedding_batch_pending": 0,
+                "pending": 0,
+                "entries": 4,
+                "bytes": 8896,
+                "ttl_s": 30.0,
+                "max_entries": 128,
+                "max_bytes": 8388608,
+                "max_pending": 256
+              },
+              "calls": {
+                "embedding_calls": 2,
+                "embedding_completed": 2,
+                "embedding_failed": 0,
+                "rerank_calls": 2,
+                "rerank_completed": 2,
+                "rerank_failed": 0,
+                "results_cross_encoder": 24,
+                "results_lexical": 0,
+                "results_other": 0,
+                "embedding_elapsed_s": 0.09945637499913573,
+                "embedding_max_s": 0.059542124974541366,
+                "rerank_elapsed_s": 0.439421915973071,
+                "rerank_max_s": 0.22279512498062104
+              }
+            },
+            "included_in_request_latency": false
+          },
+          "cleanup_is_excluded_from_latency": true
+        },
+        {
+          "name": "burst",
+          "status": "complete",
+          "planned": 200,
+          "observed": 200,
+          "unobserved": 0,
+          "hard_request_timeout_s": 20.0,
+          "transport_completed": 0,
+          "complete_valid_answers": 0,
+          "errors": {
+            "timeout": 149,
+            "capacity_rejected": 51
+          },
+          "lanes": {
+            "general": {
+              "observed": 67,
+              "transport_completed": 0,
+              "complete_valid_answers": 0,
+              "meeting_target": 0,
+              "target_s": 3.0,
+              "successful_only_p50_s": null,
+              "successful_only_p95_s": null,
+              "successful_only_p99_s": null,
+              "errors": {
+                "timeout": 52,
+                "capacity_rejected": 15
+              },
+              "retrieval_observed": 21,
+              "retrieval_p50_ms": 10001.0
+            },
+            "patient": {
+              "observed": 67,
+              "transport_completed": 0,
+              "complete_valid_answers": 0,
+              "meeting_target": 0,
+              "target_s": 5.0,
+              "successful_only_p50_s": null,
+              "successful_only_p95_s": null,
+              "successful_only_p99_s": null,
+              "errors": {
+                "capacity_rejected": 19,
+                "timeout": 48
+              },
+              "retrieval_observed": 23,
+              "retrieval_p50_ms": 10377.0
+            },
+            "department": {
+              "observed": 66,
+              "transport_completed": 0,
+              "complete_valid_answers": 0,
+              "meeting_target": 0,
+              "target_s": 15.0,
+              "successful_only_p50_s": null,
+              "successful_only_p95_s": null,
+              "successful_only_p99_s": null,
+              "errors": {
+                "timeout": 49,
+                "capacity_rejected": 17
+              },
+              "retrieval_observed": 23,
+              "retrieval_p50_ms": 10003.0
+            }
+          },
+          "rows": null,
+          "workflow_quality": {
+            "required": true,
+            "patient_requests": 67,
+            "transport_completed": 0,
+            "task_checks_passed": 0,
+            "all_patient_requests_passed": false,
+            "clinical_accuracy_qualified": false
+          },
+          "post_request_retrieval_settle": {
+            "maximum_seconds": 10.0,
+            "wall_s": 1.584971125004813,
+            "settled": true,
+            "initial": {
+              "executor": {
+                "workers": 4,
+                "max_outstanding": 200,
+                "active": 4,
+                "queued": 0,
+                "outstanding": 4,
+                "closed": false,
+                "admitted": 203,
+                "rejected": 0,
+                "completed": 70,
+                "failed": 0,
+                "cancelled_queued": 129,
+                "cancelled_running_waiters": 4,
+                "started": 74,
+                "queue_wait_avg_ms": 8769.423399715231,
+                "queue_wait_max_ms": 19344.115625019185,
+                "service_total_ms": 76261.95821212605,
+                "service_max_ms": 1895.7988750189543
+              },
+              "model_outputs": {
+                "submitted": 102,
+                "coalesced": 0,
+                "hits": 0,
+                "evicted": 0,
+                "embedding_batch_calls": 0,
+                "embedding_batched_requests": 0,
+                "embedding_batch_max": 0,
+                "embedding_batch_pending": 0,
+                "pending": 4,
+                "entries": 91,
+                "bytes": 208384,
+                "ttl_s": 30.0,
+                "max_entries": 128,
+                "max_bytes": 8388608,
+                "max_pending": 256
+              },
+              "calls": {
+                "embedding_calls": 50,
+                "embedding_completed": 49,
+                "embedding_failed": 0,
+                "rerank_calls": 49,
+                "rerank_completed": 46,
+                "rerank_failed": 0,
+                "results_cross_encoder": 552,
+                "results_lexical": 0,
+                "results_other": 0,
+                "embedding_elapsed_s": 32.836909043835476,
+                "embedding_max_s": 0.941099374962505,
+                "rerank_elapsed_s": 44.92405174521264,
+                "rerank_max_s": 1.2811241659801453
+              }
+            },
+            "final": {
+              "executor": {
+                "workers": 4,
+                "max_outstanding": 200,
+                "active": 0,
+                "queued": 0,
+                "outstanding": 0,
+                "closed": false,
+                "admitted": 203,
+                "rejected": 0,
+                "completed": 74,
+                "failed": 0,
+                "cancelled_queued": 129,
+                "cancelled_running_waiters": 4,
+                "started": 74,
+                "queue_wait_avg_ms": 8769.423399715231,
+                "queue_wait_max_ms": 19344.115625019185,
+                "service_total_ms": 83263.3503791294,
+                "service_max_ms": 1895.7988750189543
+              },
+              "model_outputs": {
+                "submitted": 103,
+                "coalesced": 0,
+                "hits": 0,
+                "evicted": 0,
+                "embedding_batch_calls": 0,
+                "embedding_batched_requests": 0,
+                "embedding_batch_max": 0,
+                "embedding_batch_pending": 0,
+                "pending": 0,
+                "entries": 96,
+                "bytes": 213504,
+                "ttl_s": 30.0,
+                "max_entries": 128,
+                "max_bytes": 8388608,
+                "max_pending": 256
+              },
+              "calls": {
+                "embedding_calls": 50,
+                "embedding_completed": 50,
+                "embedding_failed": 0,
+                "rerank_calls": 50,
+                "rerank_completed": 50,
+                "rerank_failed": 0,
+                "results_cross_encoder": 600,
+                "results_lexical": 0,
+                "results_other": 0,
+                "embedding_elapsed_s": 33.4062581268372,
+                "embedding_max_s": 0.941099374962505,
+                "rerank_elapsed_s": 49.042346619127784,
+                "rerank_max_s": 1.2811241659801453
+              }
+            },
+            "included_in_request_latency": false
+          },
+          "cleanup_is_excluded_from_latency": true
+        }
+      ],
+      "retrieval_call_counters": {
+        "embedding_calls": 50,
+        "embedding_completed": 50,
+        "embedding_failed": 0,
+        "rerank_calls": 50,
+        "rerank_completed": 50,
+        "rerank_failed": 0,
+        "results_cross_encoder": 600,
+        "results_lexical": 0,
+        "results_other": 0,
+        "embedding_elapsed_s": 33.4062581268372,
+        "embedding_max_s": 0.941099374962505,
+        "rerank_elapsed_s": 49.042346619127784,
+        "rerank_max_s": 1.2811241659801453
+      },
+      "retrieval_output_reuse": {
+        "submitted": 103,
+        "coalesced": 0,
+        "hits": 0,
+        "evicted": 0,
+        "embedding_batch_calls": 0,
+        "embedding_batched_requests": 0,
+        "embedding_batch_max": 0,
+        "embedding_batch_pending": 0,
+        "pending": 0,
+        "entries": 96,
+        "bytes": 213504,
+        "ttl_s": 30.0,
+        "max_entries": 128,
+        "max_bytes": 8388608,
+        "max_pending": 256
+      },
+      "retrieval_executor": {
+        "workers": 4,
+        "max_outstanding": 200,
+        "active": 0,
+        "queued": 0,
+        "outstanding": 0,
+        "closed": false,
+        "admitted": 203,
+        "rejected": 0,
+        "completed": 74,
+        "failed": 0,
+        "cancelled_queued": 129,
+        "cancelled_running_waiters": 4,
+        "started": 74,
+        "queue_wait_avg_ms": 8769.423399715231,
+        "queue_wait_max_ms": 19344.115625019185,
+        "service_total_ms": 83263.3503791294,
+        "service_max_ms": 1895.7988750189543
+      },
+      "retrieval_startup_proof": {
+        "embedding": {
+          "expected_model": "BAAI/bge-m3",
+          "architecture": "XLMRobertaModel",
+          "hidden_size": 1024,
+          "config_sha256": "26159e7ad065073448460117eb24b7a4572f6f4e78eadff65dc0a11c052449fa",
+          "snapshot_revision": "5617a9f61b028005a4858fdac845db406aefb181"
+        },
+        "reranker": {
+          "expected_model": "BAAI/bge-reranker-v2-m3",
+          "architecture": "XLMRobertaForSequenceClassification",
+          "hidden_size": 1024,
+          "config_sha256": "13dcd6c31d9fec9d1d8e158702072f62d7fa7d312a64b9fe057bec9a08cfe41a",
+          "snapshot_revision": "953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e"
+        },
+        "corpus_sources": 19,
+        "corpus_vectors": 19,
+        "corpus_fingerprint": "e85261d5dc762d793b10470056b9cfcec365d679d3bda7a3ba0c208d8ef7ded2",
+        "nonzero_corpus_vectors": 19,
+        "nonzero_embedding_probe": true,
+        "cross_encoder_probe": true,
+        "qualification_scope": "Installed full retrieval over the disposable seeded corpus; no clinical accuracy claim"
+      },
+      "mps_unused_cache_release": null,
+      "system_pressure": {
+        "scope": "system_wide_not_daemon_rss_or_gpu_peak",
+        "samples": 108,
+        "minimum_os_free_percentage": 33,
+        "maximum_compressed_bytes": 14389493760,
+        "maximum_compression_growth_bytes": 0,
+        "swapout_growth_bytes": 0
+      },
+      "native_storage_observations": null,
+      "matching_snapshots": [
+        {
+          "name": "sources-final",
+          "covered_recorded_sources": 35,
+          "recorded_source_count": 60
+        }
+      ],
+      "restoration": {
+        "lease_status": "experiment_finished",
+        "status": "restored_and_verified",
+        "all_original_residents_identity_and_context_verified": true,
+        "models": [
+          {
+            "name": "medgemma:4b",
+            "digest": "9fe4e9a6c9bda2d007bb595515550eafbc8e226622adff9257f3241eba334c4d",
+            "context_length": 4096,
+            "expires_at": "2319-02-01T19:04:02.653645807+05:30"
+          },
+          {
+            "name": "medgemma:27b",
+            "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+            "context_length": 8192,
+            "expires_at": "2319-02-01T19:04:01.237780807+05:30"
+          }
+        ],
+        "auto_reloaded_original_residents": [
+          {
+            "name": "medgemma:4b",
+            "digest": "9fe4e9a6c9bda2d007bb595515550eafbc8e226622adff9257f3241eba334c4d",
+            "context_length": 4096,
+            "indefinite_residency_verified": true
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-e-original-compact",
+      "engine": "ollama",
+      "status": "aborted",
+      "report": "run-e-original-compact/ollama-p2-full-rag/report.json",
+      "report_sha256": "31ee18ce2323bffafd959d3eba486cc9c212a292ea23303413001c20b747bf48",
+      "engineering_source_review": null,
+      "abort_reason": "compression_growth_over_4_gib",
+      "resource_guard_trigger": {
+        "pressure_sample_index": 36,
+        "reason": "compression_growth_over_4_gib",
+        "evidence": "recorded_before_owned_termination",
+        "monitor_exception_observed": true,
+        "monitor_state": "completed"
+      },
+      "model": {
+        "model": "medgemma:27b",
+        "model_digest": "sha256:4b97da6b21a8fb1405a0d1efee462bfd6c4d3c46307bac8b34373835f07ca758",
+        "weight_bytes": 17397211520,
+        "manifest_sha256": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+        "quantization": "Q4_K_M",
+        "swa_full": "off",
+        "context_per_request": 8192,
+        "kv_type": "f16",
+        "memory_estimate_policy": "unchanged_conservative_4_gib_per_slot"
+      },
+      "parallel": 2,
+      "memory_preflight": {
+        "available_bytes": 48103633715,
+        "required_bytes": 47461982592
+      },
+      "flags": {
+        "full_retrieval_integrity_verified": false,
+        "summary_task_regression_passed": false,
+        "strict_200_latency_targets_demonstrated": false,
+        "clinical_equivalence_qualified": false,
+        "production_purchase_gate_passed": false
+      },
+      "phases": [
+        {
+          "name": "quality",
+          "status": "complete",
+          "total": 8,
+          "completed_cases": 8,
+          "successful": 8,
+          "all_cases_passed": true,
+          "evidence": "Eight narrow synthetic factual-extraction fixtures; not clinical validation",
+          "observed_cases": 8,
+          "distinct_case_ids": 8,
+          "case_error_types": {
+            "none": 8
+          },
+          "completed_but_failed_validation": 0,
+          "completed_terminal_passed_cases": 8
+        },
+        {
+          "name": "sequential",
+          "status": "aborted_incomplete_not_acceptance_evidence",
+          "planned": 3,
+          "observed": 1,
+          "unobserved": 2,
+          "hard_request_timeout_s": 60.0,
+          "transport_completed": 0,
+          "complete_valid_answers": 0,
+          "errors": {
+            "stream_error": 1
+          },
+          "lanes": {
+            "general": {
+              "observed": 1,
+              "transport_completed": 0,
+              "complete_valid_answers": 0,
+              "meeting_target": 0,
+              "target_s": 3.0,
+              "successful_only_p50_s": null,
+              "successful_only_p95_s": null,
+              "successful_only_p99_s": null,
+              "errors": {
+                "stream_error": 1
+              },
+              "retrieval_observed": 1,
+              "retrieval_p50_ms": 869.0
+            },
+            "patient": {
+              "observed": 0,
+              "transport_completed": 0,
+              "complete_valid_answers": 0,
+              "meeting_target": 0,
+              "target_s": 5.0,
+              "successful_only_p50_s": null,
+              "successful_only_p95_s": null,
+              "successful_only_p99_s": null,
+              "errors": {},
+              "retrieval_observed": 0,
+              "retrieval_p50_ms": null
+            },
+            "department": {
+              "observed": 0,
+              "transport_completed": 0,
+              "complete_valid_answers": 0,
+              "meeting_target": 0,
+              "target_s": 15.0,
+              "successful_only_p50_s": null,
+              "successful_only_p95_s": null,
+              "successful_only_p99_s": null,
+              "errors": {},
+              "retrieval_observed": 0,
+              "retrieval_p50_ms": null
+            }
+          },
+          "rows": [
+            {
+              "lane": "general",
+              "transport_complete": false,
+              "complete_valid_answer": false,
+              "semantic_checked": false,
+              "semantic_passed": null,
+              "semantic_checks_passed": 0,
+              "semantic_checks_total": 0,
+              "semantic_failed_checks": [],
+              "error": "stream_error",
+              "full_s": 5.468872957979329,
+              "first_content_s": null,
+              "first_readable_s": null,
+              "terminal_completion_s": null,
+              "retrieval_ms": 869,
+              "queue_ms": null,
+              "target_s": 3.0,
+              "complete_valid_within_target": false,
+              "independent_clinical_validation": false
+            }
+          ],
+          "workflow_quality": null,
+          "post_request_retrieval_settle": null,
+          "cleanup_is_excluded_from_latency": true
+        }
+      ],
+      "retrieval_call_counters": null,
+      "retrieval_output_reuse": null,
+      "retrieval_executor": null,
+      "retrieval_startup_proof": {
+        "embedding": {
+          "expected_model": "BAAI/bge-m3",
+          "architecture": "XLMRobertaModel",
+          "hidden_size": 1024,
+          "config_sha256": "26159e7ad065073448460117eb24b7a4572f6f4e78eadff65dc0a11c052449fa",
+          "snapshot_revision": "5617a9f61b028005a4858fdac845db406aefb181"
+        },
+        "reranker": {
+          "expected_model": "BAAI/bge-reranker-v2-m3",
+          "architecture": "XLMRobertaForSequenceClassification",
+          "hidden_size": 1024,
+          "config_sha256": "13dcd6c31d9fec9d1d8e158702072f62d7fa7d312a64b9fe057bec9a08cfe41a",
+          "snapshot_revision": "953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e"
+        },
+        "corpus_sources": 19,
+        "corpus_vectors": 19,
+        "corpus_fingerprint": "e85261d5dc762d793b10470056b9cfcec365d679d3bda7a3ba0c208d8ef7ded2",
+        "nonzero_corpus_vectors": 19,
+        "nonzero_embedding_probe": true,
+        "cross_encoder_probe": true,
+        "qualification_scope": "Installed full retrieval over the disposable seeded corpus; no clinical accuracy claim"
+      },
+      "mps_unused_cache_release": null,
+      "system_pressure": {
+        "scope": "system_wide_not_daemon_rss_or_gpu_peak",
+        "samples": 39,
+        "minimum_os_free_percentage": 35,
+        "maximum_compressed_bytes": 17310711808,
+        "maximum_compression_growth_bytes": 4861313024,
+        "swapout_growth_bytes": 0
+      },
+      "native_storage_observations": {
+        "observed_kv_buffers_mib": [
+          1280.0,
+          1248.0
+        ],
+        "observed_total_kv_gib": 2.46875,
+        "observed_context_per_sequence": [
+          8192
+        ],
+        "runner_confirmed_ram_prompt_cache_disabled": false,
+        "kv_is_active_generation_storage_not_optional_prompt_archive": true
+      },
+      "matching_snapshots": [
+        {
+          "name": "sources-final-compact-native",
+          "covered_recorded_sources": 35,
+          "recorded_source_count": 60
+        }
+      ],
+      "restoration": {
+        "lease_status": "experiment_finished",
+        "status": "restored_and_verified",
+        "all_original_residents_identity_and_context_verified": true,
+        "models": [
+          {
+            "name": "medgemma:27b",
+            "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+            "context_length": 8192,
+            "expires_at": "2319-02-01T19:08:32.484067807+05:30"
+          },
+          {
+            "name": "medgemma:4b",
+            "digest": "9fe4e9a6c9bda2d007bb595515550eafbc8e226622adff9257f3241eba334c4d",
+            "context_length": 4096,
+            "expires_at": "2319-02-01T19:04:02.653645807+05:30"
+          }
+        ],
+        "auto_reloaded_original_residents": []
+      }
+    },
+    {
+      "run": "run-f-original-cache-release",
+      "engine": "ollama",
+      "status": "aborted",
+      "report": "run-f-original-cache-release/ollama-p2-full-rag/report.json",
+      "report_sha256": "82ae7cc28c03f5faa4cd09dce29377a0b01e12d7d6126d4391b4508c5adebfd1",
+      "engineering_source_review": null,
+      "abort_reason": "compression_growth_over_4_gib",
+      "resource_guard_trigger": {
+        "pressure_sample_index": 53,
+        "reason": "compression_growth_over_4_gib",
+        "evidence": "recorded_before_owned_termination",
+        "monitor_exception_observed": true,
+        "monitor_state": "completed"
+      },
+      "model": {
+        "model": "medgemma:27b",
+        "model_digest": "sha256:4b97da6b21a8fb1405a0d1efee462bfd6c4d3c46307bac8b34373835f07ca758",
+        "weight_bytes": 17397211520,
+        "manifest_sha256": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+        "quantization": "Q4_K_M",
+        "swa_full": "off",
+        "context_per_request": 8192,
+        "kv_type": "f16",
+        "memory_estimate_policy": "unchanged_conservative_4_gib_per_slot"
+      },
+      "parallel": 2,
+      "memory_preflight": {
+        "available_bytes": 51539607552,
+        "required_bytes": 47461982592
+      },
+      "flags": {
+        "full_retrieval_integrity_verified": false,
+        "summary_task_regression_passed": false,
+        "strict_200_latency_targets_demonstrated": false,
+        "clinical_equivalence_qualified": false,
+        "production_purchase_gate_passed": false
+      },
+      "phases": [
+        {
+          "name": "quality",
+          "status": "complete",
+          "total": 8,
+          "completed_cases": 8,
+          "successful": 8,
+          "all_cases_passed": true,
+          "evidence": "Eight narrow synthetic factual-extraction fixtures; not clinical validation",
+          "observed_cases": 8,
+          "distinct_case_ids": 8,
+          "case_error_types": {
+            "none": 8
+          },
+          "completed_but_failed_validation": 0,
+          "completed_terminal_passed_cases": 8
+        },
+        {
+          "name": "sequential",
+          "status": "complete",
+          "planned": 3,
+          "observed": 3,
+          "unobserved": 0,
+          "hard_request_timeout_s": 60.0,
+          "transport_completed": 1,
+          "complete_valid_answers": 1,
+          "errors": {
+            "none": 1,
+            "stream_error": 2
+          },
+          "lanes": {
+            "general": {
+              "observed": 1,
+              "transport_completed": 1,
+              "complete_valid_answers": 1,
+              "meeting_target": 0,
+              "target_s": 3.0,
+              "successful_only_p50_s": 23.16066137503367,
+              "successful_only_p95_s": 23.16066137503367,
+              "successful_only_p99_s": 23.16066137503367,
+              "errors": {
+                "none": 1
+              },
+              "retrieval_observed": 1,
+              "retrieval_p50_ms": 1252.0
+            },
+            "patient": {
+              "observed": 1,
+              "transport_completed": 0,
+              "complete_valid_answers": 0,
+              "meeting_target": 0,
+              "target_s": 5.0,
+              "successful_only_p50_s": null,
+              "successful_only_p95_s": null,
+              "successful_only_p99_s": null,
+              "errors": {
+                "stream_error": 1
+              },
+              "retrieval_observed": 1,
+              "retrieval_p50_ms": 309.0
+            },
+            "department": {
+              "observed": 1,
+              "transport_completed": 0,
+              "complete_valid_answers": 0,
+              "meeting_target": 0,
+              "target_s": 15.0,
+              "successful_only_p50_s": null,
+              "successful_only_p95_s": null,
+              "successful_only_p99_s": null,
+              "errors": {
+                "stream_error": 1
+              },
+              "retrieval_observed": 1,
+              "retrieval_p50_ms": 5.0
+            }
+          },
+          "rows": [
+            {
+              "lane": "general",
+              "transport_complete": true,
+              "complete_valid_answer": true,
+              "semantic_checked": false,
+              "semantic_passed": null,
+              "semantic_checks_passed": 0,
+              "semantic_checks_total": 0,
+              "semantic_failed_checks": [],
+              "error": null,
+              "full_s": 23.16066137503367,
+              "first_content_s": 6.1548250000341795,
+              "first_readable_s": 6.6936819170368835,
+              "terminal_completion_s": 23.15577954199398,
+              "retrieval_ms": 1252,
+              "queue_ms": 0.128,
+              "target_s": 3.0,
+              "complete_valid_within_target": false,
+              "independent_clinical_validation": false
+            },
+            {
+              "lane": "patient",
+              "transport_complete": false,
+              "complete_valid_answer": false,
+              "semantic_checked": true,
+              "semantic_passed": false,
+              "semantic_checks_passed": 0,
+              "semantic_checks_total": 0,
+              "semantic_failed_checks": [],
+              "error": "stream_error",
+              "full_s": 15.812869500019588,
+              "first_content_s": 0.3107265830039978,
+              "first_readable_s": 7.3595017500338145,
+              "terminal_completion_s": null,
+              "retrieval_ms": 309,
+              "queue_ms": null,
+              "target_s": 5.0,
+              "complete_valid_within_target": false,
+              "independent_clinical_validation": false
+            },
+            {
+              "lane": "department",
+              "transport_complete": false,
+              "complete_valid_answer": false,
+              "semantic_checked": false,
+              "semantic_passed": null,
+              "semantic_checks_passed": 0,
+              "semantic_checks_total": 0,
+              "semantic_failed_checks": [],
+              "error": "stream_error",
+              "full_s": 0.018322916002944112,
+              "first_content_s": null,
+              "first_readable_s": null,
+              "terminal_completion_s": null,
+              "retrieval_ms": 5,
+              "queue_ms": null,
+              "target_s": 15.0,
+              "complete_valid_within_target": false,
+              "independent_clinical_validation": false
+            }
+          ],
+          "workflow_quality": {
+            "required": true,
+            "patient_requests": 1,
+            "transport_completed": 0,
+            "task_checks_passed": 0,
+            "all_patient_requests_passed": false,
+            "clinical_accuracy_qualified": false
+          },
+          "post_request_retrieval_settle": {
+            "maximum_seconds": 10.0,
+            "wall_s": 0.013331584050320089,
+            "settled": true,
+            "initial": {
+              "executor": {
+                "workers": 4,
+                "max_outstanding": 200,
+                "active": 0,
+                "queued": 0,
+                "outstanding": 0,
+                "closed": false,
+                "admitted": 3,
+                "rejected": 0,
+                "completed": 3,
+                "failed": 0,
+                "cancelled_queued": 0,
+                "cancelled_running_waiters": 0,
+                "started": 3,
+                "queue_wait_avg_ms": 0.0807776814326644,
+                "queue_wait_max_ms": 0.13825000496581197,
+                "service_total_ms": 1557.1160420076922,
+                "service_max_ms": 1246.0335840005428
+              },
+              "model_outputs": {
+                "submitted": 7,
+                "coalesced": 0,
+                "hits": 0,
+                "evicted": 0,
+                "embedding_batch_calls": 0,
+                "embedding_batched_requests": 0,
+                "embedding_batch_max": 0,
+                "embedding_batch_pending": 0,
+                "pending": 0,
+                "entries": 4,
+                "bytes": 8896,
+                "ttl_s": 30.0,
+                "max_entries": 128,
+                "max_bytes": 8388608,
+                "max_pending": 256
+              },
+              "calls": {
+                "embedding_calls": 2,
+                "embedding_completed": 2,
+                "embedding_failed": 0,
+                "rerank_calls": 2,
+                "rerank_completed": 2,
+                "rerank_failed": 0,
+                "results_cross_encoder": 24,
+                "results_lexical": 0,
+                "results_other": 0,
+                "embedding_elapsed_s": 0.464656917960383,
+                "embedding_max_s": 0.4230810839799233,
+                "rerank_elapsed_s": 1.06747070903657,
+                "rerank_max_s": 0.8061914590070955
+              }
+            },
+            "final": {
+              "executor": {
+                "workers": 4,
+                "max_outstanding": 200,
+                "active": 0,
+                "queued": 0,
+                "outstanding": 0,
+                "closed": false,
+                "admitted": 3,
+                "rejected": 0,
+                "completed": 3,
+                "failed": 0,
+                "cancelled_queued": 0,
+                "cancelled_running_waiters": 0,
+                "started": 3,
+                "queue_wait_avg_ms": 0.0807776814326644,
+                "queue_wait_max_ms": 0.13825000496581197,
+                "service_total_ms": 1557.1160420076922,
+                "service_max_ms": 1246.0335840005428
+              },
+              "model_outputs": {
+                "submitted": 7,
+                "coalesced": 0,
+                "hits": 0,
+                "evicted": 0,
+                "embedding_batch_calls": 0,
+                "embedding_batched_requests": 0,
+                "embedding_batch_max": 0,
+                "embedding_batch_pending": 0,
+                "pending": 0,
+                "entries": 4,
+                "bytes": 8896,
+                "ttl_s": 30.0,
+                "max_entries": 128,
+                "max_bytes": 8388608,
+                "max_pending": 256
+              },
+              "calls": {
+                "embedding_calls": 2,
+                "embedding_completed": 2,
+                "embedding_failed": 0,
+                "rerank_calls": 2,
+                "rerank_completed": 2,
+                "rerank_failed": 0,
+                "results_cross_encoder": 24,
+                "results_lexical": 0,
+                "results_other": 0,
+                "embedding_elapsed_s": 0.464656917960383,
+                "embedding_max_s": 0.4230810839799233,
+                "rerank_elapsed_s": 1.06747070903657,
+                "rerank_max_s": 0.8061914590070955
+              }
+            },
+            "included_in_request_latency": false
+          },
+          "cleanup_is_excluded_from_latency": true
+        },
+        {
+          "name": "burst",
+          "status": "aborted_incomplete_not_acceptance_evidence",
+          "planned": 200,
+          "observed": 0,
+          "unobserved": 200,
+          "hard_request_timeout_s": 20.0,
+          "transport_completed": 0,
+          "complete_valid_answers": 0,
+          "errors": {},
+          "lanes": {
+            "general": {
+              "observed": 0,
+              "transport_completed": 0,
+              "complete_valid_answers": 0,
+              "meeting_target": 0,
+              "target_s": 3.0,
+              "successful_only_p50_s": null,
+              "successful_only_p95_s": null,
+              "successful_only_p99_s": null,
+              "errors": {},
+              "retrieval_observed": 0,
+              "retrieval_p50_ms": null
+            },
+            "patient": {
+              "observed": 0,
+              "transport_completed": 0,
+              "complete_valid_answers": 0,
+              "meeting_target": 0,
+              "target_s": 5.0,
+              "successful_only_p50_s": null,
+              "successful_only_p95_s": null,
+              "successful_only_p99_s": null,
+              "errors": {},
+              "retrieval_observed": 0,
+              "retrieval_p50_ms": null
+            },
+            "department": {
+              "observed": 0,
+              "transport_completed": 0,
+              "complete_valid_answers": 0,
+              "meeting_target": 0,
+              "target_s": 15.0,
+              "successful_only_p50_s": null,
+              "successful_only_p95_s": null,
+              "successful_only_p99_s": null,
+              "errors": {},
+              "retrieval_observed": 0,
+              "retrieval_p50_ms": null
+            }
+          },
+          "rows": [],
+          "workflow_quality": null,
+          "post_request_retrieval_settle": null,
+          "cleanup_is_excluded_from_latency": true
+        }
+      ],
+      "retrieval_call_counters": null,
+      "retrieval_output_reuse": null,
+      "retrieval_executor": null,
+      "retrieval_startup_proof": {
+        "embedding": {
+          "expected_model": "BAAI/bge-m3",
+          "architecture": "XLMRobertaModel",
+          "hidden_size": 1024,
+          "config_sha256": "26159e7ad065073448460117eb24b7a4572f6f4e78eadff65dc0a11c052449fa",
+          "snapshot_revision": "5617a9f61b028005a4858fdac845db406aefb181"
+        },
+        "reranker": {
+          "expected_model": "BAAI/bge-reranker-v2-m3",
+          "architecture": "XLMRobertaForSequenceClassification",
+          "hidden_size": 1024,
+          "config_sha256": "13dcd6c31d9fec9d1d8e158702072f62d7fa7d312a64b9fe057bec9a08cfe41a",
+          "snapshot_revision": "953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e"
+        },
+        "corpus_sources": 19,
+        "corpus_vectors": 19,
+        "corpus_fingerprint": "e85261d5dc762d793b10470056b9cfcec365d679d3bda7a3ba0c208d8ef7ded2",
+        "nonzero_corpus_vectors": 19,
+        "nonzero_embedding_probe": true,
+        "cross_encoder_probe": true,
+        "qualification_scope": "Installed full retrieval over the disposable seeded corpus; no clinical accuracy claim"
+      },
+      "mps_unused_cache_release": {
+        "observation_status": "numeric_events_only",
+        "total_records": 3,
+        "total_released_bytes": 3288334336,
+        "records_truncated": false,
+        "interpretation": "Cumulative bytes returned over repeated allocator releases; not peak RAM saved or freed capacity"
+      },
+      "system_pressure": {
+        "scope": "system_wide_not_daemon_rss_or_gpu_peak",
+        "samples": 56,
+        "minimum_os_free_percentage": 35,
+        "maximum_compressed_bytes": 18737545216,
+        "maximum_compression_growth_bytes": 5677400064,
+        "swapout_growth_bytes": 0
+      },
+      "native_storage_observations": {
+        "observed_kv_buffers_mib": [
+          1280.0,
+          1248.0
+        ],
+        "observed_total_kv_gib": 2.46875,
+        "observed_context_per_sequence": [
+          8192
+        ],
+        "runner_confirmed_ram_prompt_cache_disabled": false,
+        "kv_is_active_generation_storage_not_optional_prompt_archive": true
+      },
+      "matching_snapshots": [
+        {
+          "name": "sources-qualified-rerun",
+          "covered_recorded_sources": 60,
+          "recorded_source_count": 60
+        }
+      ],
+      "restoration": {
+        "lease_status": "experiment_finished",
+        "status": "restored_and_verified",
+        "all_original_residents_identity_and_context_verified": true,
+        "models": [
+          {
+            "name": "medgemma:27b",
+            "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+            "context_length": 8192,
+            "expires_at": "2319-02-01T19:20:28.668864807+05:30"
+          },
+          {
+            "name": "medgemma:4b",
+            "digest": "9fe4e9a6c9bda2d007bb595515550eafbc8e226622adff9257f3241eba334c4d",
+            "context_length": 4096,
+            "expires_at": "2319-02-01T19:04:02.653645807+05:30"
+          }
+        ],
+        "auto_reloaded_original_residents": []
+      }
+    },
+    {
+      "run": "run-g-original-cache0",
+      "engine": "ollama",
+      "status": "complete",
+      "report": "run-g-original-cache0/ollama-p2-full-rag/report.json",
+      "report_sha256": "3ea6f016f64322c3238e39d4df80e92d0001d24eafb7fa9bed938781a61480c7",
+      "engineering_source_review": null,
+      "abort_reason": null,
+      "resource_guard_trigger": null,
+      "model": {
+        "model": "medgemma:27b",
+        "model_digest": "sha256:4b97da6b21a8fb1405a0d1efee462bfd6c4d3c46307bac8b34373835f07ca758",
+        "weight_bytes": 17397211520,
+        "manifest_sha256": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+        "quantization": "Q4_K_M",
+        "swa_full": "off",
+        "prefix_cache_mib": 0,
+        "idle_slot_prompt_cache": false,
+        "prompt_cache_requested": false,
+        "context_per_request": 8192,
+        "kv_type": "f16",
+        "memory_estimate_policy": "unchanged_conservative_4_gib_per_slot"
+      },
+      "parallel": 2,
+      "memory_preflight": {
+        "available_bytes": 50852412784,
+        "required_bytes": 47461982592
+      },
+      "flags": {
+        "full_retrieval_integrity_verified": true,
+        "summary_task_regression_passed": false,
+        "strict_200_latency_targets_demonstrated": false,
+        "clinical_equivalence_qualified": false,
+        "production_purchase_gate_passed": false
+      },
+      "phases": [
+        {
+          "name": "quality",
+          "status": "complete",
+          "total": 8,
+          "completed_cases": 8,
+          "successful": 8,
+          "all_cases_passed": true,
+          "evidence": "Eight narrow synthetic factual-extraction fixtures; not clinical validation",
+          "observed_cases": 8,
+          "distinct_case_ids": 8,
+          "case_error_types": {
+            "none": 8
+          },
+          "completed_but_failed_validation": 0,
+          "completed_terminal_passed_cases": 8
+        },
+        {
+          "name": "sequential",
+          "status": "complete",
+          "planned": 3,
+          "observed": 3,
+          "unobserved": 0,
+          "hard_request_timeout_s": 60.0,
+          "transport_completed": 3,
+          "complete_valid_answers": 2,
+          "errors": {
+            "none": 2,
+            "summary_quality_failed": 1
+          },
+          "lanes": {
+            "general": {
+              "observed": 1,
+              "transport_completed": 1,
+              "complete_valid_answers": 1,
+              "meeting_target": 0,
+              "target_s": 3.0,
+              "successful_only_p50_s": 21.310224000015296,
+              "successful_only_p95_s": 21.310224000015296,
+              "successful_only_p99_s": 21.310224000015296,
+              "errors": {
+                "none": 1
+              },
+              "retrieval_observed": 1,
+              "retrieval_p50_ms": 631.0
+            },
+            "patient": {
+              "observed": 1,
+              "transport_completed": 1,
+              "complete_valid_answers": 0,
+              "meeting_target": 0,
+              "target_s": 5.0,
+              "successful_only_p50_s": null,
+              "successful_only_p95_s": null,
+              "successful_only_p99_s": null,
+              "errors": {
+                "summary_quality_failed": 1
+              },
+              "retrieval_observed": 1,
+              "retrieval_p50_ms": 298.0
+            },
+            "department": {
+              "observed": 1,
+              "transport_completed": 1,
+              "complete_valid_answers": 1,
+              "meeting_target": 0,
+              "target_s": 15.0,
+              "successful_only_p50_s": 23.145983916998375,
+              "successful_only_p95_s": 23.145983916998375,
+              "successful_only_p99_s": 23.145983916998375,
+              "errors": {
+                "none": 1
+              },
+              "retrieval_observed": 1,
+              "retrieval_p50_ms": 6.0
+            }
+          },
+          "rows": [
+            {
+              "lane": "general",
+              "transport_complete": true,
+              "complete_valid_answer": true,
+              "semantic_checked": false,
+              "semantic_passed": null,
+              "semantic_checks_passed": 0,
+              "semantic_checks_total": 0,
+              "semantic_failed_checks": [],
+              "error": null,
+              "full_s": 21.310224000015296,
+              "first_content_s": 5.436455291986931,
+              "first_readable_s": 5.971572833019309,
+              "terminal_completion_s": 21.305390499997884,
+              "retrieval_ms": 631,
+              "queue_ms": 0.125,
+              "target_s": 3.0,
+              "complete_valid_within_target": false,
+              "independent_clinical_validation": false
+            },
+            {
+              "lane": "patient",
+              "transport_complete": true,
+              "complete_valid_answer": false,
+              "semantic_checked": true,
+              "semantic_passed": false,
+              "semantic_checks_passed": 11,
+              "semantic_checks_total": 12,
+              "semantic_failed_checks": [
+                "missing_labs_explicit"
+              ],
+              "error": "summary_quality_failed",
+              "full_s": 23.10538137500407,
+              "first_content_s": 0.2993288750294596,
+              "first_readable_s": 7.187305125000421,
+              "terminal_completion_s": 23.103138374979608,
+              "retrieval_ms": 298,
+              "queue_ms": 0.059,
+              "target_s": 5.0,
+              "complete_valid_within_target": false,
+              "independent_clinical_validation": false
+            },
+            {
+              "lane": "department",
+              "transport_complete": true,
+              "complete_valid_answer": true,
+              "semantic_checked": false,
+              "semantic_passed": null,
+              "semantic_checks_passed": 0,
+              "semantic_checks_total": 0,
+              "semantic_failed_checks": [],
+              "error": null,
+              "full_s": 23.145983916998375,
+              "first_content_s": 17.263107582984958,
+              "first_readable_s": 18.051444166980218,
+              "terminal_completion_s": 23.140796250023413,
+              "retrieval_ms": 6,
+              "queue_ms": 0.059,
+              "target_s": 15.0,
+              "complete_valid_within_target": false,
+              "independent_clinical_validation": false
+            }
+          ],
+          "workflow_quality": {
+            "required": true,
+            "patient_requests": 1,
+            "transport_completed": 1,
+            "task_checks_passed": 0,
+            "all_patient_requests_passed": false,
+            "clinical_accuracy_qualified": false
+          },
+          "post_request_retrieval_settle": {
+            "maximum_seconds": 10.0,
+            "wall_s": 0.007830374990589917,
+            "settled": true,
+            "initial": {
+              "executor": {
+                "workers": 4,
+                "max_outstanding": 200,
+                "active": 0,
+                "queued": 0,
+                "outstanding": 0,
+                "closed": false,
+                "admitted": 3,
+                "rejected": 0,
+                "completed": 3,
+                "failed": 0,
+                "cancelled_queued": 0,
+                "cancelled_running_waiters": 0,
+                "started": 3,
+                "queue_wait_avg_ms": 0.07156934589147568,
+                "queue_wait_max_ms": 0.1225409796461463,
+                "service_total_ms": 923.7670840229839,
+                "service_max_ms": 622.5367090082727
+              },
+              "model_outputs": {
+                "submitted": 7,
+                "coalesced": 0,
+                "hits": 0,
+                "evicted": 0,
+                "embedding_batch_calls": 0,
+                "embedding_batched_requests": 0,
+                "embedding_batch_max": 0,
+                "embedding_batch_pending": 0,
+                "pending": 0,
+                "entries": 4,
+                "bytes": 8896,
+                "ttl_s": 30.0,
+                "max_entries": 128,
+                "max_bytes": 8388608,
+                "max_pending": 256
+              },
+              "calls": {
+                "embedding_calls": 2,
+                "embedding_completed": 2,
+                "embedding_failed": 0,
+                "rerank_calls": 2,
+                "rerank_completed": 2,
+                "rerank_failed": 0,
+                "results_cross_encoder": 24,
+                "results_lexical": 0,
+                "results_other": 0,
+                "embedding_elapsed_s": 0.10077829303918406,
+                "embedding_max_s": 0.06208608404267579,
+                "rerank_elapsed_s": 0.795373082975857,
+                "rerank_max_s": 0.5420175829785876
+              }
+            },
+            "final": {
+              "executor": {
+                "workers": 4,
+                "max_outstanding": 200,
+                "active": 0,
+                "queued": 0,
+                "outstanding": 0,
+                "closed": false,
+                "admitted": 3,
+                "rejected": 0,
+                "completed": 3,
+                "failed": 0,
+                "cancelled_queued": 0,
+                "cancelled_running_waiters": 0,
+                "started": 3,
+                "queue_wait_avg_ms": 0.07156934589147568,
+                "queue_wait_max_ms": 0.1225409796461463,
+                "service_total_ms": 923.7670840229839,
+                "service_max_ms": 622.5367090082727
+              },
+              "model_outputs": {
+                "submitted": 7,
+                "coalesced": 0,
+                "hits": 0,
+                "evicted": 0,
+                "embedding_batch_calls": 0,
+                "embedding_batched_requests": 0,
+                "embedding_batch_max": 0,
+                "embedding_batch_pending": 0,
+                "pending": 0,
+                "entries": 4,
+                "bytes": 8896,
+                "ttl_s": 30.0,
+                "max_entries": 128,
+                "max_bytes": 8388608,
+                "max_pending": 256
+              },
+              "calls": {
+                "embedding_calls": 2,
+                "embedding_completed": 2,
+                "embedding_failed": 0,
+                "rerank_calls": 2,
+                "rerank_completed": 2,
+                "rerank_failed": 0,
+                "results_cross_encoder": 24,
+                "results_lexical": 0,
+                "results_other": 0,
+                "embedding_elapsed_s": 0.10077829303918406,
+                "embedding_max_s": 0.06208608404267579,
+                "rerank_elapsed_s": 0.795373082975857,
+                "rerank_max_s": 0.5420175829785876
+              }
+            },
+            "included_in_request_latency": false
+          },
+          "cleanup_is_excluded_from_latency": true
+        },
+        {
+          "name": "burst",
+          "status": "complete",
+          "planned": 200,
+          "observed": 200,
+          "unobserved": 0,
+          "hard_request_timeout_s": 20.0,
+          "transport_completed": 0,
+          "complete_valid_answers": 0,
+          "errors": {
+            "capacity_rejected": 46,
+            "timeout": 154
+          },
+          "lanes": {
+            "general": {
+              "observed": 67,
+              "transport_completed": 0,
+              "complete_valid_answers": 0,
+              "meeting_target": 0,
+              "target_s": 3.0,
+              "successful_only_p50_s": null,
+              "successful_only_p95_s": null,
+              "successful_only_p99_s": null,
+              "errors": {
+                "capacity_rejected": 16,
+                "timeout": 51
+              },
+              "retrieval_observed": 17,
+              "retrieval_p50_ms": 11870.0
+            },
+            "patient": {
+              "observed": 67,
+              "transport_completed": 0,
+              "complete_valid_answers": 0,
+              "meeting_target": 0,
+              "target_s": 5.0,
+              "successful_only_p50_s": null,
+              "successful_only_p95_s": null,
+              "successful_only_p99_s": null,
+              "errors": {
+                "capacity_rejected": 14,
+                "timeout": 53
+              },
+              "retrieval_observed": 17,
+              "retrieval_p50_ms": 8156.0
+            },
+            "department": {
+              "observed": 66,
+              "transport_completed": 0,
+              "complete_valid_answers": 0,
+              "meeting_target": 0,
+              "target_s": 15.0,
+              "successful_only_p50_s": null,
+              "successful_only_p95_s": null,
+              "successful_only_p99_s": null,
+              "errors": {
+                "timeout": 50,
+                "capacity_rejected": 16
+              },
+              "retrieval_observed": 20,
+              "retrieval_p50_ms": 10447.0
+            }
+          },
+          "rows": null,
+          "workflow_quality": {
+            "required": true,
+            "patient_requests": 67,
+            "transport_completed": 0,
+            "task_checks_passed": 0,
+            "all_patient_requests_passed": false,
+            "clinical_accuracy_qualified": false
+          },
+          "post_request_retrieval_settle": {
+            "maximum_seconds": 10.0,
+            "wall_s": 1.910149791976437,
+            "settled": true,
+            "initial": {
+              "executor": {
+                "workers": 4,
+                "max_outstanding": 200,
+                "active": 4,
+                "queued": 0,
+                "outstanding": 4,
+                "closed": false,
+                "admitted": 203,
+                "rejected": 0,
+                "completed": 57,
+                "failed": 0,
+                "cancelled_queued": 142,
+                "cancelled_running_waiters": 4,
+                "started": 61,
+                "queue_wait_avg_ms": 8555.060601795138,
+                "queue_wait_max_ms": 19000.54070801707,
+                "service_total_ms": 74990.91774970293,
+                "service_max_ms": 2437.888082989957
+              },
+              "model_outputs": {
+                "submitted": 82,
+                "coalesced": 0,
+                "hits": 0,
+                "evicted": 0,
+                "embedding_batch_calls": 0,
+                "embedding_batched_requests": 0,
+                "embedding_batch_max": 0,
+                "embedding_batch_pending": 0,
+                "pending": 4,
+                "entries": 71,
+                "bytes": 163904,
+                "ttl_s": 30.0,
+                "max_entries": 128,
+                "max_bytes": 8388608,
+                "max_pending": 256
+              },
+              "calls": {
+                "embedding_calls": 40,
+                "embedding_completed": 39,
+                "embedding_failed": 0,
+                "rerank_calls": 39,
+                "rerank_completed": 36,
+                "rerank_failed": 0,
+                "results_cross_encoder": 432,
+                "results_lexical": 0,
+                "results_other": 0,
+                "embedding_elapsed_s": 34.737482583965175,
+                "embedding_max_s": 1.5903375409543514,
+                "rerank_elapsed_s": 43.06730275094742,
+                "rerank_max_s": 1.955652792006731
+              }
+            },
+            "final": {
+              "executor": {
+                "workers": 4,
+                "max_outstanding": 200,
+                "active": 0,
+                "queued": 0,
+                "outstanding": 0,
+                "closed": false,
+                "admitted": 203,
+                "rejected": 0,
+                "completed": 61,
+                "failed": 0,
+                "cancelled_queued": 142,
+                "cancelled_running_waiters": 4,
+                "started": 61,
+                "queue_wait_avg_ms": 8555.060601795138,
+                "queue_wait_max_ms": 19000.54070801707,
+                "service_total_ms": 84457.75537472218,
+                "service_max_ms": 2437.888082989957
+              },
+              "model_outputs": {
+                "submitted": 83,
+                "coalesced": 0,
+                "hits": 0,
+                "evicted": 0,
+                "embedding_batch_calls": 0,
+                "embedding_batched_requests": 0,
+                "embedding_batch_max": 0,
+                "embedding_batch_pending": 0,
+                "pending": 0,
+                "entries": 76,
+                "bytes": 169024,
+                "ttl_s": 30.0,
+                "max_entries": 128,
+                "max_bytes": 8388608,
+                "max_pending": 256
+              },
+              "calls": {
+                "embedding_calls": 40,
+                "embedding_completed": 40,
+                "embedding_failed": 0,
+                "rerank_calls": 40,
+                "rerank_completed": 40,
+                "rerank_failed": 0,
+                "results_cross_encoder": 480,
+                "results_lexical": 0,
+                "results_other": 0,
+                "embedding_elapsed_s": 35.23961629293626,
+                "embedding_max_s": 1.5903375409543514,
+                "rerank_elapsed_s": 48.44267125194892,
+                "rerank_max_s": 1.955652792006731
+              }
+            },
+            "included_in_request_latency": false
+          },
+          "cleanup_is_excluded_from_latency": true
+        }
+      ],
+      "retrieval_call_counters": {
+        "embedding_calls": 40,
+        "embedding_completed": 40,
+        "embedding_failed": 0,
+        "rerank_calls": 40,
+        "rerank_completed": 40,
+        "rerank_failed": 0,
+        "results_cross_encoder": 480,
+        "results_lexical": 0,
+        "results_other": 0,
+        "embedding_elapsed_s": 35.23961629293626,
+        "embedding_max_s": 1.5903375409543514,
+        "rerank_elapsed_s": 48.44267125194892,
+        "rerank_max_s": 1.955652792006731
+      },
+      "retrieval_output_reuse": {
+        "submitted": 83,
+        "coalesced": 0,
+        "hits": 0,
+        "evicted": 0,
+        "embedding_batch_calls": 0,
+        "embedding_batched_requests": 0,
+        "embedding_batch_max": 0,
+        "embedding_batch_pending": 0,
+        "pending": 0,
+        "entries": 76,
+        "bytes": 169024,
+        "ttl_s": 30.0,
+        "max_entries": 128,
+        "max_bytes": 8388608,
+        "max_pending": 256
+      },
+      "retrieval_executor": {
+        "workers": 4,
+        "max_outstanding": 200,
+        "active": 0,
+        "queued": 0,
+        "outstanding": 0,
+        "closed": false,
+        "admitted": 203,
+        "rejected": 0,
+        "completed": 61,
+        "failed": 0,
+        "cancelled_queued": 142,
+        "cancelled_running_waiters": 4,
+        "started": 61,
+        "queue_wait_avg_ms": 8555.060601795138,
+        "queue_wait_max_ms": 19000.54070801707,
+        "service_total_ms": 84457.75537472218,
+        "service_max_ms": 2437.888082989957
+      },
+      "retrieval_startup_proof": {
+        "embedding": {
+          "expected_model": "BAAI/bge-m3",
+          "architecture": "XLMRobertaModel",
+          "hidden_size": 1024,
+          "config_sha256": "26159e7ad065073448460117eb24b7a4572f6f4e78eadff65dc0a11c052449fa",
+          "snapshot_revision": "5617a9f61b028005a4858fdac845db406aefb181"
+        },
+        "reranker": {
+          "expected_model": "BAAI/bge-reranker-v2-m3",
+          "architecture": "XLMRobertaForSequenceClassification",
+          "hidden_size": 1024,
+          "config_sha256": "13dcd6c31d9fec9d1d8e158702072f62d7fa7d312a64b9fe057bec9a08cfe41a",
+          "snapshot_revision": "953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e"
+        },
+        "corpus_sources": 19,
+        "corpus_vectors": 19,
+        "corpus_fingerprint": "e85261d5dc762d793b10470056b9cfcec365d679d3bda7a3ba0c208d8ef7ded2",
+        "nonzero_corpus_vectors": 19,
+        "nonzero_embedding_probe": true,
+        "cross_encoder_probe": true,
+        "qualification_scope": "Installed full retrieval over the disposable seeded corpus; no clinical accuracy claim"
+      },
+      "mps_unused_cache_release": {
+        "observation_status": "numeric_events_only",
+        "total_records": 41,
+        "total_released_bytes": 45365592064,
+        "records_truncated": false,
+        "interpretation": "Cumulative bytes returned over repeated allocator releases; not peak RAM saved or freed capacity"
+      },
+      "system_pressure": {
+        "scope": "system_wide_not_daemon_rss_or_gpu_peak",
+        "samples": 81,
+        "minimum_os_free_percentage": 34,
+        "maximum_compressed_bytes": 15378923520,
+        "maximum_compression_growth_bytes": 2013200384,
+        "swapout_growth_bytes": 0
+      },
+      "native_storage_observations": {
+        "observed_kv_buffers_mib": [
+          1280.0,
+          1248.0
+        ],
+        "observed_total_kv_gib": 2.46875,
+        "observed_context_per_sequence": [
+          8192
+        ],
+        "runner_confirmed_ram_prompt_cache_disabled": true,
+        "kv_is_active_generation_storage_not_optional_prompt_archive": true
+      },
+      "matching_snapshots": [
+        {
+          "name": "sources-final-cache0",
+          "covered_recorded_sources": 60,
+          "recorded_source_count": 60
+        }
+      ],
+      "restoration": {
+        "lease_status": "experiment_finished",
+        "status": "restored_and_verified",
+        "all_original_residents_identity_and_context_verified": true,
+        "models": [
+          {
+            "name": "medgemma:4b",
+            "digest": "9fe4e9a6c9bda2d007bb595515550eafbc8e226622adff9257f3241eba334c4d",
+            "context_length": 4096,
+            "expires_at": "2319-02-01T19:28:10.363839807+05:30"
+          },
+          {
+            "name": "medgemma:27b",
+            "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+            "context_length": 8192,
+            "expires_at": "2319-02-01T19:28:07.201957807+05:30"
+          }
+        ],
+        "auto_reloaded_original_residents": [
+          {
+            "name": "medgemma:4b",
+            "digest": "9fe4e9a6c9bda2d007bb595515550eafbc8e226622adff9257f3241eba334c4d",
+            "context_length": 4096,
+            "indefinite_residency_verified": true
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-h-mlx-complete-summary",
+      "engine": "mlx",
+      "status": "not_run_memory_preflight",
+      "report": "run-h-mlx-complete-summary/mlx-p8-full-rag/report.json",
+      "report_sha256": "388227d82b2fdc99a0d14563ed40bec70eeb288fe07b79b322cff3dc2f80fcbb",
+      "engineering_source_review": null,
+      "abort_reason": null,
+      "resource_guard_trigger": null,
+      "model": {
+        "model": "medgemma:27b",
+        "kind": "same_source_separately_requantised_mlx_candidate",
+        "weights_bytes": 19478730384,
+        "kv_budget_bytes": 8858370048,
+        "kv_element_bytes": 2,
+        "activation_policy": "mixed_f32_residual_f16_projection",
+        "quantised_kv": false,
+        "clinical_equivalence": "not_qualified",
+        "loading_mode": "mixed-staged",
+        "checksum_io": {
+          "large_safetensors_uncached_fd_count": 435
+        },
+        "batching_enabled": true,
+        "prefix_cache_entry_limit": 0,
+        "prefix_cache_byte_limit": 8589934592,
+        "http_listen_backlog": 256,
+        "prefill_step_size": 256,
+        "mlx_allocator_cache_byte_limit": 1073741824,
+        "serving_admissions_per_decode_step": 8,
+        "request_scoped_disconnect_cancellation": true,
+        "source_gguf_sha256": "4b97da6b21a8fb1405a0d1efee462bfd6c4d3c46307bac8b34373835f07ca758",
+        "conversion_manifest_sha256": "2a6d9e1cd41375e54c614c0de05b2bd1715a2395ee0482b5ec979b22d7ae0206"
+      },
+      "parallel": 8,
+      "memory_preflight": {
+        "available_bytes": 48103633715,
+        "required_bytes": 49811936912
+      },
+      "flags": {
+        "full_retrieval_integrity_verified": false,
+        "summary_task_regression_passed": false,
+        "strict_200_latency_targets_demonstrated": false,
+        "clinical_equivalence_qualified": false,
+        "production_purchase_gate_passed": false
+      },
+      "phases": [],
+      "retrieval_call_counters": null,
+      "retrieval_output_reuse": null,
+      "retrieval_executor": null,
+      "retrieval_startup_proof": null,
+      "mps_unused_cache_release": null,
+      "system_pressure": {
+        "scope": "system_wide_not_daemon_rss_or_gpu_peak",
+        "samples": 2,
+        "minimum_os_free_percentage": 70,
+        "maximum_compressed_bytes": 12079382528,
+        "maximum_compression_growth_bytes": 0,
+        "swapout_growth_bytes": 0
+      },
+      "native_storage_observations": null,
+      "matching_snapshots": [
+        {
+          "name": "sources-final-bounded-mlx",
+          "covered_recorded_sources": 60,
+          "recorded_source_count": 60
+        },
+        {
+          "name": "sources-final-complete-summary",
+          "covered_recorded_sources": 60,
+          "recorded_source_count": 60
+        }
+      ],
+      "restoration": {
+        "lease_status": "experiment_finished",
+        "status": "restored_and_verified",
+        "all_original_residents_identity_and_context_verified": true,
+        "models": [
+          {
+            "name": "medgemma:27b",
+            "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+            "context_length": 8192,
+            "expires_at": "2319-02-01T19:32:16.809676807+05:30"
+          },
+          {
+            "name": "medgemma:4b",
+            "digest": "9fe4e9a6c9bda2d007bb595515550eafbc8e226622adff9257f3241eba334c4d",
+            "context_length": 4096,
+            "expires_at": "2319-02-01T19:28:10.363839807+05:30"
+          }
+        ],
+        "auto_reloaded_original_residents": []
+      }
+    },
+    {
+      "run": "run-i-original-complete-summary",
+      "engine": "ollama",
+      "status": "aborted",
+      "report": "run-i-original-complete-summary/ollama-p2-full-rag/report.json",
+      "report_sha256": "50429424b527412b6f9ead5b57b5549e1c45a11a4c6d33f5f90c34caf61611ae",
+      "engineering_source_review": null,
+      "abort_reason": "compression_growth_over_4_gib",
+      "resource_guard_trigger": {
+        "pressure_sample_index": 7,
+        "reason": "compression_growth_over_4_gib",
+        "evidence": "recorded_before_owned_termination",
+        "monitor_exception_observed": true,
+        "monitor_state": "completed"
+      },
+      "model": {
+        "model": "medgemma:27b",
+        "model_digest": "sha256:4b97da6b21a8fb1405a0d1efee462bfd6c4d3c46307bac8b34373835f07ca758",
+        "weight_bytes": 17397211520,
+        "manifest_sha256": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+        "quantization": "Q4_K_M",
+        "swa_full": "off",
+        "prefix_cache_mib": 0,
+        "idle_slot_prompt_cache": false,
+        "prompt_cache_requested": false,
+        "context_per_request": 8192,
+        "kv_type": "f16",
+        "memory_estimate_policy": "unchanged_conservative_4_gib_per_slot"
+      },
+      "parallel": 2,
+      "memory_preflight": {
+        "available_bytes": 52226802319,
+        "required_bytes": 47461982592
+      },
+      "flags": {
+        "full_retrieval_integrity_verified": false,
+        "summary_task_regression_passed": false,
+        "strict_200_latency_targets_demonstrated": false,
+        "clinical_equivalence_qualified": false,
+        "production_purchase_gate_passed": false
+      },
+      "phases": [
+        {
+          "name": "quality",
+          "status": "complete",
+          "total": 8,
+          "completed_cases": 0,
+          "successful": 0,
+          "all_cases_passed": false,
+          "evidence": "Eight narrow synthetic factual-extraction fixtures; not clinical validation",
+          "observed_cases": 8,
+          "distinct_case_ids": 8,
+          "case_error_types": {
+            "HTTPStatusError": 8
+          },
+          "completed_but_failed_validation": 0,
+          "completed_terminal_passed_cases": 0
+        }
+      ],
+      "retrieval_call_counters": null,
+      "retrieval_output_reuse": null,
+      "retrieval_executor": null,
+      "retrieval_startup_proof": {
+        "embedding": {
+          "expected_model": "BAAI/bge-m3",
+          "architecture": "XLMRobertaModel",
+          "hidden_size": 1024,
+          "config_sha256": "26159e7ad065073448460117eb24b7a4572f6f4e78eadff65dc0a11c052449fa",
+          "snapshot_revision": "5617a9f61b028005a4858fdac845db406aefb181"
+        },
+        "reranker": {
+          "expected_model": "BAAI/bge-reranker-v2-m3",
+          "architecture": "XLMRobertaForSequenceClassification",
+          "hidden_size": 1024,
+          "config_sha256": "13dcd6c31d9fec9d1d8e158702072f62d7fa7d312a64b9fe057bec9a08cfe41a",
+          "snapshot_revision": "953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e"
+        },
+        "corpus_sources": 19,
+        "corpus_vectors": 19,
+        "corpus_fingerprint": "e85261d5dc762d793b10470056b9cfcec365d679d3bda7a3ba0c208d8ef7ded2",
+        "nonzero_corpus_vectors": 19,
+        "nonzero_embedding_probe": true,
+        "cross_encoder_probe": true,
+        "qualification_scope": "Installed full retrieval over the disposable seeded corpus; no clinical accuracy claim"
+      },
+      "mps_unused_cache_release": null,
+      "system_pressure": {
+        "scope": "system_wide_not_daemon_rss_or_gpu_peak",
+        "samples": 10,
+        "minimum_os_free_percentage": 38,
+        "maximum_compressed_bytes": 16582131712,
+        "maximum_compression_growth_bytes": 4661493760,
+        "swapout_growth_bytes": 0
+      },
+      "native_storage_observations": {
+        "observed_kv_buffers_mib": [
+          1280.0,
+          1248.0
+        ],
+        "observed_total_kv_gib": 2.46875,
+        "observed_context_per_sequence": [
+          8192
+        ],
+        "runner_confirmed_ram_prompt_cache_disabled": true,
+        "kv_is_active_generation_storage_not_optional_prompt_archive": true
+      },
+      "matching_snapshots": [
+        {
+          "name": "sources-final-bounded-mlx",
+          "covered_recorded_sources": 60,
+          "recorded_source_count": 60
+        },
+        {
+          "name": "sources-final-complete-summary",
+          "covered_recorded_sources": 60,
+          "recorded_source_count": 60
+        }
+      ],
+      "restoration": {
+        "lease_status": "experiment_finished",
+        "status": "restored_and_verified",
+        "all_original_residents_identity_and_context_verified": true,
+        "models": [
+          {
+            "name": "medgemma:4b",
+            "digest": "9fe4e9a6c9bda2d007bb595515550eafbc8e226622adff9257f3241eba334c4d",
+            "context_length": 4096,
+            "expires_at": "2319-02-01T19:34:59.608325807+05:30"
+          },
+          {
+            "name": "medgemma:27b",
+            "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+            "context_length": 8192,
+            "expires_at": "2319-02-01T19:34:56.443992807+05:30"
+          }
+        ],
+        "auto_reloaded_original_residents": [
+          {
+            "name": "medgemma:4b",
+            "digest": "9fe4e9a6c9bda2d007bb595515550eafbc8e226622adff9257f3241eba334c4d",
+            "context_length": 4096,
+            "indefinite_residency_verified": true
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-j-original-reclaim",
+      "engine": "ollama",
+      "status": "complete",
+      "report": "run-j-original-reclaim/ollama-p2-full-rag/report.json",
+      "report_sha256": "ef74d2bd1ab8ed8abb9d2eac4d6cb843e40a65871783c73da1c286c3e50e9d93",
+      "engineering_source_review": {
+        "status": "source_grounding_unqualified",
+        "phase": "sequential",
+        "lane": "patient",
+        "saved_report_evidence": "profile.phases[1].requests[1].synthetic_answer",
+        "automated_task_check_result": "12/12 lexical fixture checks passed; not full source grounding",
+        "issues": [
+          {
+            "actual_snippet": "No active medications are listed, so there is no change history to report.",
+            "finding": "An empty active-medication list does not establish absence of medication-change history; the causal inference is unsupported."
+          },
+          {
+            "actual_snippet": "No recent Scribe notes indicate any ongoing tasks have been formally recorded.",
+            "finding": "Scribe-note absence is not an authoritative unresolved-task ledger; the summary ambiguously uses notes as a proxy."
+          }
+        ],
+        "clinical_validation": false,
+        "raw_reports_or_checker_thresholds_changed": false
+      },
+      "abort_reason": null,
+      "resource_guard_trigger": null,
+      "model": {
+        "model": "medgemma:27b",
+        "model_digest": "sha256:4b97da6b21a8fb1405a0d1efee462bfd6c4d3c46307bac8b34373835f07ca758",
+        "weight_bytes": 17397211520,
+        "manifest_sha256": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+        "quantization": "Q4_K_M",
+        "swa_full": "off",
+        "prefix_cache_mib": 0,
+        "idle_slot_prompt_cache": false,
+        "prompt_cache_requested": false,
+        "context_per_request": 8192,
+        "kv_type": "f16",
+        "memory_estimate_policy": "unchanged_conservative_4_gib_per_slot"
+      },
+      "parallel": 2,
+      "memory_preflight": {
+        "available_bytes": 48790828482,
+        "required_bytes": 47461982592
+      },
+      "flags": {
+        "full_retrieval_integrity_verified": true,
+        "summary_task_regression_passed": false,
+        "strict_200_latency_targets_demonstrated": false,
+        "clinical_equivalence_qualified": false,
+        "production_purchase_gate_passed": false
+      },
+      "phases": [
+        {
+          "name": "quality",
+          "status": "complete",
+          "total": 8,
+          "completed_cases": 8,
+          "successful": 8,
+          "all_cases_passed": true,
+          "evidence": "Eight narrow synthetic factual-extraction fixtures; not clinical validation",
+          "observed_cases": 8,
+          "distinct_case_ids": 8,
+          "case_error_types": {
+            "none": 8
+          },
+          "completed_but_failed_validation": 0,
+          "completed_terminal_passed_cases": 8
+        },
+        {
+          "name": "sequential",
+          "status": "complete",
+          "planned": 3,
+          "observed": 3,
+          "unobserved": 0,
+          "hard_request_timeout_s": 60.0,
+          "transport_completed": 3,
+          "complete_valid_answers": 3,
+          "errors": {
+            "none": 3
+          },
+          "lanes": {
+            "general": {
+              "observed": 1,
+              "transport_completed": 1,
+              "complete_valid_answers": 1,
+              "meeting_target": 0,
+              "target_s": 3.0,
+              "successful_only_p50_s": 18.613421708985697,
+              "successful_only_p95_s": 18.613421708985697,
+              "successful_only_p99_s": 18.613421708985697,
+              "errors": {
+                "none": 1
+              },
+              "retrieval_observed": 1,
+              "retrieval_p50_ms": 322.0
+            },
+            "patient": {
+              "observed": 1,
+              "transport_completed": 1,
+              "complete_valid_answers": 1,
+              "meeting_target": 0,
+              "target_s": 5.0,
+              "successful_only_p50_s": 26.359538250020705,
+              "successful_only_p95_s": 26.359538250020705,
+              "successful_only_p99_s": 26.359538250020705,
+              "errors": {
+                "none": 1
+              },
+              "retrieval_observed": 1,
+              "retrieval_p50_ms": 295.0
+            },
+            "department": {
+              "observed": 1,
+              "transport_completed": 1,
+              "complete_valid_answers": 1,
+              "meeting_target": 0,
+              "target_s": 15.0,
+              "successful_only_p50_s": 23.09288816701155,
+              "successful_only_p95_s": 23.09288816701155,
+              "successful_only_p99_s": 23.09288816701155,
+              "errors": {
+                "none": 1
+              },
+              "retrieval_observed": 1,
+              "retrieval_p50_ms": 3.0
+            }
+          },
+          "rows": [
+            {
+              "lane": "general",
+              "transport_complete": true,
+              "complete_valid_answer": true,
+              "semantic_checked": false,
+              "semantic_passed": null,
+              "semantic_checks_passed": 0,
+              "semantic_checks_total": 0,
+              "semantic_failed_checks": [],
+              "error": null,
+              "full_s": 18.613421708985697,
+              "first_content_s": 5.073047625017352,
+              "first_readable_s": 5.601651999983005,
+              "terminal_completion_s": 18.6087633339921,
+              "retrieval_ms": 322,
+              "queue_ms": 0.079,
+              "target_s": 3.0,
+              "complete_valid_within_target": false,
+              "independent_clinical_validation": false
+            },
+            {
+              "lane": "patient",
+              "transport_complete": true,
+              "complete_valid_answer": true,
+              "semantic_checked": true,
+              "semantic_passed": true,
+              "semantic_checks_passed": 12,
+              "semantic_checks_total": 12,
+              "semantic_failed_checks": [],
+              "error": null,
+              "full_s": 26.359538250020705,
+              "first_content_s": 0.2964815830346197,
+              "first_readable_s": 7.449442416022066,
+              "terminal_completion_s": 26.3571442909888,
+              "retrieval_ms": 295,
+              "queue_ms": 0.053,
+              "target_s": 5.0,
+              "complete_valid_within_target": false,
+              "independent_clinical_validation": false
+            },
+            {
+              "lane": "department",
+              "transport_complete": true,
+              "complete_valid_answer": true,
+              "semantic_checked": false,
+              "semantic_passed": null,
+              "semantic_checks_passed": 0,
+              "semantic_checks_total": 0,
+              "semantic_failed_checks": [],
+              "error": null,
+              "full_s": 23.09288816701155,
+              "first_content_s": 17.02495687501505,
+              "first_readable_s": 17.859170584008098,
+              "terminal_completion_s": 23.089921292033978,
+              "retrieval_ms": 3,
+              "queue_ms": 0.039,
+              "target_s": 15.0,
+              "complete_valid_within_target": false,
+              "independent_clinical_validation": false
+            }
+          ],
+          "workflow_quality": {
+            "required": true,
+            "patient_requests": 1,
+            "transport_completed": 1,
+            "task_checks_passed": 1,
+            "all_patient_requests_passed": true,
+            "clinical_accuracy_qualified": false
+          },
+          "post_request_retrieval_settle": {
+            "maximum_seconds": 10.0,
+            "wall_s": 0.008053124998696148,
+            "settled": true,
+            "initial": {
+              "executor": {
+                "workers": 4,
+                "max_outstanding": 200,
+                "active": 0,
+                "queued": 0,
+                "outstanding": 0,
+                "closed": false,
+                "admitted": 3,
+                "rejected": 0,
+                "completed": 3,
+                "failed": 0,
+                "cancelled_queued": 0,
+                "cancelled_running_waiters": 0,
+                "started": 3,
+                "queue_wait_avg_ms": 0.05081899386520187,
+                "queue_wait_max_ms": 0.08666602661833167,
+                "service_total_ms": 612.0109160547145,
+                "service_max_ms": 315.8593749976717
+              },
+              "model_outputs": {
+                "submitted": 7,
+                "coalesced": 0,
+                "hits": 0,
+                "evicted": 0,
+                "embedding_batch_calls": 0,
+                "embedding_batched_requests": 0,
+                "embedding_batch_max": 0,
+                "embedding_batch_pending": 0,
+                "pending": 0,
+                "entries": 4,
+                "bytes": 8896,
+                "ttl_s": 30.0,
+                "max_entries": 128,
+                "max_bytes": 8388608,
+                "max_pending": 256
+              },
+              "calls": {
+                "embedding_calls": 2,
+                "embedding_completed": 2,
+                "embedding_failed": 0,
+                "rerank_calls": 2,
+                "rerank_completed": 2,
+                "rerank_failed": 0,
+                "results_cross_encoder": 24,
+                "results_lexical": 0,
+                "results_other": 0,
+                "embedding_elapsed_s": 0.09922379103954881,
+                "embedding_max_s": 0.06160683301277459,
+                "rerank_elapsed_s": 0.489571749989409,
+                "rerank_max_s": 0.251225791987963
+              }
+            },
+            "final": {
+              "executor": {
+                "workers": 4,
+                "max_outstanding": 200,
+                "active": 0,
+                "queued": 0,
+                "outstanding": 0,
+                "closed": false,
+                "admitted": 3,
+                "rejected": 0,
+                "completed": 3,
+                "failed": 0,
+                "cancelled_queued": 0,
+                "cancelled_running_waiters": 0,
+                "started": 3,
+                "queue_wait_avg_ms": 0.05081899386520187,
+                "queue_wait_max_ms": 0.08666602661833167,
+                "service_total_ms": 612.0109160547145,
+                "service_max_ms": 315.8593749976717
+              },
+              "model_outputs": {
+                "submitted": 7,
+                "coalesced": 0,
+                "hits": 0,
+                "evicted": 0,
+                "embedding_batch_calls": 0,
+                "embedding_batched_requests": 0,
+                "embedding_batch_max": 0,
+                "embedding_batch_pending": 0,
+                "pending": 0,
+                "entries": 4,
+                "bytes": 8896,
+                "ttl_s": 30.0,
+                "max_entries": 128,
+                "max_bytes": 8388608,
+                "max_pending": 256
+              },
+              "calls": {
+                "embedding_calls": 2,
+                "embedding_completed": 2,
+                "embedding_failed": 0,
+                "rerank_calls": 2,
+                "rerank_completed": 2,
+                "rerank_failed": 0,
+                "results_cross_encoder": 24,
+                "results_lexical": 0,
+                "results_other": 0,
+                "embedding_elapsed_s": 0.09922379103954881,
+                "embedding_max_s": 0.06160683301277459,
+                "rerank_elapsed_s": 0.489571749989409,
+                "rerank_max_s": 0.251225791987963
+              }
+            },
+            "included_in_request_latency": false
+          },
+          "cleanup_is_excluded_from_latency": true
+        },
+        {
+          "name": "burst",
+          "status": "complete",
+          "planned": 200,
+          "observed": 200,
+          "unobserved": 0,
+          "hard_request_timeout_s": 20.0,
+          "transport_completed": 0,
+          "complete_valid_answers": 0,
+          "errors": {
+            "capacity_rejected": 48,
+            "timeout": 152
+          },
+          "lanes": {
+            "general": {
+              "observed": 67,
+              "transport_completed": 0,
+              "complete_valid_answers": 0,
+              "meeting_target": 0,
+              "target_s": 3.0,
+              "successful_only_p50_s": null,
+              "successful_only_p95_s": null,
+              "successful_only_p99_s": null,
+              "errors": {
+                "capacity_rejected": 14,
+                "timeout": 53
+              },
+              "retrieval_observed": 16,
+              "retrieval_p50_ms": 11758.5
+            },
+            "patient": {
+              "observed": 67,
+              "transport_completed": 0,
+              "complete_valid_answers": 0,
+              "meeting_target": 0,
+              "target_s": 5.0,
+              "successful_only_p50_s": null,
+              "successful_only_p95_s": null,
+              "successful_only_p99_s": null,
+              "errors": {
+                "capacity_rejected": 17,
+                "timeout": 50
+              },
+              "retrieval_observed": 18,
+              "retrieval_p50_ms": 8704.0
+            },
+            "department": {
+              "observed": 66,
+              "transport_completed": 0,
+              "complete_valid_answers": 0,
+              "meeting_target": 0,
+              "target_s": 15.0,
+              "successful_only_p50_s": null,
+              "successful_only_p95_s": null,
+              "successful_only_p99_s": null,
+              "errors": {
+                "capacity_rejected": 17,
+                "timeout": 49
+              },
+              "retrieval_observed": 19,
+              "retrieval_p50_ms": 8994.0
+            }
+          },
+          "rows": null,
+          "workflow_quality": {
+            "required": true,
+            "patient_requests": 67,
+            "transport_completed": 0,
+            "task_checks_passed": 0,
+            "all_patient_requests_passed": false,
+            "clinical_accuracy_qualified": false
+          },
+          "post_request_retrieval_settle": {
+            "maximum_seconds": 10.0,
+            "wall_s": 2.129054584016558,
+            "settled": true,
+            "initial": {
+              "executor": {
+                "workers": 4,
+                "max_outstanding": 200,
+                "active": 4,
+                "queued": 0,
+                "outstanding": 4,
+                "closed": false,
+                "admitted": 203,
+                "rejected": 0,
+                "completed": 57,
+                "failed": 0,
+                "cancelled_queued": 142,
+                "cancelled_running_waiters": 5,
+                "started": 61,
+                "queue_wait_avg_ms": 8243.237272526145,
+                "queue_wait_max_ms": 19432.80033400515,
+                "service_total_ms": 75810.45962416101,
+                "service_max_ms": 2454.1358329588547
+              },
+              "model_outputs": {
+                "submitted": 83,
+                "coalesced": 0,
+                "hits": 0,
+                "evicted": 0,
+                "embedding_batch_calls": 0,
+                "embedding_batched_requests": 0,
+                "embedding_batch_max": 0,
+                "embedding_batch_pending": 0,
+                "pending": 4,
+                "entries": 72,
+                "bytes": 164128,
+                "ttl_s": 30.0,
+                "max_entries": 128,
+                "max_bytes": 8388608,
+                "max_pending": 256
+              },
+              "calls": {
+                "embedding_calls": 41,
+                "embedding_completed": 39,
+                "embedding_failed": 0,
+                "rerank_calls": 39,
+                "rerank_completed": 37,
+                "rerank_failed": 0,
+                "results_cross_encoder": 444,
+                "results_lexical": 0,
+                "results_other": 0,
+                "embedding_elapsed_s": 31.68097954208497,
+                "embedding_max_s": 1.57878962502582,
+                "rerank_elapsed_s": 44.50574266706826,
+                "rerank_max_s": 1.9357331250212155
+              }
+            },
+            "final": {
+              "executor": {
+                "workers": 4,
+                "max_outstanding": 200,
+                "active": 0,
+                "queued": 0,
+                "outstanding": 0,
+                "closed": false,
+                "admitted": 203,
+                "rejected": 0,
+                "completed": 61,
+                "failed": 0,
+                "cancelled_queued": 142,
+                "cancelled_running_waiters": 5,
+                "started": 61,
+                "queue_wait_avg_ms": 8243.237272526145,
+                "queue_wait_max_ms": 19432.80033400515,
+                "service_total_ms": 84530.05870815832,
+                "service_max_ms": 2454.1358329588547
+              },
+              "model_outputs": {
+                "submitted": 85,
+                "coalesced": 0,
+                "hits": 0,
+                "evicted": 0,
+                "embedding_batch_calls": 0,
+                "embedding_batched_requests": 0,
+                "embedding_batch_max": 0,
+                "embedding_batch_pending": 0,
+                "pending": 0,
+                "entries": 78,
+                "bytes": 173472,
+                "ttl_s": 30.0,
+                "max_entries": 128,
+                "max_bytes": 8388608,
+                "max_pending": 256
+              },
+              "calls": {
+                "embedding_calls": 41,
+                "embedding_completed": 41,
+                "embedding_failed": 0,
+                "rerank_calls": 41,
+                "rerank_completed": 41,
+                "rerank_failed": 0,
+                "results_cross_encoder": 492,
+                "results_lexical": 0,
+                "results_other": 0,
+                "embedding_elapsed_s": 34.31863862508908,
+                "embedding_max_s": 1.57878962502582,
+                "rerank_elapsed_s": 49.37816962605575,
+                "rerank_max_s": 1.9357331250212155
+              }
+            },
+            "included_in_request_latency": false
+          },
+          "cleanup_is_excluded_from_latency": true
+        }
+      ],
+      "retrieval_call_counters": {
+        "embedding_calls": 41,
+        "embedding_completed": 41,
+        "embedding_failed": 0,
+        "rerank_calls": 41,
+        "rerank_completed": 41,
+        "rerank_failed": 0,
+        "results_cross_encoder": 492,
+        "results_lexical": 0,
+        "results_other": 0,
+        "embedding_elapsed_s": 34.31863862508908,
+        "embedding_max_s": 1.57878962502582,
+        "rerank_elapsed_s": 49.37816962605575,
+        "rerank_max_s": 1.9357331250212155
+      },
+      "retrieval_output_reuse": {
+        "submitted": 85,
+        "coalesced": 0,
+        "hits": 0,
+        "evicted": 0,
+        "embedding_batch_calls": 0,
+        "embedding_batched_requests": 0,
+        "embedding_batch_max": 0,
+        "embedding_batch_pending": 0,
+        "pending": 0,
+        "entries": 78,
+        "bytes": 173472,
+        "ttl_s": 30.0,
+        "max_entries": 128,
+        "max_bytes": 8388608,
+        "max_pending": 256
+      },
+      "retrieval_executor": {
+        "workers": 4,
+        "max_outstanding": 200,
+        "active": 0,
+        "queued": 0,
+        "outstanding": 0,
+        "closed": false,
+        "admitted": 203,
+        "rejected": 0,
+        "completed": 61,
+        "failed": 0,
+        "cancelled_queued": 142,
+        "cancelled_running_waiters": 5,
+        "started": 61,
+        "queue_wait_avg_ms": 8243.237272526145,
+        "queue_wait_max_ms": 19432.80033400515,
+        "service_total_ms": 84530.05870815832,
+        "service_max_ms": 2454.1358329588547
+      },
+      "retrieval_startup_proof": {
+        "embedding": {
+          "expected_model": "BAAI/bge-m3",
+          "architecture": "XLMRobertaModel",
+          "hidden_size": 1024,
+          "config_sha256": "26159e7ad065073448460117eb24b7a4572f6f4e78eadff65dc0a11c052449fa",
+          "snapshot_revision": "5617a9f61b028005a4858fdac845db406aefb181"
+        },
+        "reranker": {
+          "expected_model": "BAAI/bge-reranker-v2-m3",
+          "architecture": "XLMRobertaForSequenceClassification",
+          "hidden_size": 1024,
+          "config_sha256": "13dcd6c31d9fec9d1d8e158702072f62d7fa7d312a64b9fe057bec9a08cfe41a",
+          "snapshot_revision": "953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e"
+        },
+        "corpus_sources": 19,
+        "corpus_vectors": 19,
+        "corpus_fingerprint": "e85261d5dc762d793b10470056b9cfcec365d679d3bda7a3ba0c208d8ef7ded2",
+        "nonzero_corpus_vectors": 19,
+        "nonzero_embedding_probe": true,
+        "cross_encoder_probe": true,
+        "qualification_scope": "Installed full retrieval over the disposable seeded corpus; no clinical accuracy claim"
+      },
+      "mps_unused_cache_release": {
+        "observation_status": "numeric_events_only",
+        "total_records": 42,
+        "total_released_bytes": 46472888320,
+        "records_truncated": false,
+        "interpretation": "Cumulative bytes returned over repeated allocator releases; not peak RAM saved or freed capacity"
+      },
+      "system_pressure": {
+        "scope": "system_wide_not_daemon_rss_or_gpu_peak",
+        "samples": 82,
+        "minimum_os_free_percentage": 34,
+        "maximum_compressed_bytes": 12691226624,
+        "maximum_compression_growth_bytes": 370950144,
+        "swapout_growth_bytes": 0
+      },
+      "native_storage_observations": {
+        "observed_kv_buffers_mib": [
+          1280.0,
+          1248.0
+        ],
+        "observed_total_kv_gib": 2.46875,
+        "observed_context_per_sequence": [
+          8192
+        ],
+        "runner_confirmed_ram_prompt_cache_disabled": true,
+        "kv_is_active_generation_storage_not_optional_prompt_archive": true
+      },
+      "matching_snapshots": [
+        {
+          "name": "sources-final-bounded-mlx",
+          "covered_recorded_sources": 60,
+          "recorded_source_count": 60
+        },
+        {
+          "name": "sources-final-complete-summary",
+          "covered_recorded_sources": 60,
+          "recorded_source_count": 60
+        }
+      ],
+      "restoration": {
+        "lease_status": "experiment_finished",
+        "status": "restored_and_verified",
+        "all_original_residents_identity_and_context_verified": true,
+        "models": [
+          {
+            "name": "medgemma:4b",
+            "digest": "9fe4e9a6c9bda2d007bb595515550eafbc8e226622adff9257f3241eba334c4d",
+            "context_length": 4096,
+            "expires_at": "2319-02-01T19:40:09.490425807+05:30"
+          },
+          {
+            "name": "medgemma:27b",
+            "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+            "context_length": 8192,
+            "expires_at": "2319-02-01T19:40:07.817492807+05:30"
+          }
+        ],
+        "auto_reloaded_original_residents": [
+          {
+            "name": "medgemma:4b",
+            "digest": "9fe4e9a6c9bda2d007bb595515550eafbc8e226622adff9257f3241eba334c4d",
+            "context_length": 4096,
+            "indefinite_residency_verified": true
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-k-mlx-bounded",
+      "engine": "mlx",
+      "status": "complete",
+      "report": "run-k-mlx-bounded/mlx-p4-full-rag/report.json",
+      "report_sha256": "746a02ed5671271c78927404c5ec41ebdb6b8a00254b543d78165e2d517851bc",
+      "engineering_source_review": {
+        "status": "source_grounding_unqualified",
+        "phase": "sequential",
+        "lane": "patient",
+        "saved_report_evidence": "profile.phases[1].requests[1].synthetic_answer",
+        "automated_task_check_result": "12/12 lexical fixture checks passed; not full source grounding",
+        "issues": [
+          {
+            "actual_snippet": "No recent imaging has been performed.",
+            "finding": "The source documents imaging unavailable, not absence of a performed procedure; missing evidence was converted to an unsupported negative event claim."
+          }
+        ],
+        "medication_history_note": {
+          "actual_snippet": "No active medication list is provided, so any change history is unknown.",
+          "interpretation": "Cautious unknown wording avoids J's asserted absence, but an active-list proxy does not validate change-history completeness."
+        },
+        "clinical_validation": false,
+        "raw_reports_or_checker_thresholds_changed": false
+      },
+      "abort_reason": null,
+      "resource_guard_trigger": null,
+      "model": {
+        "model": "medgemma:27b",
+        "kind": "same_source_separately_requantised_mlx_candidate",
+        "weights_bytes": 19478730384,
+        "kv_budget_bytes": 4429185024,
+        "kv_element_bytes": 2,
+        "activation_policy": "mixed_f32_residual_f16_projection",
+        "quantised_kv": false,
+        "clinical_equivalence": "not_qualified",
+        "loading_mode": "mixed-staged",
+        "checksum_io": {
+          "large_safetensors_uncached_fd_count": 435
+        },
+        "batching_enabled": true,
+        "prefix_cache_entry_limit": 0,
+        "prefix_cache_byte_limit": 8589934592,
+        "http_listen_backlog": 256,
+        "prefill_step_size": 256,
+        "mlx_allocator_cache_byte_limit": 1073741824,
+        "serving_admissions_per_decode_step": 8,
+        "request_scoped_disconnect_cancellation": true,
+        "source_gguf_sha256": "4b97da6b21a8fb1405a0d1efee462bfd6c4d3c46307bac8b34373835f07ca758",
+        "conversion_manifest_sha256": "2a6d9e1cd41375e54c614c0de05b2bd1715a2395ee0482b5ec979b22d7ae0206"
+      },
+      "parallel": 4,
+      "memory_preflight": {
+        "available_bytes": 52226802319,
+        "required_bytes": 45382751888
+      },
+      "flags": {
+        "full_retrieval_integrity_verified": true,
+        "summary_task_regression_passed": false,
+        "strict_200_latency_targets_demonstrated": false,
+        "clinical_equivalence_qualified": false,
+        "production_purchase_gate_passed": false
+      },
+      "phases": [
+        {
+          "name": "quality",
+          "status": "complete",
+          "total": 8,
+          "completed_cases": 8,
+          "successful": 8,
+          "all_cases_passed": true,
+          "evidence": "Eight narrow synthetic factual-extraction fixtures; not clinical validation",
+          "observed_cases": 8,
+          "distinct_case_ids": 8,
+          "case_error_types": {
+            "none": 8
+          },
+          "completed_but_failed_validation": 0,
+          "completed_terminal_passed_cases": 8
+        },
+        {
+          "name": "sequential",
+          "status": "complete",
+          "planned": 3,
+          "observed": 3,
+          "unobserved": 0,
+          "hard_request_timeout_s": 60.0,
+          "transport_completed": 3,
+          "complete_valid_answers": 3,
+          "errors": {
+            "none": 3
+          },
+          "lanes": {
+            "general": {
+              "observed": 1,
+              "transport_completed": 1,
+              "complete_valid_answers": 1,
+              "meeting_target": 0,
+              "target_s": 3.0,
+              "successful_only_p50_s": 23.909575500001665,
+              "successful_only_p95_s": 23.909575500001665,
+              "successful_only_p99_s": 23.909575500001665,
+              "errors": {
+                "none": 1
+              },
+              "retrieval_observed": 1,
+              "retrieval_p50_ms": 354.0
+            },
+            "patient": {
+              "observed": 1,
+              "transport_completed": 1,
+              "complete_valid_answers": 1,
+              "meeting_target": 0,
+              "target_s": 5.0,
+              "successful_only_p50_s": 27.44389737502206,
+              "successful_only_p95_s": 27.44389737502206,
+              "successful_only_p99_s": 27.44389737502206,
+              "errors": {
+                "none": 1
+              },
+              "retrieval_observed": 1,
+              "retrieval_p50_ms": 332.0
+            },
+            "department": {
+              "observed": 1,
+              "transport_completed": 1,
+              "complete_valid_answers": 1,
+              "meeting_target": 0,
+              "target_s": 15.0,
+              "successful_only_p50_s": 21.804647458018735,
+              "successful_only_p95_s": 21.804647458018735,
+              "successful_only_p99_s": 21.804647458018735,
+              "errors": {
+                "none": 1
+              },
+              "retrieval_observed": 1,
+              "retrieval_p50_ms": 6.0
+            }
+          },
+          "rows": [
+            {
+              "lane": "general",
+              "transport_complete": true,
+              "complete_valid_answer": true,
+              "semantic_checked": false,
+              "semantic_passed": null,
+              "semantic_checks_passed": 0,
+              "semantic_checks_total": 0,
+              "semantic_failed_checks": [],
+              "error": null,
+              "full_s": 23.909575500001665,
+              "first_content_s": 5.000821374997031,
+              "first_readable_s": 5.660849709005561,
+              "terminal_completion_s": 23.904028541990556,
+              "retrieval_ms": 354,
+              "queue_ms": 0.091,
+              "target_s": 3.0,
+              "complete_valid_within_target": false,
+              "independent_clinical_validation": false
+            },
+            {
+              "lane": "patient",
+              "transport_complete": true,
+              "complete_valid_answer": true,
+              "semantic_checked": true,
+              "semantic_passed": true,
+              "semantic_checks_passed": 12,
+              "semantic_checks_total": 12,
+              "semantic_failed_checks": [],
+              "error": null,
+              "full_s": 27.44389737502206,
+              "first_content_s": 0.33408379199681804,
+              "first_readable_s": 7.295922750025056,
+              "terminal_completion_s": 27.44027558300877,
+              "retrieval_ms": 332,
+              "queue_ms": 0.058,
+              "target_s": 5.0,
+              "complete_valid_within_target": false,
+              "independent_clinical_validation": false
+            },
+            {
+              "lane": "department",
+              "transport_complete": true,
+              "complete_valid_answer": true,
+              "semantic_checked": false,
+              "semantic_passed": null,
+              "semantic_checks_passed": 0,
+              "semantic_checks_total": 0,
+              "semantic_failed_checks": [],
+              "error": null,
+              "full_s": 21.804647458018735,
+              "first_content_s": 16.255028833053075,
+              "first_readable_s": 16.69160245801322,
+              "terminal_completion_s": 21.80074150004657,
+              "retrieval_ms": 6,
+              "queue_ms": 0.063,
+              "target_s": 15.0,
+              "complete_valid_within_target": false,
+              "independent_clinical_validation": false
+            }
+          ],
+          "workflow_quality": {
+            "required": true,
+            "patient_requests": 1,
+            "transport_completed": 1,
+            "task_checks_passed": 1,
+            "all_patient_requests_passed": true,
+            "clinical_accuracy_qualified": false
+          },
+          "post_request_retrieval_settle": {
+            "maximum_seconds": 10.0,
+            "wall_s": 0.01958708302117884,
+            "settled": true,
+            "initial": {
+              "executor": {
+                "workers": 4,
+                "max_outstanding": 200,
+                "active": 0,
+                "queued": 0,
+                "outstanding": 0,
+                "closed": false,
+                "admitted": 3,
+                "rejected": 0,
+                "completed": 3,
+                "failed": 0,
+                "cancelled_queued": 0,
+                "cancelled_running_waiters": 0,
+                "started": 3,
+                "queue_wait_avg_ms": 0.07698634484161933,
+                "queue_wait_max_ms": 0.11800002539530396,
+                "service_total_ms": 680.4477899568155,
+                "service_max_ms": 345.4911659937352
+              },
+              "model_outputs": {
+                "submitted": 7,
+                "coalesced": 0,
+                "hits": 0,
+                "evicted": 0,
+                "embedding_batch_calls": 0,
+                "embedding_batched_requests": 0,
+                "embedding_batch_max": 0,
+                "embedding_batch_pending": 0,
+                "pending": 0,
+                "entries": 4,
+                "bytes": 8896,
+                "ttl_s": 30.0,
+                "max_entries": 128,
+                "max_bytes": 8388608,
+                "max_pending": 256
+              },
+              "calls": {
+                "embedding_calls": 2,
+                "embedding_completed": 2,
+                "embedding_failed": 0,
+                "rerank_calls": 2,
+                "rerank_completed": 2,
+                "rerank_failed": 0,
+                "results_cross_encoder": 24,
+                "results_lexical": 0,
+                "results_other": 0,
+                "embedding_elapsed_s": 0.12643729202682152,
+                "embedding_max_s": 0.07345312502002344,
+                "rerank_elapsed_s": 0.5245268750586547,
+                "rerank_max_s": 0.2716830000281334
+              }
+            },
+            "final": {
+              "executor": {
+                "workers": 4,
+                "max_outstanding": 200,
+                "active": 0,
+                "queued": 0,
+                "outstanding": 0,
+                "closed": false,
+                "admitted": 3,
+                "rejected": 0,
+                "completed": 3,
+                "failed": 0,
+                "cancelled_queued": 0,
+                "cancelled_running_waiters": 0,
+                "started": 3,
+                "queue_wait_avg_ms": 0.07698634484161933,
+                "queue_wait_max_ms": 0.11800002539530396,
+                "service_total_ms": 680.4477899568155,
+                "service_max_ms": 345.4911659937352
+              },
+              "model_outputs": {
+                "submitted": 7,
+                "coalesced": 0,
+                "hits": 0,
+                "evicted": 0,
+                "embedding_batch_calls": 0,
+                "embedding_batched_requests": 0,
+                "embedding_batch_max": 0,
+                "embedding_batch_pending": 0,
+                "pending": 0,
+                "entries": 4,
+                "bytes": 8896,
+                "ttl_s": 30.0,
+                "max_entries": 128,
+                "max_bytes": 8388608,
+                "max_pending": 256
+              },
+              "calls": {
+                "embedding_calls": 2,
+                "embedding_completed": 2,
+                "embedding_failed": 0,
+                "rerank_calls": 2,
+                "rerank_completed": 2,
+                "rerank_failed": 0,
+                "results_cross_encoder": 24,
+                "results_lexical": 0,
+                "results_other": 0,
+                "embedding_elapsed_s": 0.12643729202682152,
+                "embedding_max_s": 0.07345312502002344,
+                "rerank_elapsed_s": 0.5245268750586547,
+                "rerank_max_s": 0.2716830000281334
+              }
+            },
+            "included_in_request_latency": false
+          },
+          "cleanup_is_excluded_from_latency": true
+        },
+        {
+          "name": "burst",
+          "status": "complete",
+          "planned": 200,
+          "observed": 200,
+          "unobserved": 0,
+          "hard_request_timeout_s": 20.0,
+          "transport_completed": 0,
+          "complete_valid_answers": 0,
+          "errors": {
+            "capacity_rejected": 50,
+            "timeout": 150
+          },
+          "lanes": {
+            "general": {
+              "observed": 67,
+              "transport_completed": 0,
+              "complete_valid_answers": 0,
+              "meeting_target": 0,
+              "target_s": 3.0,
+              "successful_only_p50_s": null,
+              "successful_only_p95_s": null,
+              "successful_only_p99_s": null,
+              "errors": {
+                "capacity_rejected": 18,
+                "timeout": 49
+              },
+              "retrieval_observed": 20,
+              "retrieval_p50_ms": 11539.5
+            },
+            "patient": {
+              "observed": 67,
+              "transport_completed": 0,
+              "complete_valid_answers": 0,
+              "meeting_target": 0,
+              "target_s": 5.0,
+              "successful_only_p50_s": null,
+              "successful_only_p95_s": null,
+              "successful_only_p99_s": null,
+              "errors": {
+                "timeout": 52,
+                "capacity_rejected": 15
+              },
+              "retrieval_observed": 18,
+              "retrieval_p50_ms": 9278.5
+            },
+            "department": {
+              "observed": 66,
+              "transport_completed": 0,
+              "complete_valid_answers": 0,
+              "meeting_target": 0,
+              "target_s": 15.0,
+              "successful_only_p50_s": null,
+              "successful_only_p95_s": null,
+              "successful_only_p99_s": null,
+              "errors": {
+                "timeout": 49,
+                "capacity_rejected": 17
+              },
+              "retrieval_observed": 22,
+              "retrieval_p50_ms": 10765.5
+            }
+          },
+          "rows": null,
+          "workflow_quality": {
+            "required": true,
+            "patient_requests": 67,
+            "transport_completed": 0,
+            "task_checks_passed": 0,
+            "all_patient_requests_passed": false,
+            "clinical_accuracy_qualified": false
+          },
+          "post_request_retrieval_settle": {
+            "maximum_seconds": 10.0,
+            "wall_s": 1.5910146670066752,
+            "settled": true,
+            "initial": {
+              "executor": {
+                "workers": 4,
+                "max_outstanding": 200,
+                "active": 4,
+                "queued": 0,
+                "outstanding": 4,
+                "closed": false,
+                "admitted": 203,
+                "rejected": 0,
+                "completed": 63,
+                "failed": 0,
+                "cancelled_queued": 136,
+                "cancelled_running_waiters": 4,
+                "started": 67,
+                "queue_wait_avg_ms": 8673.79123823884,
+                "queue_wait_max_ms": 18891.813250025734,
+                "service_total_ms": 74872.12353828363,
+                "service_max_ms": 2179.9889170215465
+              },
+              "model_outputs": {
+                "submitted": 91,
+                "coalesced": 0,
+                "hits": 0,
+                "evicted": 0,
+                "embedding_batch_calls": 0,
+                "embedding_batched_requests": 0,
+                "embedding_batch_max": 0,
+                "embedding_batch_pending": 0,
+                "pending": 4,
+                "entries": 80,
+                "bytes": 185920,
+                "ttl_s": 30.0,
+                "max_entries": 128,
+                "max_bytes": 8388608,
+                "max_pending": 256
+              },
+              "calls": {
+                "embedding_calls": 44,
+                "embedding_completed": 44,
+                "embedding_failed": 0,
+                "rerank_calls": 44,
+                "rerank_completed": 40,
+                "rerank_failed": 0,
+                "results_cross_encoder": 480,
+                "results_lexical": 0,
+                "results_other": 0,
+                "embedding_elapsed_s": 33.02407108404441,
+                "embedding_max_s": 1.4256393749965355,
+                "rerank_elapsed_s": 44.32291449699551,
+                "rerank_max_s": 1.8340745000168681
+              }
+            },
+            "final": {
+              "executor": {
+                "workers": 4,
+                "max_outstanding": 200,
+                "active": 0,
+                "queued": 0,
+                "outstanding": 0,
+                "closed": false,
+                "admitted": 203,
+                "rejected": 0,
+                "completed": 67,
+                "failed": 0,
+                "cancelled_queued": 136,
+                "cancelled_running_waiters": 4,
+                "started": 67,
+                "queue_wait_avg_ms": 8673.79123823884,
+                "queue_wait_max_ms": 18891.813250025734,
+                "service_total_ms": 83017.93520420324,
+                "service_max_ms": 2179.9889170215465
+              },
+              "model_outputs": {
+                "submitted": 91,
+                "coalesced": 0,
+                "hits": 0,
+                "evicted": 0,
+                "embedding_batch_calls": 0,
+                "embedding_batched_requests": 0,
+                "embedding_batch_max": 0,
+                "embedding_batch_pending": 0,
+                "pending": 0,
+                "entries": 84,
+                "bytes": 186816,
+                "ttl_s": 30.0,
+                "max_entries": 128,
+                "max_bytes": 8388608,
+                "max_pending": 256
+              },
+              "calls": {
+                "embedding_calls": 44,
+                "embedding_completed": 44,
+                "embedding_failed": 0,
+                "rerank_calls": 44,
+                "rerank_completed": 44,
+                "rerank_failed": 0,
+                "results_cross_encoder": 528,
+                "results_lexical": 0,
+                "results_other": 0,
+                "embedding_elapsed_s": 33.02407108404441,
+                "embedding_max_s": 1.4256393749965355,
+                "rerank_elapsed_s": 49.18520603806246,
+                "rerank_max_s": 1.8340745000168681
+              }
+            },
+            "included_in_request_latency": false
+          },
+          "cleanup_is_excluded_from_latency": true
+        }
+      ],
+      "retrieval_call_counters": {
+        "embedding_calls": 44,
+        "embedding_completed": 44,
+        "embedding_failed": 0,
+        "rerank_calls": 44,
+        "rerank_completed": 44,
+        "rerank_failed": 0,
+        "results_cross_encoder": 528,
+        "results_lexical": 0,
+        "results_other": 0,
+        "embedding_elapsed_s": 33.02407108404441,
+        "embedding_max_s": 1.4256393749965355,
+        "rerank_elapsed_s": 49.18520603806246,
+        "rerank_max_s": 1.8340745000168681
+      },
+      "retrieval_output_reuse": {
+        "submitted": 91,
+        "coalesced": 0,
+        "hits": 0,
+        "evicted": 0,
+        "embedding_batch_calls": 0,
+        "embedding_batched_requests": 0,
+        "embedding_batch_max": 0,
+        "embedding_batch_pending": 0,
+        "pending": 0,
+        "entries": 84,
+        "bytes": 186816,
+        "ttl_s": 30.0,
+        "max_entries": 128,
+        "max_bytes": 8388608,
+        "max_pending": 256
+      },
+      "retrieval_executor": {
+        "workers": 4,
+        "max_outstanding": 200,
+        "active": 0,
+        "queued": 0,
+        "outstanding": 0,
+        "closed": false,
+        "admitted": 203,
+        "rejected": 0,
+        "completed": 67,
+        "failed": 0,
+        "cancelled_queued": 136,
+        "cancelled_running_waiters": 4,
+        "started": 67,
+        "queue_wait_avg_ms": 8673.79123823884,
+        "queue_wait_max_ms": 18891.813250025734,
+        "service_total_ms": 83017.93520420324,
+        "service_max_ms": 2179.9889170215465
+      },
+      "retrieval_startup_proof": {
+        "embedding": {
+          "expected_model": "BAAI/bge-m3",
+          "architecture": "XLMRobertaModel",
+          "hidden_size": 1024,
+          "config_sha256": "26159e7ad065073448460117eb24b7a4572f6f4e78eadff65dc0a11c052449fa",
+          "snapshot_revision": "5617a9f61b028005a4858fdac845db406aefb181"
+        },
+        "reranker": {
+          "expected_model": "BAAI/bge-reranker-v2-m3",
+          "architecture": "XLMRobertaForSequenceClassification",
+          "hidden_size": 1024,
+          "config_sha256": "13dcd6c31d9fec9d1d8e158702072f62d7fa7d312a64b9fe057bec9a08cfe41a",
+          "snapshot_revision": "953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e"
+        },
+        "corpus_sources": 19,
+        "corpus_vectors": 19,
+        "corpus_fingerprint": "e85261d5dc762d793b10470056b9cfcec365d679d3bda7a3ba0c208d8ef7ded2",
+        "nonzero_corpus_vectors": 19,
+        "nonzero_embedding_probe": true,
+        "cross_encoder_probe": true,
+        "qualification_scope": "Installed full retrieval over the disposable seeded corpus; no clinical accuracy claim"
+      },
+      "mps_unused_cache_release": {
+        "observation_status": "numeric_events_only",
+        "total_records": 45,
+        "total_released_bytes": 49794777088,
+        "records_truncated": false,
+        "interpretation": "Cumulative bytes returned over repeated allocator releases; not peak RAM saved or freed capacity"
+      },
+      "system_pressure": {
+        "scope": "system_wide_not_daemon_rss_or_gpu_peak",
+        "samples": 94,
+        "minimum_os_free_percentage": 35,
+        "maximum_compressed_bytes": 12447760384,
+        "maximum_compression_growth_bytes": 515670016,
+        "swapout_growth_bytes": 0
+      },
+      "native_storage_observations": null,
+      "matching_snapshots": [
+        {
+          "name": "sources-final-bounded-mlx",
+          "covered_recorded_sources": 60,
+          "recorded_source_count": 60
+        },
+        {
+          "name": "sources-final-complete-summary",
+          "covered_recorded_sources": 60,
+          "recorded_source_count": 60
+        }
+      ],
+      "restoration": {
+        "lease_status": "experiment_finished",
+        "status": "restored_and_verified",
+        "all_original_residents_identity_and_context_verified": true,
+        "models": [
+          {
+            "name": "medgemma:4b",
+            "digest": "9fe4e9a6c9bda2d007bb595515550eafbc8e226622adff9257f3241eba334c4d",
+            "context_length": 4096,
+            "expires_at": "2319-02-01T19:48:59.754225807+05:30"
+          },
+          {
+            "name": "medgemma:27b",
+            "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+            "context_length": 8192,
+            "expires_at": "2319-02-01T19:48:58.373583807+05:30"
+          }
+        ],
+        "auto_reloaded_original_residents": [
+          {
+            "name": "medgemma:4b",
+            "digest": "9fe4e9a6c9bda2d007bb595515550eafbc8e226622adff9257f3241eba334c4d",
+            "context_length": 4096,
+            "indefinite_residency_verified": true
+          }
+        ]
+      }
+    }
+  ]
+}

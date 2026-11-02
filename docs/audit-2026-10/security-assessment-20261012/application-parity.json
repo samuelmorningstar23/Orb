@@ -1,0 +1,14 @@
+{
+  "schema": "orb.security.assessment-application-parity/1",
+  "verified_at_utc": "2026-10-12T11:14:08.607721+00:00",
+  "method": "Read-only SHA-256 comparison of all application paths in the prior full regression source inventory and all built assets; application inventory is existing baseline paths, dist also checks exact current file set. No tests or inference.",
+  "baseline": "docs/audit-2026-10/backend-sage-speed-acceptance-20261012",
+  "baseline_source_manifest_sha256": "edee0202111b45ba2276db7791be17f8f770428acc2d03550fb93eaf272e6b7d",
+  "baseline_dist_manifest_sha256": "c21fdc2bd80854412def9c53a5ff9433a342a952b2ca5806db1a762f82d012cb",
+  "application_compared": 1283,
+  "application_changed": [],
+  "dist_compared": 181,
+  "dist_changed": [],
+  "dist_added": [],
+  "scope_limit": "This establishes unchanged contents of the existing application inventory, not an exhaustive scan of ignored runtime files. No live/ignored configuration or data files read."
+}

@@ -1,0 +1,154 @@
+{
+  "schema_version": 1,
+  "status": "metadata_preflight_complete",
+  "offline": true,
+  "models_loaded": false,
+  "network_used": false,
+  "python": "3.12.13 (main, Jul 23 2026, 14:33:47) [Clang 22.1.3 ]",
+  "platform": "macOS-26.5.2-arm64-arm-64bit",
+  "checkpoint": {
+    "path": "/Users/samuelmorningstar/.ollama/models/blobs/sha256-4b97da6b21a8fb1405a0d1efee462bfd6c4d3c46307bac8b34373835f07ca758",
+    "file_stat_fingerprint": {
+      "device": 16777233,
+      "inode": 2433182,
+      "size_bytes": 17397211520,
+      "mtime_ns": 1785307979726682468,
+      "ctime_ns": 1785307979811914815
+    },
+    "gguf": {
+      "version": 3,
+      "tensor_count": 1247,
+      "metadata_count": 38,
+      "metadata": {
+        "gemma3.attention.head_count": 32,
+        "gemma3.attention.head_count_kv": 16,
+        "gemma3.attention.key_length": 128,
+        "gemma3.attention.sliding_window": 1024,
+        "gemma3.attention.value_length": 128,
+        "gemma3.block_count": 62,
+        "gemma3.context_length": 131072,
+        "gemma3.embedding_length": 5376,
+        "gemma3.feed_forward_length": 21504,
+        "gemma3.mm.tokens_per_image": 256,
+        "gemma3.vision.attention.head_count": 16,
+        "gemma3.vision.attention.layer_norm_epsilon": 9.999999974752427e-07,
+        "gemma3.vision.block_count": 27,
+        "gemma3.vision.embedding_length": 1152,
+        "gemma3.vision.feed_forward_length": 4304,
+        "gemma3.vision.image_size": 896,
+        "gemma3.vision.num_channels": 3,
+        "gemma3.vision.patch_size": 14,
+        "general.architecture": "gemma3",
+        "general.file_type": 15,
+        "general.parameter_count": 27432406640,
+        "general.quantization_version": 2,
+        "tokenizer.ggml.bos_token_id": 2,
+        "tokenizer.ggml.eos_token_id": 1,
+        "tokenizer.ggml.merges": {
+          "element_type": 8,
+          "count": 514906
+        },
+        "tokenizer.ggml.padding_token_id": 0,
+        "tokenizer.ggml.tokens": {
+          "element_type": 8,
+          "count": 262208
+        },
+        "tokenizer.ggml.unknown_token_id": 3
+      },
+      "tensor_types": {
+        "12": {
+          "name": "Q4_K",
+          "tensors": 376,
+          "elements": 21821915136,
+          "stored_bytes": 12274827264
+        },
+        "0": {
+          "name": "F32",
+          "tensors": 647,
+          "elements": 1755248,
+          "stored_bytes": 7020992
+        },
+        "14": {
+          "name": "Q6_K",
+          "tensors": 59,
+          "elements": 5186076672,
+          "stored_bytes": 4254203520
+        },
+        "1": {
+          "name": "F16",
+          "tensors": 165,
+          "elements": 422659584,
+          "stored_bytes": 845319168
+        }
+      },
+      "total_tensor_elements": 27432406640,
+      "non_vision_prefix_tensor_elements": 27015540608,
+      "all_weights_fp16_expansion_bytes": 54864813280,
+      "non_vision_prefix_fp16_expansion_bytes": 54031081216,
+      "tensor_index_end_bytes": 15840562,
+      "tensor_payload_start_bytes": 15840576,
+      "header_and_tensor_index_sha256": "f96ba73cd49a0bdd037736a8a60744a1a495e02a5d592f5d80e719bb557c2f76",
+      "full_weight_sha256": null,
+      "weight_payload_read": false,
+      "fp16_estimate_note": "Two bytes per element; excludes KV, workspace, retrieval and conversion peaks."
+    },
+    "pinned_ollama_manifest": {
+      "model": "medgemma:27b",
+      "model_digest": "sha256:4b97da6b21a8fb1405a0d1efee462bfd6c4d3c46307bac8b34373835f07ca758",
+      "weight_bytes": 17397211520,
+      "manifest_sha256": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+      "quantization": "Q4_K_M"
+    },
+    "manifest_pin_verified": true,
+    "identity_assurance": "Manifest digest/size and stat/index fingerprint; full weight hash NOT verified."
+  },
+  "installed_package_metadata": {
+    "mlx": null,
+    "mlx-metal": null,
+    "mlx-lm": null,
+    "mlx-vlm": null,
+    "transformers": "5.19.0",
+    "torch": "2.14.1",
+    "safetensors": "0.8.0"
+  },
+  "memory": {
+    "total_bytes": 68719476736,
+    "free_percentage": 75,
+    "estimated_available_bytes": 51539607552,
+    "vm_stat": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                    43303.\nPages active:                                1544116.\nPages inactive:                              1504638.\nPages speculative:                             36513.\nPages throttled:                                   0.\nPages wired down:                             248030.\nPages purgeable:                               61596.\n\"Translation faults\":                     2597367805.\nPages copy-on-write:                       154398660.\nPages zero filled:                        5290980373.\nPages reactivated:                          21189661.\nPages purged:                               50225393.\nFile-backed pages:                           1537216.\nAnonymous pages:                             1548051.\nPages stored in compressor:                  1640332.\nPages occupied by compressor:                 760737.\nDecompressions:                             15778320.\nCompressions:                               25152893.\nPageins:                                    67754006.\nPageouts:                                      71963.\nSwapins:                                      719121.\nSwapouts:                                    1012357.\n"
+  },
+  "memory_budgets": [
+    {
+      "parallel": 1,
+      "existing_ollama_required_available_bytes": 43167015296,
+      "existing_ollama_guard_passed": true,
+      "fp16_same_guard_required_available_bytes": 80634617056,
+      "fp16_same_guard_passed": false
+    },
+    {
+      "parallel": 2,
+      "existing_ollama_required_available_bytes": 47461982592,
+      "existing_ollama_guard_passed": true,
+      "fp16_same_guard_required_available_bytes": 84929584352,
+      "fp16_same_guard_passed": false
+    },
+    {
+      "parallel": 4,
+      "existing_ollama_required_available_bytes": 56051917184,
+      "existing_ollama_guard_passed": false,
+      "fp16_same_guard_required_available_bytes": 93519518944,
+      "fp16_same_guard_passed": false
+    }
+  ],
+  "budget_note": "Existing conservative guard: weights + 4 GiB KV/slot + 8 GiB prefix cache + 4 GiB workspace + 8 GiB OS headroom. FP16 is a comparison, not a measured MLX allocation.",
+  "mlx_identical_checkpoint_ready": false,
+  "mlx_block_reasons": [
+    "mlx_not_installed_in_selected_interpreter",
+    "mlx-lm_not_installed_in_selected_interpreter",
+    "no_qualified_mlx_path_for_this_exact_gguf_quantization_and_tokenizer",
+    "fp16_expansion_fails_existing_single_slot_headroom_guard"
+  ],
+  "clinical_quality_qualified": false,
+  "sla_benchmark_performed": false,
+  "conversion_policy": "No conversion performed. Requantizing mixed Q4_K/Q6_K to MLX affine 4-bit is a numerical change requiring separate quality validation."
+}

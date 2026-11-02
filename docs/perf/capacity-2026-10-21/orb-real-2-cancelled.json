@@ -1,0 +1,7 @@
+{
+  "evidence_kind": "aborted_diagnostic_not_a_benchmark",
+  "planned_requests": 2,
+  "planned_concurrency": 2,
+  "completion_status": "cancelled_by_coordinator",
+  "reason": "Shared inference service had a separately coordinated diagnostic running; cancelled only this owned disposable app. No valid result or hardware capacity conclusion."
+}

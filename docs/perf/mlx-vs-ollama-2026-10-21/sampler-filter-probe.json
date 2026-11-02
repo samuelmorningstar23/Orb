@@ -1,0 +1,34 @@
+{
+  "evidence_kind": "active_sampler_filter_distribution_and_repetition_probe_not_clinical_equivalence",
+  "filter_order": "penalties -> top-k40 -> top-p0.9 -> temperature",
+  "rows": [
+    {
+      "vocabulary": 128,
+      "temperature": 0.4,
+      "kept_tokens": 10,
+      "max_probability_error": 1.4338984036244007e-07,
+      "passed": true
+    },
+    {
+      "vocabulary": 262208,
+      "temperature": 0.4,
+      "kept_tokens": 31,
+      "max_probability_error": 3.9964546905135734e-07,
+      "passed": true
+    },
+    {
+      "vocabulary": 262208,
+      "temperature": 0.2,
+      "kept_tokens": 32,
+      "max_probability_error": 2.906306592054264e-07,
+      "passed": true
+    }
+  ],
+  "repetition_context": 256,
+  "repetition_penalty": 1.15,
+  "repetition_sign_and_duplicate_rule_passed": true,
+  "passed": true,
+  "rng_bit_identity_claimed": false,
+  "weights_or_clinical_quality_validated": false,
+  "wrapper_sha256": "abfdfbcaeaa13ac539abb7fb3195e335a1d69816e823a44fd1ea3139934451ac"
+}

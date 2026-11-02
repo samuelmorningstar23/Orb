@@ -1,0 +1,24 @@
+{
+  "before": {
+    "db_path": "/private/tmp/orb-prose-catalogue-isolation-20261012-iqyvrnwd/post-state/orb_test_prose_proof.db",
+    "catalogue_count": 15,
+    "catalogue_sha256": "97b02f229eb37276b2f158a7f7c9e5523ccf5045603078f005601df51b0547f5",
+    "heparin_units_ids": [
+      "HXSTKFBE14E0B"
+    ]
+  },
+  "during": {
+    "db_path": "/private/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/pytest-of-samuelmorningstar/pytest-258/orb_test_module0/orb_test_module.db",
+    "catalogue_count": 3,
+    "catalogue_sha256": "16c02dddb590d9aaf62dffc75f2c87fb8805640b082ce9f299392822ad36d899",
+    "heparin_units_ids": []
+  },
+  "after": {
+    "db_path": "/private/tmp/orb-prose-catalogue-isolation-20261012-iqyvrnwd/post-state/orb_test_prose_proof.db",
+    "catalogue_count": 15,
+    "catalogue_sha256": "97b02f229eb37276b2f158a7f7c9e5523ccf5045603078f005601df51b0547f5",
+    "heparin_units_ids": [
+      "HXSTKFBE14E0B"
+    ]
+  }
+}

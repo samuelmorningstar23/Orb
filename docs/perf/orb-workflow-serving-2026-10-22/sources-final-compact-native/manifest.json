@@ -1,0 +1,161 @@
+{
+  "source_snapshot": "workflow-serving-final-compact-native",
+  "files": [
+    {
+      "path": "scripts/benchmark_mlx_ollama.py",
+      "sha256": "74cdfd4558a65dfb2b27857b6ef49b91e2f37d29fd61a1b8b3cb7e918b4d5be6"
+    },
+    {
+      "path": "scripts/serve_mlx_benchmark.py",
+      "sha256": "abfdfbcaeaa13ac539abb7fb3195e335a1d69816e823a44fd1ea3139934451ac"
+    },
+    {
+      "path": "scripts/mlx_ollama_benchmark_proxy.py",
+      "sha256": "fe5df10e4bfa2f2f87b38275d8c5673040510c97ffdf61600680b6a3626da1d1"
+    },
+    {
+      "path": "scripts/convert_medgemma_gguf_mlx.py",
+      "sha256": "3655f444fd6b47b54343ecadb6923d7f7b48e94b4b073ce866f2c39fff606da7"
+    },
+    {
+      "path": "scripts/llm_fidelity_cases.py",
+      "sha256": "f78e58370b9c01c3f5b8d2d4a27f8a06a7ff2d1aaa88a070800c2e0349f19d2f"
+    },
+    {
+      "path": "scripts/replay_llm_benchmark.py",
+      "sha256": "013a7c8c0dfe49c3aeb7f71560bc83495e45e334e0a64a8654e1bf87b5b91538"
+    },
+    {
+      "path": "scripts/replay_200_llm_benchmark.py",
+      "sha256": "762809c931bd622fb77dd26c74b123d7ce2ec3f6b98f260c6bfddbd3dd1bded1"
+    },
+    {
+      "path": "scripts/ollama_template_oracle.py",
+      "sha256": "5704360753336bc572a6bfef330fcd61a7150ee297dec5c9551650cd37b273e9"
+    },
+    {
+      "path": "scripts/serve_ollama_candidate.py",
+      "sha256": "2a256355adc41044fac6d03e6b3907969b88893c83d1e8184bcb4ad99d3cbbd1"
+    },
+    {
+      "path": "scripts/serve_mlx_benchmark_staged.py",
+      "sha256": "c9311445d21cbbbeb89aa0cf7a82ab0afb7d7dfb79869e6429de0b142a374ed4"
+    },
+    {
+      "path": "scripts/qualify_ollama_serving.py",
+      "sha256": "bb35ccc4793950a119a20ec678f48c3ca9361fde91a2eefb18f11e2f9398806a"
+    },
+    {
+      "path": "scripts/serve_mlx_benchmark_trace.py",
+      "sha256": "adcb706bba52024b47fce769d96d9f23ec149caad0895a8594effe21f64bb2b9"
+    },
+    {
+      "path": "scripts/mlx_startup_trace.py",
+      "sha256": "567b104b08d7d8ce410a652201c04c3e09ebc62ca0efe3e1a7e8a42385d13faf"
+    },
+    {
+      "path": "scripts/serve_mlx_benchmark_precision.py",
+      "sha256": "3c5bd9e7220fab511383300a5e90985fc613c4bd74ff591e3e3523be542f6392"
+    },
+    {
+      "path": "scripts/mlx_gemma3_precision.py",
+      "sha256": "559eab7cd52e34bf8adab443a63803ffbe143b2b95aa0f0fef93d2b9cbdeea95"
+    },
+    {
+      "path": "scripts/serve_mlx_benchmark_serial.py",
+      "sha256": "2d64b05d9c848cadfc9e5f7d4d998bbbe08e45698670a7fbb404f90f48da3145"
+    },
+    {
+      "path": "scripts/mlx_prompt_token_trace.py",
+      "sha256": "0b2c482794f3fe51298c21afd608eb184a0b32107eee57624dad7f1f4a66318f"
+    },
+    {
+      "path": "scripts/serve_mlx_benchmark_f32.py",
+      "sha256": "a4e2a9570dbf49860e1005bab63e6eafb7821c3426e4d895d69090b1528f2a13"
+    },
+    {
+      "path": "scripts/mlx_gemma3_f32_embedding.py",
+      "sha256": "093ea64960a429d17722bdc8c9d94e9ae8a1f28adad660aba2662fc5b12e3ebf"
+    },
+    {
+      "path": "scripts/serve_mlx_benchmark_mixed.py",
+      "sha256": "8876090a79434eb3cc2fb167759f039c740305c5c1b5247302e1aff6e6f87fb2"
+    },
+    {
+      "path": "scripts/mlx_gemma3_mixed_precision.py",
+      "sha256": "f4cc1cdfbcf7025513d8b4c0b8244181e3cee40b3726e489312b285fae6f7c48"
+    },
+    {
+      "path": "scripts/probe_native_penalties.py",
+      "sha256": "fe0a79289dd0c31159c0f0325a0b167d1b7feca3fa6001e1fc94c29ec14ac09a"
+    },
+    {
+      "path": "scripts/probe_engine_token_distribution.py",
+      "sha256": "95e91d94b8f48cad1f6ec30c9cff76ea4d8797d769b0c739ad291ace7f323959"
+    },
+    {
+      "path": "scripts/benchmark_model_residency_lease.py",
+      "sha256": "63251be7cef540a8a704f9d7aa486a45e08569bb7c2665ab4481afaa7d4601a9"
+    },
+    {
+      "path": "scripts/mlx_http_backlog.py",
+      "sha256": "2096906492eb4f03c81bca1131c7ddbcf24f612fd8cd0acfc895a295b47a297b"
+    },
+    {
+      "path": "scripts/loadtest_capacity.py",
+      "sha256": "b7ac9ad807df112c96e106a0b2a68cd2da0931aa895790dde0b3dddb576e7851"
+    },
+    {
+      "path": "scripts/loadtest_capacity_fixture.py",
+      "sha256": "a12fd2af8f75c5631099a59d061263bfeb6878a0196875bcaf0509fe1e1dbac3"
+    },
+    {
+      "path": "scripts/capacity_retrieval_fixture.py",
+      "sha256": "99f50a6fbdd0061aa16992229ab4780387f4e76fc91af14fdbbde1e9b9fe62ef"
+    },
+    {
+      "path": "scripts/e2e_server.py",
+      "sha256": "90cde4f221b159a951c836e6a60ba46c2ca1eb650c52909cb1ef9178e1e0c755"
+    },
+    {
+      "path": "scripts/mlx_allocator_budget.py",
+      "sha256": "f566780e0b486e2f62c92b444811c0f2c2f7d72e08d025d1718afb648f3ea145"
+    },
+    {
+      "path": "scripts/offline_benchmark.sb",
+      "sha256": "fe2953214dcb524a23e989ca27b96b778927bbdd9a90981d0eb3d8f26546e4c0"
+    },
+    {
+      "path": "scripts/mlx_serving_scheduler.py",
+      "sha256": "e09a0eb8b9a082255645fa3ef819097a9271253fca1ad7e619d44367cd9f48b6"
+    },
+    {
+      "path": "scripts/capacity_answer_quality.py",
+      "sha256": "c99635b670236eb5375ebbbff860e1ea92a2c779e66e6e9f514c712c8e12fdcc"
+    },
+    {
+      "path": "scripts/qualify_embedding_microbatch.py",
+      "sha256": "d4a4ca5da1dc9000a7a4808dcfe8645a0a639a9738ba0dd5471c663dd39e5685"
+    },
+    {
+      "path": "server/services/sage_service.py",
+      "sha256": "0ed34ddfd44adb3dd50917233d035aaa1d7e2aa47a09cddfd34030170a5f66ac"
+    },
+    {
+      "path": "server/routes/sage_routes.py",
+      "sha256": "8d1da28f082bdf52d16cf5693fcec5cab45cc3164f51a2af920e50bf36620fcd"
+    },
+    {
+      "path": "server/services/disconnect_stream.py",
+      "sha256": "7dbf454b36849fdc8c678f8ee6b0f7d54036cc5a38260a87fbc48448aabadba7"
+    },
+    {
+      "path": "server/services/knowledge_worker.py",
+      "sha256": "11c716902d71be25c22dd9b42f92e37db8a39ed91e4512825757d468139f41b4"
+    },
+    {
+      "path": "docs/perf/orb-workflow-serving-2026-10-22/mlx-policy.json",
+      "sha256": "fd1d492ba402c0cc73f0e10f89d8588627f5e39b431175d46aa411ed8e1b10a3"
+    }
+  ]
+}

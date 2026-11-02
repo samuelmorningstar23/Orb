@@ -1,0 +1,14 @@
+{
+  "synthetic_data_only": true,
+  "error": "locator.waitFor: Timeout 15000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByRole('region', { name: 'Patient summary' }).getByText('Synthetic preloaded draft for HTTP/cache qualification only.', { exact: true }) to be visible\u001b[22m\n",
+  "responses": [
+    {
+      "method": "GET",
+      "path": "/api/api/patients/CAP-SYNTH-000/summary",
+      "http_status": 404
+    }
+  ],
+  "browser_errors": [],
+  "external_request_origins": [],
+  "card_text": "PATIENT SUMMARY\nRetry\n\nAI draft · Check against the chart before use. Refreshed in the background every 30 minutes when available.\n\nThe summary could not be checked. Read the chart directly."
+}

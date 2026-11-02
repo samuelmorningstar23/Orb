@@ -1,0 +1,31 @@
+{
+  "source": "https://pypi.org/simple",
+  "one_time_provisioning_authorised": true,
+  "model_weights_downloaded": false,
+  "offline_runtime_cache": [
+    "mlx==0.32.3",
+    "mlx-metal==0.32.3"
+  ],
+  "wheels": [
+    {
+      "name": "gguf-0.19.0-py3-none-any.whl",
+      "bytes": 118475,
+      "sha256": "70bcd10edfe697fb2dad6e40af2234b9d8ece9a41a99761405121ebda1c3c1cd"
+    },
+    {
+      "name": "mlx_lm-0.32.2-py3-none-any.whl",
+      "bytes": 546040,
+      "sha256": "5c0991248cfff5872503d74f466d2532dd8cb7fb3670cb9be7a06d7305dadc04"
+    },
+    {
+      "name": "protobuf-7.36.2-cp310-abi3-macosx_10_9_universal2.whl",
+      "bytes": 456039,
+      "sha256": "cbc70b17ee27e28894c7fee8bb04be1abead49e936bc70eb60052531eee2079e"
+    },
+    {
+      "name": "sentencepiece-0.2.2-cp312-cp312-macosx_11_0_arm64.whl",
+      "bytes": 1347176,
+      "sha256": "38111ed1f79268f399c505028023d5eaaf0ab4e5eafceb709468b0d3323e7838"
+    }
+  ]
+}

@@ -1,0 +1,106 @@
+{
+  "audit_date": "2026-10-11",
+  "scanner": "native npm auditor; report supplied by frontend audit owner",
+  "scope": "Final repository npm lockfile after compatible patches and a coordinated Vitest upgrade.",
+  "auditReportVersion": 2,
+  "metadata": {
+    "vulnerabilities": {
+      "info": 0,
+      "low": 0,
+      "moderate": 0,
+      "high": 0,
+      "critical": 0,
+      "total": 0
+    },
+    "dependencies": {
+      "prod": 170,
+      "dev": 583,
+      "optional": 59,
+      "peer": 8,
+      "peerOptional": 0,
+      "total": 752
+    }
+  },
+  "vulnerabilities": {},
+  "lockfile_sha256_at_scan": "99e2763745d6d410f6b14edbd042d3d340f7e0389ee47ea8c82a6fe1f468f740",
+  "selected_final_locked_versions": {
+    "socket.io-parser": [
+      "4.2.7"
+    ],
+    "react-router": [
+      "7.18.4"
+    ],
+    "react-router-dom": [
+      "7.18.4"
+    ],
+    "dompurify": [
+      "3.4.16"
+    ],
+    "vitest": [
+      "4.1.11"
+    ],
+    "tinypool": [],
+    "brace-expansion": [
+      "1.1.21",
+      "2.1.7",
+      "5.0.12"
+    ],
+    "js-yaml": [
+      "4.3.2"
+    ],
+    "fast-uri": [
+      "3.1.8"
+    ],
+    "nanoid": [
+      "3.3.20"
+    ],
+    "postcss": [
+      "8.5.29"
+    ],
+    "browserslist": [
+      "4.29.3"
+    ],
+    "source-map-js": [
+      "1.2.2"
+    ]
+  },
+  "validation": {
+    "install": "npm ci --ignore-scripts succeeded, 698 packages; frontend audit owner",
+    "targeted_tests": "109 passed; frontend audit owner",
+    "frontend_full_suite": "352 files / 3494 passed, 108.44s; final frontend audit owner result, /private/tmp/orb-complete-frontend-final.log"
+  },
+  "applicability": [
+    "The baseline React Router high advisory describes RSC/server-action behavior; Orb uses BrowserRouter and does not activate that mode. Patched anyway.",
+    "The baseline DOMPurify moderate findings describe modes not enabled by current sanitize(string,{ALLOWED_TAGS,ALLOWED_ATTR}) callsites. Patched anyway.",
+    "The two critical Tinypool records were development-only dependencies of Vitest3. Vitest4 removes that dependency."
+  ],
+  "limitations": [
+    "Zero registry advisories is not proof that the application is secure.",
+    "Install validation disabled lifecycle scripts and is distinct from a full clean production build/E2E run."
+  ],
+  "native_metadata_scope": "Native npm reports 752 dependencies represented in the final lock; npm ci installed 698 packages on this platform. These are different counts.",
+  "independent_lock_audit": {
+    "scanner": "bundled pnpm11.25.0",
+    "method": "Copied final manifests to a fresh temporary directory, imported the npm lock, verified exact equality of all name/version pairs, then audited without installing packages or executing scripts.",
+    "npm_package_entries_including_root": 753,
+    "npm_dependency_locations": 752,
+    "npm_unique_package_version_pairs": 746,
+    "converted_unique_package_version_pairs": 746,
+    "only_in_npm": [],
+    "only_in_converted": [],
+    "metadata": {
+      "vulnerabilities": {
+        "info": 0,
+        "low": 0,
+        "moderate": 0,
+        "high": 0,
+        "critical": 0
+      },
+      "dependencies": 171,
+      "devDependencies": 575,
+      "optionalDependencies": 59,
+      "totalDependencies": 746
+    },
+    "advisories": {}
+  }
+}

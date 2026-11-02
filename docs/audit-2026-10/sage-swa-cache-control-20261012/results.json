@@ -1,0 +1,248 @@
+{
+  "schema": 1,
+  "purpose": "Full-answer prompt cache diagnostic, not browser SLA acceptance",
+  "endpoint": "http://127.0.0.1:11436",
+  "model": "medgemma:27b",
+  "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+  "arms": [
+    {
+      "full_swa": false,
+      "turns": [
+        {
+          "category": "general",
+          "index": 1,
+          "http_status": 200,
+          "first_content_ms": 13411.43983299844,
+          "wall_ms": 18099.911166005768,
+          "load_duration_ms": 8849.155166,
+          "total_duration_ms": 18099.400458,
+          "prompt_eval_duration_ms": 4552.999,
+          "eval_duration_ms": 4688.755,
+          "prompt_eval_count": 697,
+          "prompt_eval_cached_count": 0,
+          "eval_count": 72,
+          "done_reason": "stop",
+          "evaluated_prompt_tokens": 697,
+          "answer": "NOACT| Oxygen saturation measures the percentage of hemoglobin in red blood cells that is saturated with oxygen. It reflects how well oxygen is being transported from the lungs to the body tissues. Low levels can indicate hypoxemia.\n\n<details>\n<cited_sources> [\"DOC-ID\"]</cited_sources>\nNone.\n</details>",
+          "residency": [
+            {
+              "name": "medgemma:27b",
+              "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+              "context_length": 8192,
+              "size": 17511292599,
+              "size_vram": 17511292599
+            }
+          ]
+        },
+        {
+          "category": "patient",
+          "index": 2,
+          "http_status": 200,
+          "first_content_ms": 5928.4077499760315,
+          "wall_ms": 40048.02295798436,
+          "load_duration_ms": 3.194708,
+          "total_duration_ms": 40047.578,
+          "prompt_eval_duration_ms": 5917.197,
+          "eval_duration_ms": 34119.754999,
+          "prompt_eval_count": 1092,
+          "prompt_eval_cached_count": 184,
+          "eval_count": 509,
+          "done_reason": "stop",
+          "evaluated_prompt_tokens": 908,
+          "answer": "NOACT| Ananya Kapoor is a 34y/F admitted for Diabetic Ketoacidosis (DKA). She is currently receiving an insulin infusion at 0.1 U/kg/hr and IV fluids (Normal Saline 1 L/hr). Her latest vitals are HR 118, BP 100/65, SpO2 97%, Temp 37.2\u00b0C, RR 28. Recent labs show improved glucose levels (currently 251), but creatinine has increased to 2.1 mg/dL from 0.7 mg/dL, and sodium is slightly low at 137 mEq/L. Potassium is within normal limits at 3.6 mEq/L. The patient's trajectory is noted as stable, although risk is unknown. There are no scribe notes or recent imaging available.\n\n<details>\n<display_mode>concise</display_mode>\n<patient_facts_summary>Ananya Kapoor, 34y/F, GM-101, Ward GM-1, diagnosed with DKA. Vitals: HR 118, BP 100/65, SpO2 97%, T 37.2\u00b0C, RR 28. Meds: Insulin infusion 0.1U/kg/hr, NS 1L/hr + KCl 20mEq/L. Labs: Glucose 251, Na 137, K 3.6, Cr 2.1 (\u2191 from 0.7). Trajectory: Stable.</patient_facts_summary>\n<local_policy_guidance>None.</local_policy_guidance>\n<external_guidance>None.</external_guidance>\n<clinical_assessment>Patient has improved glucose levels but shows signs of acute kidney injury (AKI) based on the rise in creatinine from 0.7 to 2.1 mg/dL. Fluid management and insulin therapy should be reviewed considering this change. Electrolytes are currently stable.</clinical_assessment>\n<caveats>No recent scribe notes or imaging available for a complete assessment. Risk level is unknown.</caveats>\n<escalation>Consider nephrology consult if AKI worsens or doesn't resolve.</escalation>\n<cited_sources>None.</cited_sources>\n</details>",
+          "residency": [
+            {
+              "name": "medgemma:27b",
+              "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+              "context_length": 8192,
+              "size": 17511292599,
+              "size_vram": 17511292599
+            }
+          ]
+        },
+        {
+          "category": "general",
+          "index": 3,
+          "http_status": 200,
+          "first_content_ms": 3798.4660000074655,
+          "wall_ms": 8591.615749988705,
+          "load_duration_ms": 3.48025,
+          "total_duration_ms": 8591.192,
+          "prompt_eval_duration_ms": 3379.526,
+          "eval_duration_ms": 4793.076,
+          "prompt_eval_count": 697,
+          "prompt_eval_cached_count": 184,
+          "eval_count": 73,
+          "done_reason": "stop",
+          "evaluated_prompt_tokens": 513,
+          "answer": "NOACT| Oxygen saturation measures the percentage of hemoglobin in red blood cells that is saturated with oxygen. It reflects how well oxygen is being transported from the lungs to the body tissues. Low levels can indicate respiratory or circulatory problems.\n\n<details>\n<cited_sources> [\"DOC-ID\"]</cited_sources>\nNone.\n</details>",
+          "residency": [
+            {
+              "name": "medgemma:27b",
+              "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+              "context_length": 8192,
+              "size": 17511292599,
+              "size_vram": 17511292599
+            }
+          ]
+        },
+        {
+          "category": "patient",
+          "index": 4,
+          "http_status": 200,
+          "first_content_ms": 5930.393040995114,
+          "wall_ms": 63400.76633298304,
+          "load_duration_ms": 2.838541,
+          "total_duration_ms": 63400.294458,
+          "prompt_eval_duration_ms": 5921.259,
+          "eval_duration_ms": 57470.488,
+          "prompt_eval_count": 1092,
+          "prompt_eval_cached_count": 184,
+          "eval_count": 853,
+          "done_reason": "stop",
+          "evaluated_prompt_tokens": 908,
+          "answer": "NOACT| Ananya Kapoor is a 34y/Female patient in GM-101 with Diabetic Ketoacidosis. Her vitals are HR 118, BP 100/65, SpO2 97%, Temp 37.2\u00b0C, RR 28. She's currently receiving Insulin infusion at 0.1U/kg/hr IV Continuous and Normal Saline 1L/hr IV Continuous, plus KCl 20mEq/L in fluids. Recent labs show Sodium 137 mEq/L, Potassium 3.6 mEq/L, Creatinine 2.1 mg/dL, Glucose 251 mg/dL. The creatinine is elevated compared to the earlier BMP result provided which showed 0.7mg/dL.\n\n<details>\n<display_mode>concise</display_mode>\n<patient_facts_summary>Ananya Kapoor, 34F, admitted for DKA (GM-101). Current status: Vitals stable but tachycardic (HR 118), tachypneic (RR 28), borderline low BP (100/65). Receiving insulin drip and NS. Labs: Na 137, K 3.6, Cr 2.1 (elevated from previous 0.7), Gluc 251.</patient_facts_summary>\n<local_policy_guidance>None.</local_policy_guidance>\n<external_guidance>DKA management typically involves fluid resuscitation (often starting with isotonic saline), insulin therapy (continuous infusion aiming for glucose normalization and anion gap resolution), electrolyte monitoring and replacement (especially potassium), and close monitoring of blood glucose, electrolytes, acid-base balance, and volume status. Target glucose levels are generally 180-250 mg/dL. Insulin dose adjustments depend on glucose trends. Potassium needs careful attention as insulin drives it into cells; supplementation is often required even if initial levels are normal or high. Renal function should be monitored, especially given the creatinine elevation to 2.1 mg/dL, which might influence fluid choices and overall management strategy. The patient's current creatinine level warrants further investigation and potential adjustment in care plan.</external_guidance>\n<clinical_assessment>The patient presents with DKA and is receiving appropriate treatment (insulin drip, fluids). Vitals suggest ongoing stress response (tachycardia, tachypnea) despite some improvement (glucose down from likely much higher admission value, though still elevated at 251). Key concerns include: 1) **Elevated Creatinine:** Increased from 0.7 to 2.1 mg/dL. This could indicate acute kidney injury (AKI) related to dehydration, contrast exposure (if any imaging done - none recorded but missing data noted), or underlying renal disease exacerbated by DKA. Requires evaluation for cause and impact on therapy (e.g., fluid overload risk). 2) **Potassium:** Currently within normal limits (3.6 mEq/L), but requires vigilant monitoring due to insulin therapy causing intracellular shift. 3) **Glucose Control:** Still significantly elevated (251 mg/dL) despite insulin infusion; may need dose titration based on trends. 4) **Fluid Status:** BP is borderline low (100/65), suggesting potential volume depletion despite the 1L/hr NS infusion. Careful assessment of hydration status is crucial. The recent labs show a significant rise in creatinine which needs attention.</clinical_assessment>\n<caveats>Missing information includes signed scribe notes and recent imaging. Trends are only provided for HR and SpO2, not glucose or electrolytes. No formal severity score (like NEWS2) is available.</caveats>\n<escalation>Given the rising creatinine, consider consulting nephrology if AKI persists or worsens. Monitor closely for signs of fluid overload or worsening renal function.</escalation>\n<cited_sources>[\"DKA guidelines\", \"AKI management\"]</cited_sources>\n</details>",
+          "residency": [
+            {
+              "name": "medgemma:27b",
+              "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+              "context_length": 8192,
+              "size": 17511292599,
+              "size_vram": 17511292599
+            }
+          ]
+        }
+      ],
+      "log": "ollama-default.log",
+      "owned_pid": 26360,
+      "model_info": {
+        "gemma3.attention.sliding_window": 1024,
+        "gemma3.block_count": 62,
+        "gemma3.vision.block_count": 27,
+        "general.architecture": "gemma3"
+      },
+      "owned_process_exit_code": 0
+    },
+    {
+      "full_swa": true,
+      "turns": [
+        {
+          "category": "general",
+          "index": 1,
+          "http_status": 200,
+          "first_content_ms": 7379.793958971277,
+          "wall_ms": 11909.75991700543,
+          "load_duration_ms": 3075.796334,
+          "total_duration_ms": 11909.256292,
+          "prompt_eval_duration_ms": 4294.808,
+          "eval_duration_ms": 4529.43,
+          "prompt_eval_count": 697,
+          "prompt_eval_cached_count": 0,
+          "eval_count": 70,
+          "done_reason": "stop",
+          "evaluated_prompt_tokens": 697,
+          "answer": "NOACT| Oxygen saturation measures the percentage of hemoglobin in red blood cells that is saturated with oxygen. It reflects how well oxygen is being transported from the lungs to the body tissues. Low levels can indicate respiratory or circulatory problems.\n\n<details>\n<cited_sources> [\"DOC-ID\"]</cited_sources>\n</details>",
+          "residency": [
+            {
+              "name": "medgemma:27b",
+              "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+              "context_length": 8192,
+              "size": 20524396707,
+              "size_vram": 20524396707
+            }
+          ]
+        },
+        {
+          "category": "patient",
+          "index": 2,
+          "http_status": 200,
+          "first_content_ms": 3395.3649580362253,
+          "wall_ms": 49797.553250042256,
+          "load_duration_ms": 2.104625,
+          "total_duration_ms": 49797.139917,
+          "prompt_eval_duration_ms": 3385.483,
+          "eval_duration_ms": 46402.082,
+          "prompt_eval_count": 1092,
+          "prompt_eval_cached_count": 573,
+          "eval_count": 683,
+          "done_reason": "stop",
+          "evaluated_prompt_tokens": 519,
+          "answer": "NOACT| Ananya Kapoor, a 34y/Female in GM-101 with Diabetic Ketoacidosis, has vitals of HR 118, BP 100/65, SpO2 97%, Temp 37.2\u00b0C, RR 28. She is currently receiving an insulin infusion at 0.1U/kg/hr IV and Normal Saline 1L/hr IV, with added KCl 20mEq/L to fluids. Recent labs show Sodium 137 mEq/L, Potassium 3.6 mEq/L, Creatinine 2.1 mg/dL (high), and Glucose 251 mg/dL. Her trajectory is noted as stable but risk is unknown. There are no scribe notes or recent imaging available.\n\n<details>\n<display_mode>concise</display_mode>\n<patient_facts_summary>Ananya Kapoor, 34F, admitted for DKA. Current status: Vitals mostly normal except tachycardia (HR 118) and tachypnea (RR 28). Receiving IV fluids (NS 1L/hr + KCl 20mEq/L) and insulin infusion (0.1 U/kg/hr). Labs: Na 137, K 3.6, Cr 2.1 (elevated from previous 0.7), Glu 251. Trajectory stable, risk unknown.</patient_facts_summary>\n<local_policy_guidance>None.</local_policy_guidance>\n<external_guidance>Management of DKA typically involves fluid resuscitation, insulin therapy, electrolyte monitoring and replacement (especially potassium), and glucose monitoring. Insulin dose adjustments may be needed based on glucose response. Potassium levels need close attention, especially with insulin administration which drives potassium intracellularly. Creatinine elevation warrants monitoring for acute kidney injury in the context of dehydration/DKA treatment.</external_guidance>\n<clinical_assessment>The patient is receiving standard initial management for DKA. The elevated creatinine (2.1 mg/dL) compared to a prior value (0.7 mg/dL) needs evaluation; this could represent pre-renal azotemia due to dehydration or underlying renal dysfunction exacerbated by volume shifts during DKA treatment. While current potassium is within normal limits (3.6 mEq/L), it's crucial to monitor closely as insulin can cause hypokalemia. Glucose level has decreased significantly from likely much higher admission values but remains above target range. Tachycardia and tachypnea persist. Overall status appears relatively stable metabolically but requires ongoing careful monitoring of fluids, electrolytes, glucose, and renal function.</clinical_assessment>\n<caveats>This assessment is based solely on the provided data snapshot. A complete clinical picture would require review of recent trends, physical examination findings, and potentially other investigations not listed (e.g., anion gap, bicarbonate, urine output).</caveats>\n<escalation>Consider consulting nephrology if creatinine continues to rise or fails to improve despite adequate hydration. Monitor for signs of fluid overload given aggressive IV fluid administration.</escalation>\n<cited_sources>[\"DOC-ID\"]</cited_sources>\n</details>",
+          "residency": [
+            {
+              "name": "medgemma:27b",
+              "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+              "context_length": 8192,
+              "size": 20524396707,
+              "size_vram": 20524396707
+            }
+          ]
+        },
+        {
+          "category": "general",
+          "index": 3,
+          "http_status": 200,
+          "first_content_ms": 944.2176660522819,
+          "wall_ms": 5567.942291032523,
+          "load_duration_ms": 2.974875,
+          "total_duration_ms": 5567.42575,
+          "prompt_eval_duration_ms": 868.718,
+          "eval_duration_ms": 4623.616,
+          "prompt_eval_count": 697,
+          "prompt_eval_cached_count": 573,
+          "eval_count": 70,
+          "done_reason": "stop",
+          "evaluated_prompt_tokens": 124,
+          "answer": "NOACT| Oxygen saturation measures the percentage of hemoglobin in red blood cells that is saturated with oxygen. It reflects how well oxygen is being transported from the lungs to the body tissues. Low levels can indicate respiratory or circulatory problems.\n\n<details>\n<cited_sources> [\"N/A\"]</cited_sources>\n</details>",
+          "residency": [
+            {
+              "name": "medgemma:27b",
+              "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+              "context_length": 8192,
+              "size": 20524396707,
+              "size_vram": 20524396707
+            }
+          ]
+        },
+        {
+          "category": "patient",
+          "index": 4,
+          "http_status": 200,
+          "first_content_ms": 3461.647791962605,
+          "wall_ms": 37079.9748749705,
+          "load_duration_ms": 1.670583,
+          "total_duration_ms": 37079.454958,
+          "prompt_eval_duration_ms": 3452.969,
+          "eval_duration_ms": 33618.278,
+          "prompt_eval_count": 1092,
+          "prompt_eval_cached_count": 573,
+          "eval_count": 498,
+          "done_reason": "stop",
+          "evaluated_prompt_tokens": 519,
+          "answer": "NOACT| Ananya Kapoor is a 34y/Female with Diabetic Ketoacidosis in GM-101. Her latest vitals are HR 118, BP 100/65, SpO2 97%, Temp 37.2\u00b0C, RR 28. She is currently receiving Insulin infusion 0.1U/kg/hr IV Continuous and Normal Saline 1L/hr IV Continuous, plus KCl 20mEq/L in fluids. Recent labs show Sodium 137 mEq/L, Potassium 3.6 mEq/L, Creatinine 2.1 mg/dL, Glucose 251 mg/dL. The patient trajectory is marked as stable but risk is unknown. There are no signed scribe notes or recent imaging available.\n\n<details>\n<display_mode>concise</display_mode>\n<patient_facts_summary>Ananya Kapoor, 34F, admitted for DKA (GM-101). Vitals: Tachycardic (HR 118), Hypotensive (BP 100/65), Tachypneic (RR 28). Current treatment includes insulin infusion and normal saline. Labs show hyponatremia (Na 137), borderline low potassium (K 3.6), elevated creatinine (2.1), and hyperglycemia (Glucose 251). Trajectory is stable, risk unknown.</patient_facts_summary>\n<local_policy_guidance>None.</local_policy_guidance>\n<external_guidance>None.</external_guidance>\n<clinical_assessment>The patient presents with signs of ongoing DKA management including tachycardia, tachypnea, hypotension, and persistent hyperglycemia despite treatment. Renal function appears impaired based on the elevated creatinine. Electrolytes need close monitoring, especially potassium, given the insulin therapy.</clinical_assessment>\n<caveats>No Scribe notes or imaging data are present in the record. The 'stable' trajectory designation needs clarification regarding specific criteria used and potential risks identified.</caveats>\n<escalation>Consider escalation if vital signs worsen, mental status changes, or laboratory values deviate significantly from target ranges for DKA management.</escalation>\n<cited_sources>[\"DOC-ID\"]</cited_sources>\n</details>",
+          "residency": [
+            {
+              "name": "medgemma:27b",
+              "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+              "context_length": 8192,
+              "size": 20524396707,
+              "size_vram": 20524396707
+            }
+          ]
+        }
+      ],
+      "log": "ollama-full.log",
+      "owned_pid": 26515,
+      "model_info": {
+        "gemma3.attention.sliding_window": 1024,
+        "gemma3.block_count": 62,
+        "gemma3.vision.block_count": 27,
+        "general.architecture": "gemma3"
+      },
+      "owned_process_exit_code": 0
+    }
+  ],
+  "prompts_sha256": "f7b7b30a7f7e640f3f8b1887e2b9de167a417e49b2f14868edfe1f4b81d0d1e8",
+  "model_files_unchanged": true,
+  "model_files_count": 33
+}

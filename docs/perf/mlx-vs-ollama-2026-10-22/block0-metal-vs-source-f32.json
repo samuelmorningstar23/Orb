@@ -1,0 +1,405 @@
+{
+  "status": "single_block_diagnostic_complete",
+  "clinical_quality_qualified": false,
+  "generation_performed": false,
+  "full_model_loaded": false,
+  "source_sha256": "4b97da6b21a8fb1405a0d1efee462bfd6c4d3c46307bac8b34373835f07ca758",
+  "source_hash_verified_in_this_probe": false,
+  "caller_must_verify_source_hash": true,
+  "candidate_label": "medgemma-27b-text-mlx-q4-integer-repack-q6-fp16-candidate",
+  "device": "gpu",
+  "token_ids": [
+    2,
+    105,
+    2430,
+    82138,
+    31037,
+    10797,
+    699,
+    11716
+  ],
+  "source_dequant_chunk_bytes": 33554432,
+  "records": [
+    {
+      "stage": "embedding_selected_rows_storage",
+      "shape": [
+        8,
+        5376
+      ],
+      "reference_nonfinite": 0,
+      "actual_nonfinite": 0,
+      "actual_max_abs": 0.11968994140625,
+      "max_abs_error": 3.0517578125e-05,
+      "relative_l2": 0.00019991595029436926,
+      "cosine_similarity": 0.999999980018764
+    },
+    {
+      "stage": "embedding_gain",
+      "shape": [
+        8,
+        5376
+      ],
+      "reference_nonfinite": 0,
+      "actual_nonfinite": 0,
+      "actual_max_abs": 8.796875,
+      "max_abs_error": 0.024489402770996094,
+      "relative_l2": 0.0024507012935303853,
+      "cosine_similarity": 0.9999999580831489
+    },
+    {
+      "stage": "blk.0.attn_norm",
+      "shape": [
+        8,
+        5376
+      ],
+      "reference_nonfinite": 0,
+      "actual_nonfinite": 0,
+      "actual_max_abs": 400.75,
+      "max_abs_error": 0.12835693359375,
+      "relative_l2": 0.0003396896715725451,
+      "cosine_similarity": 0.9999999425815878
+    },
+    {
+      "stage": "blk.0.attn_q",
+      "shape": [
+        8,
+        4096
+      ],
+      "reference_nonfinite": 0,
+      "actual_nonfinite": 0,
+      "actual_max_abs": 292.5,
+      "max_abs_error": 0.1612396240234375,
+      "relative_l2": 0.0003719224822073292,
+      "cosine_similarity": 0.9999999311445095,
+      "same_input": {
+        "shape": [
+          8,
+          4096
+        ],
+        "reference_nonfinite": 0,
+        "actual_nonfinite": 0,
+        "actual_max_abs": 292.5,
+        "max_abs_error": 0.1558074951171875,
+        "relative_l2": 0.0003623883960559878,
+        "cosine_similarity": 0.9999999343423511
+      },
+      "input_dtype": "mlx.core.float16",
+      "output_dtype": "mlx.core.float16"
+    },
+    {
+      "stage": "blk.0.attn_k",
+      "shape": [
+        8,
+        2048
+      ],
+      "reference_nonfinite": 0,
+      "actual_nonfinite": 0,
+      "actual_max_abs": 337.5,
+      "max_abs_error": 0.270294189453125,
+      "relative_l2": 0.0004529167504755446,
+      "cosine_similarity": 0.9999998976031466,
+      "same_input": {
+        "shape": [
+          8,
+          2048
+        ],
+        "reference_nonfinite": 0,
+        "actual_nonfinite": 0,
+        "actual_max_abs": 337.5,
+        "max_abs_error": 0.2589111328125,
+        "relative_l2": 0.00044130695111637336,
+        "cosine_similarity": 0.9999999026356177
+      },
+      "input_dtype": "mlx.core.float16",
+      "output_dtype": "mlx.core.float16"
+    },
+    {
+      "stage": "blk.0.attn_v",
+      "shape": [
+        8,
+        2048
+      ],
+      "reference_nonfinite": 0,
+      "actual_nonfinite": 0,
+      "actual_max_abs": 617.5,
+      "max_abs_error": 0.18280029296875,
+      "relative_l2": 0.00023645941114984456,
+      "cosine_similarity": 0.9999999720582383,
+      "same_input": {
+        "shape": [
+          8,
+          2048
+        ],
+        "reference_nonfinite": 0,
+        "actual_nonfinite": 0,
+        "actual_max_abs": 617.5,
+        "max_abs_error": 0.17315673828125,
+        "relative_l2": 0.00021322303002161946,
+        "cosine_similarity": 0.9999999772727569
+      },
+      "input_dtype": "mlx.core.float16",
+      "output_dtype": "mlx.core.float16"
+    },
+    {
+      "stage": "blk.0.attn_q_norm",
+      "shape": [
+        8,
+        32,
+        128
+      ],
+      "reference_nonfinite": 0,
+      "actual_nonfinite": 0,
+      "actual_max_abs": 9.6875,
+      "max_abs_error": 0.0070552825927734375,
+      "relative_l2": 0.0004815157535405027,
+      "cosine_similarity": 0.9999998841483313
+    },
+    {
+      "stage": "blk.0.attn_k_norm",
+      "shape": [
+        8,
+        16,
+        128
+      ],
+      "reference_nonfinite": 0,
+      "actual_nonfinite": 0,
+      "actual_max_abs": 14.0625,
+      "max_abs_error": 0.007647514343261719,
+      "relative_l2": 0.0005173747262509363,
+      "cosine_similarity": 0.9999998661662548
+    },
+    {
+      "stage": "q_rope",
+      "shape": [
+        8,
+        32,
+        128
+      ],
+      "reference_nonfinite": 0,
+      "actual_nonfinite": 0,
+      "actual_max_abs": 9.5859375,
+      "max_abs_error": 0.006622314453125,
+      "relative_l2": 0.0005164986227022474,
+      "cosine_similarity": 0.9999998666676745
+    },
+    {
+      "stage": "k_rope",
+      "shape": [
+        8,
+        16,
+        128
+      ],
+      "reference_nonfinite": 0,
+      "actual_nonfinite": 0,
+      "actual_max_abs": 12.7890625,
+      "max_abs_error": 0.010187149047851562,
+      "relative_l2": 0.0005540938627676299,
+      "cosine_similarity": 0.9999998464939163
+    },
+    {
+      "stage": "attention",
+      "shape": [
+        8,
+        4096
+      ],
+      "reference_nonfinite": 0,
+      "actual_nonfinite": 0,
+      "actual_max_abs": 617.5,
+      "max_abs_error": 0.28704833984375,
+      "relative_l2": 0.0003423750593524231,
+      "cosine_similarity": 0.9999999414502705
+    },
+    {
+      "stage": "blk.0.attn_output",
+      "shape": [
+        8,
+        5376
+      ],
+      "reference_nonfinite": 0,
+      "actual_nonfinite": 0,
+      "actual_max_abs": 3804.0,
+      "max_abs_error": 2.337890625,
+      "relative_l2": 0.00031247071293101855,
+      "cosine_similarity": 0.9999999513689345,
+      "same_input": {
+        "shape": [
+          8,
+          5376
+        ],
+        "reference_nonfinite": 0,
+        "actual_nonfinite": 0,
+        "actual_max_abs": 3804.0,
+        "max_abs_error": 2.040283203125,
+        "relative_l2": 0.00030340687129547516,
+        "cosine_similarity": 0.9999999543149829
+      },
+      "input_dtype": "mlx.core.float16",
+      "output_dtype": "mlx.core.float16"
+    },
+    {
+      "stage": "blk.0.post_attention_norm",
+      "shape": [
+        8,
+        5376
+      ],
+      "reference_nonfinite": 0,
+      "actual_nonfinite": 0,
+      "actual_max_abs": 554.0,
+      "max_abs_error": 0.15301513671875,
+      "relative_l2": 0.00025484781815607934,
+      "cosine_similarity": 0.9999999802500822
+    },
+    {
+      "stage": "attention_residual",
+      "shape": [
+        8,
+        5376
+      ],
+      "reference_nonfinite": 0,
+      "actual_nonfinite": 0,
+      "actual_max_abs": 554.0,
+      "max_abs_error": 0.22198486328125,
+      "relative_l2": 0.0004848573570267791,
+      "cosine_similarity": 0.9999998886158458
+    },
+    {
+      "stage": "blk.0.ffn_norm",
+      "shape": [
+        8,
+        5376
+      ],
+      "reference_nonfinite": 0,
+      "actual_nonfinite": 0,
+      "actual_max_abs": 40.15625,
+      "max_abs_error": 0.08703804016113281,
+      "relative_l2": 0.0021301395717987816,
+      "cosine_similarity": 0.9999989110514684
+    },
+    {
+      "stage": "blk.0.ffn_gate",
+      "shape": [
+        8,
+        21504
+      ],
+      "reference_nonfinite": 0,
+      "actual_nonfinite": 0,
+      "actual_max_abs": 65.875,
+      "max_abs_error": 0.223358154296875,
+      "relative_l2": 0.0011710278389669008,
+      "cosine_similarity": 0.9999994912833854,
+      "same_input": {
+        "shape": [
+          8,
+          21504
+        ],
+        "reference_nonfinite": 0,
+        "actual_nonfinite": 0,
+        "actual_max_abs": 65.875,
+        "max_abs_error": 0.01015472412109375,
+        "relative_l2": 0.0002873704705765192,
+        "cosine_similarity": 0.9999999587130943
+      },
+      "input_dtype": "mlx.core.float16",
+      "output_dtype": "mlx.core.float16"
+    },
+    {
+      "stage": "blk.0.ffn_up",
+      "shape": [
+        8,
+        21504
+      ],
+      "reference_nonfinite": 0,
+      "actual_nonfinite": 0,
+      "actual_max_abs": 153.25,
+      "max_abs_error": 0.4517822265625,
+      "relative_l2": 0.0020659610327546053,
+      "cosine_similarity": 0.9999987343152803,
+      "same_input": {
+        "shape": [
+          8,
+          21504
+        ],
+        "reference_nonfinite": 0,
+        "actual_nonfinite": 0,
+        "actual_max_abs": 153.25,
+        "max_abs_error": 0.01888275146484375,
+        "relative_l2": 0.0003697539073093229,
+        "cosine_similarity": 0.9999999316419217
+      },
+      "input_dtype": "mlx.core.float16",
+      "output_dtype": "mlx.core.float16"
+    },
+    {
+      "stage": "gelu_product",
+      "shape": [
+        8,
+        21504
+      ],
+      "reference_nonfinite": 0,
+      "actual_nonfinite": 0,
+      "actual_max_abs": 10096.0,
+      "max_abs_error": 64.5458984375,
+      "relative_l2": 0.006354886262420213,
+      "cosine_similarity": 0.9999998555650919
+    },
+    {
+      "stage": "blk.0.ffn_down",
+      "shape": [
+        8,
+        5376
+      ],
+      "reference_nonfinite": 0,
+      "actual_nonfinite": 0,
+      "actual_max_abs": 430.5,
+      "max_abs_error": 2.743804931640625,
+      "relative_l2": 0.004601479363960387,
+      "cosine_similarity": 0.9999996722901027,
+      "same_input": {
+        "shape": [
+          8,
+          5376
+        ],
+        "reference_nonfinite": 0,
+        "actual_nonfinite": 0,
+        "actual_max_abs": 430.5,
+        "max_abs_error": 0.03394317626953125,
+        "relative_l2": 0.0002080838703265383,
+        "cosine_similarity": 0.9999999783505532
+      },
+      "input_dtype": "mlx.core.float16",
+      "output_dtype": "mlx.core.float16"
+    },
+    {
+      "stage": "blk.0.post_ffw_norm",
+      "shape": [
+        8,
+        5376
+      ],
+      "reference_nonfinite": 0,
+      "actual_nonfinite": 0,
+      "actual_max_abs": 22224.0,
+      "max_abs_error": 1.974609375,
+      "relative_l2": 9.97578575808033e-05,
+      "cosine_similarity": 0.9999999990521573
+    },
+    {
+      "stage": "block_output",
+      "shape": [
+        8,
+        5376
+      ],
+      "reference_nonfinite": 0,
+      "actual_nonfinite": 0,
+      "actual_max_abs": 22288.0,
+      "max_abs_error": 4.453125,
+      "relative_l2": 0.00020568865668882537,
+      "cosine_similarity": 0.9999999986144773
+    }
+  ],
+  "limitations": [
+    "NumPy float32 is an independent reference, not native Ollama intermediate capture.",
+    "Only block zero and selected embedding rows are evaluated.",
+    "No timing, medical quality or full model parity is established."
+  ],
+  "elapsed_seconds": 20.56553579098545
+}

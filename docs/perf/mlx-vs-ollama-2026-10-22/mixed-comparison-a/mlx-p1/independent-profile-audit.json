@@ -1,0 +1,710 @@
+{
+  "status": "accepted_mlx_profile_independent_evidence_audit_complete",
+  "new_inference_performed": false,
+  "model_payloads_read_or_rehashed": false,
+  "clinical_noninferiority_demonstrated": false,
+  "clinical_equivalence_qualified": false,
+  "production_purchase_gate_passed": false,
+  "source_artifacts": {
+    "mlx_report": {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/docs/perf/mlx-vs-ollama-2026-10-22/mixed-comparison-a/mlx-p1/report.json",
+      "sha256": "e0433e4441206e63074a836eea021f044c010701bca8f95b60d3f1edc133cdf6",
+      "bytes": 248767
+    },
+    "mlx_engine_log": {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/docs/perf/mlx-vs-ollama-2026-10-22/mixed-comparison-a/mlx-p1/engine.log",
+      "sha256": "0fddfa9b7dda86cba4db86257a5dc2e60387a18ae08dba85dffec24744a36549",
+      "bytes": 158540
+    },
+    "mlx_capture": {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/docs/perf/mlx-vs-ollama-2026-10-22/mixed-comparison-a/mlx-p1/capture/requests.jsonl",
+      "sha256": "e42663723240a149d82d3d618993d302c80eef0925ac3b83dc9af65c1a81f17c",
+      "bytes": 44827
+    },
+    "mlx_proxy_metadata": {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/docs/perf/mlx-vs-ollama-2026-10-22/mixed-comparison-a/mlx-p1/capture/proxy-metadata.json",
+      "sha256": "dc541fc6fcff9a2b5ab4af3c079bccf21081cee16a6b925136ad3e4d663bc8ff",
+      "bytes": 2148
+    },
+    "original_native_oracle": {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/docs/perf/mlx-vs-ollama-2026-10-22/native-baseline-diagnostics-a/ollama-p1/template-oracle.json",
+      "sha256": "730f227b2a2838687858328edc5a9caf5b418724e05bf8032e62b4b856388177",
+      "bytes": 154913
+    },
+    "earlier_native_report": {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/docs/perf/mlx-vs-ollama-2026-10-22/native-baseline-diagnostics-a/ollama-p1/report.json",
+      "sha256": "449001a8ca4a788d2be9b0faeb29bae21ff967f48b8a6525dcdf28571dda8b9f",
+      "bytes": 244412
+    },
+    "fresh_native_report": {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/docs/perf/mlx-vs-ollama-2026-10-22/mixed-comparison-a/ollama-p1/report.json",
+      "sha256": "0a82b461da21f38abb81936fc3b91b48d6ec8ab46a9c4ebb18d52d6d463a38e7",
+      "bytes": 242840
+    },
+    "conversion_manifest": {
+      "path": "/private/tmp/orb-mlx-benchmark-20261021/model-source-repack4-affine8-a/conversion-manifest.json",
+      "sha256": "2a6d9e1cd41375e54c614c0de05b2bd1715a2395ee0482b5ec979b22d7ae0206",
+      "bytes": 714319
+    },
+    "candidate_config": {
+      "path": "/private/tmp/orb-mlx-benchmark-20261021/model-source-repack4-affine8-a/config.json",
+      "sha256": "ebe3056ec760581e8b7bbe99326f92ef8fc4a160f60488208c11f03451cde5e9",
+      "bytes": 49422
+    }
+  },
+  "source_code_checks": [
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/scripts/mlx_prompt_token_trace.py",
+      "current_sha256": "0b2c482794f3fe51298c21afd608eb184a0b32107eee57624dad7f1f4a66318f",
+      "recorded_runtime_sha256": "0b2c482794f3fe51298c21afd608eb184a0b32107eee57624dad7f1f4a66318f",
+      "current_matches_recorded": true
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/scripts/serve_mlx_benchmark.py",
+      "current_sha256": "abfdfbcaeaa13ac539abb7fb3195e335a1d69816e823a44fd1ea3139934451ac",
+      "recorded_runtime_sha256": "abfdfbcaeaa13ac539abb7fb3195e335a1d69816e823a44fd1ea3139934451ac",
+      "current_matches_recorded": true
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/scripts/serve_mlx_benchmark_mixed.py",
+      "current_sha256": "75ac7004550c5d4155bf16d5caeb445ca63122c46c7a3d9de6693f6692817c07",
+      "recorded_runtime_sha256": "75ac7004550c5d4155bf16d5caeb445ca63122c46c7a3d9de6693f6692817c07",
+      "current_matches_recorded": true
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/scripts/mlx_gemma3_mixed_precision.py",
+      "current_sha256": "f4cc1cdfbcf7025513d8b4c0b8244181e3cee40b3726e489312b285fae6f7c48",
+      "recorded_runtime_sha256": "f4cc1cdfbcf7025513d8b4c0b8244181e3cee40b3726e489312b285fae6f7c48",
+      "current_matches_recorded": true
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/scripts/mlx_gemma3_f32_embedding.py",
+      "current_sha256": "093ea64960a429d17722bdc8c9d94e9ae8a1f28adad660aba2662fc5b12e3ebf",
+      "recorded_runtime_sha256": "093ea64960a429d17722bdc8c9d94e9ae8a1f28adad660aba2662fc5b12e3ebf",
+      "current_matches_recorded": true
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/scripts/mlx_ollama_benchmark_proxy.py",
+      "current_sha256": "fe5df10e4bfa2f2f87b38275d8c5673040510c97ffdf61600680b6a3626da1d1",
+      "recorded_runtime_sha256": "fe5df10e4bfa2f2f87b38275d8c5673040510c97ffdf61600680b6a3626da1d1",
+      "current_matches_recorded": true
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/scripts/llm_fidelity_cases.py",
+      "current_sha256": "f78e58370b9c01c3f5b8d2d4a27f8a06a7ff2d1aaa88a070800c2e0349f19d2f",
+      "recorded_runtime_sha256": "f78e58370b9c01c3f5b8d2d4a27f8a06a7ff2d1aaa88a070800c2e0349f19d2f",
+      "current_matches_recorded": true
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/routes/sage_routes.py",
+      "current_sha256": "31762dd09d13c676bc4f385d9cce3e825019efbac09028093680e0c733ca9353",
+      "recorded_runtime_sha256": "31762dd09d13c676bc4f385d9cce3e825019efbac09028093680e0c733ca9353",
+      "current_matches_recorded": true
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/services/sage_service.py",
+      "current_sha256": "15bd1f77632b53676a3705354fc506d1652d1632a099644b20457d85102786d3",
+      "recorded_runtime_sha256": "15bd1f77632b53676a3705354fc506d1652d1632a099644b20457d85102786d3",
+      "current_matches_recorded": true
+    }
+  ],
+  "observed_prompt_parity": {
+    "matched_chat_requests": 11,
+    "observed_chat_requests": 11,
+    "scope": "Eight fixed synthetic extraction cases and three exact captured Sage requests; actual server tokenization trace, proxy IDs and original native oracle agree. No claim for future prompts.",
+    "cases": [
+      {
+        "case": "numbers_and_units",
+        "request_id": "c7a874cbc8cc4f1396ac9b078d3bb5b8",
+        "source_body_sha256": "56d083f976cf5528706d4751fa53ebc80587ceadeaf5d1cc594b17a7e0916cbf",
+        "source_body_matches_original_native_oracle": true,
+        "native_ids_recomputed_sha256": "6909e4c0158015d6c75b641b1dd61ae2d09d9c12ab65d269e8c625c70b314c50",
+        "actual_engine_token_trace_sha256": "6909e4c0158015d6c75b641b1dd61ae2d09d9c12ab65d269e8c625c70b314c50",
+        "proxy_request_ids_recomputed_sha256": "6909e4c0158015d6c75b641b1dd61ae2d09d9c12ab65d269e8c625c70b314c50",
+        "token_hashes_all_match": true,
+        "token_count": 280,
+        "actual_trace_count_matches": true,
+        "segment_concat_matches_prompt": true,
+        "segments_concat_hash_matches": true,
+        "answer_text_sha256": "43a0f9bfc4746254a87eb73a4684064e908264de04e47d993143e7c0566c7e00",
+        "answer_hash_matches_proxy_result": true,
+        "proxy_result_outcome": "stop",
+        "proxy_result_backend": "mlx",
+        "request_artifact_sha256": "79d7fdbba0f1cb7d28d37b8efa3cf1e286689e585536ca22497ff1a201a496db",
+        "result_artifact_sha256": "4cc739562971c61aef1b4937d3393bb7b3e6894c1bea926ae30cdda75d632585"
+      },
+      {
+        "case": "missing_data_is_null",
+        "request_id": "09769a088ae141ce8252ac396c1a1c99",
+        "source_body_sha256": "d746824b0b606b485c92c97ae42d53fc58e69efe7ee36bde3ac2ea202b11886f",
+        "source_body_matches_original_native_oracle": true,
+        "native_ids_recomputed_sha256": "f24589974a5560476e55999745b8a88be40e0b90ac3252e7118566009d5e5f9b",
+        "actual_engine_token_trace_sha256": "f24589974a5560476e55999745b8a88be40e0b90ac3252e7118566009d5e5f9b",
+        "proxy_request_ids_recomputed_sha256": "f24589974a5560476e55999745b8a88be40e0b90ac3252e7118566009d5e5f9b",
+        "token_hashes_all_match": true,
+        "token_count": 221,
+        "actual_trace_count_matches": true,
+        "segment_concat_matches_prompt": true,
+        "segments_concat_hash_matches": true,
+        "answer_text_sha256": "faa1c34095fc46ff8998e1ca991388bfef7e7c4a87dec5958938b02c43547096",
+        "answer_hash_matches_proxy_result": true,
+        "proxy_result_outcome": "stop",
+        "proxy_result_backend": "mlx",
+        "request_artifact_sha256": "eeeaab971b673deeec3b5e4e3681389f8508043f5a631d395b170e3060aed485",
+        "result_artifact_sha256": "072caba81a6f87fd338a37049cadef24ca0ec6975295383c60e46e9b1f188a04"
+      },
+      {
+        "case": "active_and_stopped_medication",
+        "request_id": "5568b4a8368b4601afbf9ccb8503af51",
+        "source_body_sha256": "517c93658b6fe5ce43cb63164b07833dd41c5e50df7d175824012ee77404d7d8",
+        "source_body_matches_original_native_oracle": true,
+        "native_ids_recomputed_sha256": "6b6089df413552c39bcd8f52b910c9b9d4f0683e32a87df18d830f9c870a56b6",
+        "actual_engine_token_trace_sha256": "6b6089df413552c39bcd8f52b910c9b9d4f0683e32a87df18d830f9c870a56b6",
+        "proxy_request_ids_recomputed_sha256": "6b6089df413552c39bcd8f52b910c9b9d4f0683e32a87df18d830f9c870a56b6",
+        "token_hashes_all_match": true,
+        "token_count": 216,
+        "actual_trace_count_matches": true,
+        "segment_concat_matches_prompt": true,
+        "segments_concat_hash_matches": true,
+        "answer_text_sha256": "495dc2d13fb14c19aa96cde08f96ac5f7205be3839d56553ee0b68ef4027b6ff",
+        "answer_hash_matches_proxy_result": true,
+        "proxy_result_outcome": "stop",
+        "proxy_result_backend": "mlx",
+        "request_artifact_sha256": "9e3a0544a366239e7b477b36e23f50b85c47f00c9e86969942bcc0580dd7539d",
+        "result_artifact_sha256": "9f3a7e2b5eb69278277b7a4bdc28b7eb43ec06e11f8203142cb6724eeb53ba87"
+      },
+      {
+        "case": "allergy_and_recorded_reaction",
+        "request_id": "ff2a646479da4577b99655789f25bf3d",
+        "source_body_sha256": "5dd4532b23c8f84e9b783ecfec3f652082efd30c069e9d0215d7c5e717603995",
+        "source_body_matches_original_native_oracle": true,
+        "native_ids_recomputed_sha256": "7ba9f32c7435d443c394b7fda04ed51fa78b4498dbaaa113677feada8349bcc7",
+        "actual_engine_token_trace_sha256": "7ba9f32c7435d443c394b7fda04ed51fa78b4498dbaaa113677feada8349bcc7",
+        "proxy_request_ids_recomputed_sha256": "7ba9f32c7435d443c394b7fda04ed51fa78b4498dbaaa113677feada8349bcc7",
+        "token_hashes_all_match": true,
+        "token_count": 192,
+        "actual_trace_count_matches": true,
+        "segment_concat_matches_prompt": true,
+        "segments_concat_hash_matches": true,
+        "answer_text_sha256": "b37b55e505b316b2b7716125d94fa99ffdd913c7af43bfccad4915ec63dce120",
+        "answer_hash_matches_proxy_result": true,
+        "proxy_result_outcome": "stop",
+        "proxy_result_backend": "mlx",
+        "request_artifact_sha256": "2e329b6e7b1894056bbdeb7c3b145abe873a0aab44920c34c3a73e6d469a75a3",
+        "result_artifact_sha256": "da0f99be15636dda1ecd47c60d32446b9f3663304ce16fbb009766db6cf7a244"
+      },
+      {
+        "case": "cross_patient_identity",
+        "request_id": "353c58cf102b4e4ea4cb42b194217673",
+        "source_body_sha256": "9b14643c58517a850342db7d0821cd17cb231f3fa70d2d82500592c86e5aabbf",
+        "source_body_matches_original_native_oracle": true,
+        "native_ids_recomputed_sha256": "0d087d7a883ac09d2da2aceb15a8c0ed35b488c8b35df744d6ee814e0a7d01bd",
+        "actual_engine_token_trace_sha256": "0d087d7a883ac09d2da2aceb15a8c0ed35b488c8b35df744d6ee814e0a7d01bd",
+        "proxy_request_ids_recomputed_sha256": "0d087d7a883ac09d2da2aceb15a8c0ed35b488c8b35df744d6ee814e0a7d01bd",
+        "token_hashes_all_match": true,
+        "token_count": 227,
+        "actual_trace_count_matches": true,
+        "segment_concat_matches_prompt": true,
+        "segments_concat_hash_matches": true,
+        "answer_text_sha256": "318b2d3b84e0413d5abde45b425759fdc9135d5040bea957570c0ab418cd03f0",
+        "answer_hash_matches_proxy_result": true,
+        "proxy_result_outcome": "stop",
+        "proxy_result_backend": "mlx",
+        "request_artifact_sha256": "92b30cb844026e6ad54243b28993721aea57c7930298cdcd2c687013c13060fe",
+        "result_artifact_sha256": "e5c1946ee47155a89cec239d6d1c20d85e729355399405930f888c4a4a9eb908"
+      },
+      {
+        "case": "negation_preserved",
+        "request_id": "d1bd2e19878846da85acfd01f0895d4e",
+        "source_body_sha256": "e6bf8e4d1e4c497472ac98f15b6996da9d4b24e5b3e956cc18be3862f23afb8b",
+        "source_body_matches_original_native_oracle": true,
+        "native_ids_recomputed_sha256": "68fd753b11d97f2e4cb4cc08778958dad36b0d5baa394e753657167193b93572",
+        "actual_engine_token_trace_sha256": "68fd753b11d97f2e4cb4cc08778958dad36b0d5baa394e753657167193b93572",
+        "proxy_request_ids_recomputed_sha256": "68fd753b11d97f2e4cb4cc08778958dad36b0d5baa394e753657167193b93572",
+        "token_hashes_all_match": true,
+        "token_count": 202,
+        "actual_trace_count_matches": true,
+        "segment_concat_matches_prompt": true,
+        "segments_concat_hash_matches": true,
+        "answer_text_sha256": "fd964bb047abf0f67f22e3902955a2f55ee00a999c37ca6288535ca61dcfae10",
+        "answer_hash_matches_proxy_result": true,
+        "proxy_result_outcome": "stop",
+        "proxy_result_backend": "mlx",
+        "request_artifact_sha256": "12093e38468b8c622eafcc90f3f4b2b04b16e0a3cd4885f40fb3522ba18ed4ba",
+        "result_artifact_sha256": "82e948760969b1ad0be8156330930b696dc5a9e21d6cc75dde2e7898fd5baa3a"
+      },
+      {
+        "case": "long_context_allergy_and_corrected_chronology",
+        "request_id": "421fc11e4e284aa69edfa2cf3b57171e",
+        "source_body_sha256": "524ce2f76490336224d6d75dac16605c42973f404a3222f209a035bae15509cf",
+        "source_body_matches_original_native_oracle": true,
+        "native_ids_recomputed_sha256": "e1421e5012b1182ee4a0115545ecddad3c5d5386cce9f5ff86642702b8acff27",
+        "actual_engine_token_trace_sha256": "e1421e5012b1182ee4a0115545ecddad3c5d5386cce9f5ff86642702b8acff27",
+        "proxy_request_ids_recomputed_sha256": "e1421e5012b1182ee4a0115545ecddad3c5d5386cce9f5ff86642702b8acff27",
+        "token_hashes_all_match": true,
+        "token_count": 3392,
+        "actual_trace_count_matches": true,
+        "segment_concat_matches_prompt": true,
+        "segments_concat_hash_matches": true,
+        "answer_text_sha256": "c6c60cadd2aebe7ebbce3fb472b42803ce3a33b299bf81b1948e925276ca5378",
+        "answer_hash_matches_proxy_result": true,
+        "proxy_result_outcome": "stop",
+        "proxy_result_backend": "mlx",
+        "request_artifact_sha256": "255bd6d29f31e6ae9e93c18004538ac327c052fdc0bb0a1c655acc8813692ad8",
+        "result_artifact_sha256": "c71c6c78a694a81ee8f591beb4143fdabd703a7011bf5b42f3fb1cdaff8249d6"
+      },
+      {
+        "case": "quoted_prompt_injection",
+        "request_id": "bb362ca508504bb7b14ff7a93ccf0adb",
+        "source_body_sha256": "4a8292f5f60f2dd595d0ca6ea2e9d0cb1a157ae181e27e924a72668eee236540",
+        "source_body_matches_original_native_oracle": true,
+        "native_ids_recomputed_sha256": "082eac43cbb6efbbf32fde674848f885770913f5879023188546c503f91e7613",
+        "actual_engine_token_trace_sha256": "082eac43cbb6efbbf32fde674848f885770913f5879023188546c503f91e7613",
+        "proxy_request_ids_recomputed_sha256": "082eac43cbb6efbbf32fde674848f885770913f5879023188546c503f91e7613",
+        "token_hashes_all_match": true,
+        "token_count": 247,
+        "actual_trace_count_matches": true,
+        "segment_concat_matches_prompt": true,
+        "segments_concat_hash_matches": true,
+        "answer_text_sha256": "c261823ca733b8b96cfa30db2c4a2c3f3a79182343d7862bacbd1eb518474189",
+        "answer_hash_matches_proxy_result": true,
+        "proxy_result_outcome": "stop",
+        "proxy_result_backend": "mlx",
+        "request_artifact_sha256": "ff8dc0e1150ec43475ea7a4b19b97073b65c68eec2a48a58e879c3cb6f763393",
+        "result_artifact_sha256": "47388573c5ee634b1e59af1fcbfd63cfce87cacff006369db93b8bdc1a332f63"
+      },
+      {
+        "case": "general",
+        "request_id": "0aefb3ee12024600959ece1e509e2e33",
+        "source_body_sha256": "a79ff599fb06716dc10b8aadbeff634ffaf33e48f5ff023dc9dce947e54253cb",
+        "source_body_matches_original_native_oracle": true,
+        "native_ids_recomputed_sha256": "e522d94fab73f9fe4365b54193033540409f7a5a398b95b60d38f748475434e9",
+        "actual_engine_token_trace_sha256": "e522d94fab73f9fe4365b54193033540409f7a5a398b95b60d38f748475434e9",
+        "proxy_request_ids_recomputed_sha256": "e522d94fab73f9fe4365b54193033540409f7a5a398b95b60d38f748475434e9",
+        "token_hashes_all_match": true,
+        "token_count": 704,
+        "actual_trace_count_matches": true,
+        "segment_concat_matches_prompt": true,
+        "segments_concat_hash_matches": true,
+        "answer_text_sha256": "c7127d19524acc9f599869719258aaf51da672b7f8d4dbaf367b4b0c876598be",
+        "answer_hash_matches_proxy_result": true,
+        "proxy_result_outcome": "stop",
+        "proxy_result_backend": "mlx",
+        "request_artifact_sha256": "eda1e682f60388e8245ba3cc2c72cfb603a7dbe255bfc776c9798f86f7d47b16",
+        "result_artifact_sha256": "7142a198bffb970829520bf42481087ffd39b2529e494ab742c1a6b784392a86"
+      },
+      {
+        "case": "patient",
+        "request_id": "70b726d0cc5e4a2f8e7a943d3748d19f",
+        "source_body_sha256": "4342b0651dc2c39847382b1eabdda341b904160a7051625219146838a967a92e",
+        "source_body_matches_original_native_oracle": true,
+        "native_ids_recomputed_sha256": "a74fb88102cd8b6ac93192aa1cd32a7274cf899b787f39bc4a093186e9d3aa30",
+        "actual_engine_token_trace_sha256": "a74fb88102cd8b6ac93192aa1cd32a7274cf899b787f39bc4a093186e9d3aa30",
+        "proxy_request_ids_recomputed_sha256": "a74fb88102cd8b6ac93192aa1cd32a7274cf899b787f39bc4a093186e9d3aa30",
+        "token_hashes_all_match": true,
+        "token_count": 809,
+        "actual_trace_count_matches": true,
+        "segment_concat_matches_prompt": true,
+        "segments_concat_hash_matches": true,
+        "answer_text_sha256": "79373c2dc3d2cad95ab08fd3b9b421aa962b9e1383bd532055af5bec84c31a5a",
+        "answer_hash_matches_proxy_result": true,
+        "proxy_result_outcome": "stop",
+        "proxy_result_backend": "mlx",
+        "request_artifact_sha256": "bc11d89ef7c895aff1abe27d3c19556a451cf72478470bbd19d2351a8e577ddb",
+        "result_artifact_sha256": "ddd96676f016cbd77d33830416a4e0e28c527f78ac2acf16d91ef801754f5e17"
+      },
+      {
+        "case": "department",
+        "request_id": "30bf1d6b720645169a839bcd009a4a56",
+        "source_body_sha256": "86d0d6a261388e2891b7192ae42d284f9d3cc31f1e9effb4648b025e1cf96057",
+        "source_body_matches_original_native_oracle": true,
+        "native_ids_recomputed_sha256": "92ce3c22365a5e018abddcaa24ce60102b21fc54451be87e05c2494fefdb5460",
+        "actual_engine_token_trace_sha256": "92ce3c22365a5e018abddcaa24ce60102b21fc54451be87e05c2494fefdb5460",
+        "proxy_request_ids_recomputed_sha256": "92ce3c22365a5e018abddcaa24ce60102b21fc54451be87e05c2494fefdb5460",
+        "token_hashes_all_match": true,
+        "token_count": 2742,
+        "actual_trace_count_matches": true,
+        "segment_concat_matches_prompt": true,
+        "segments_concat_hash_matches": true,
+        "answer_text_sha256": "03f6b4e5e08def8f9d2df3970c040cf6a64b6d2914359a4458532b90d5d13e99",
+        "answer_hash_matches_proxy_result": true,
+        "proxy_result_outcome": "incomplete",
+        "proxy_result_backend": "mlx",
+        "request_artifact_sha256": "0ae694200504e6c7895e415e27d8f306efc85845b2a5a12ffdcb3a46e2788338",
+        "result_artifact_sha256": "2e3172d16103411e92ea1135206606ac574ca4ae71797c12f01669582f040ad7"
+      }
+    ]
+  },
+  "decoded_quality_cases": [
+    {
+      "case": "numbers_and_units",
+      "completed": true,
+      "terminal_stop_seen": true,
+      "reported_pass": true,
+      "request_body_identical_to_captured": true,
+      "decoded_object_matches_report": true,
+      "decoded_object_exactly_equals_expected_fixture": true,
+      "recomputed_checks_match_report": true,
+      "recomputed_checks_all_pass": true,
+      "markdown_fenced": true,
+      "strict_raw_json_object": false
+    },
+    {
+      "case": "missing_data_is_null",
+      "completed": true,
+      "terminal_stop_seen": true,
+      "reported_pass": true,
+      "request_body_identical_to_captured": true,
+      "decoded_object_matches_report": true,
+      "decoded_object_exactly_equals_expected_fixture": true,
+      "recomputed_checks_match_report": true,
+      "recomputed_checks_all_pass": true,
+      "markdown_fenced": true,
+      "strict_raw_json_object": false
+    },
+    {
+      "case": "active_and_stopped_medication",
+      "completed": true,
+      "terminal_stop_seen": true,
+      "reported_pass": true,
+      "request_body_identical_to_captured": true,
+      "decoded_object_matches_report": true,
+      "decoded_object_exactly_equals_expected_fixture": true,
+      "recomputed_checks_match_report": true,
+      "recomputed_checks_all_pass": true,
+      "markdown_fenced": true,
+      "strict_raw_json_object": false
+    },
+    {
+      "case": "allergy_and_recorded_reaction",
+      "completed": true,
+      "terminal_stop_seen": true,
+      "reported_pass": true,
+      "request_body_identical_to_captured": true,
+      "decoded_object_matches_report": true,
+      "decoded_object_exactly_equals_expected_fixture": true,
+      "recomputed_checks_match_report": true,
+      "recomputed_checks_all_pass": true,
+      "markdown_fenced": true,
+      "strict_raw_json_object": false
+    },
+    {
+      "case": "cross_patient_identity",
+      "completed": true,
+      "terminal_stop_seen": true,
+      "reported_pass": true,
+      "request_body_identical_to_captured": true,
+      "decoded_object_matches_report": true,
+      "decoded_object_exactly_equals_expected_fixture": true,
+      "recomputed_checks_match_report": true,
+      "recomputed_checks_all_pass": true,
+      "markdown_fenced": true,
+      "strict_raw_json_object": false
+    },
+    {
+      "case": "negation_preserved",
+      "completed": true,
+      "terminal_stop_seen": true,
+      "reported_pass": true,
+      "request_body_identical_to_captured": true,
+      "decoded_object_matches_report": true,
+      "decoded_object_exactly_equals_expected_fixture": true,
+      "recomputed_checks_match_report": true,
+      "recomputed_checks_all_pass": true,
+      "markdown_fenced": true,
+      "strict_raw_json_object": false
+    },
+    {
+      "case": "long_context_allergy_and_corrected_chronology",
+      "completed": true,
+      "terminal_stop_seen": true,
+      "reported_pass": true,
+      "request_body_identical_to_captured": true,
+      "decoded_object_matches_report": true,
+      "decoded_object_exactly_equals_expected_fixture": true,
+      "recomputed_checks_match_report": true,
+      "recomputed_checks_all_pass": true,
+      "markdown_fenced": true,
+      "strict_raw_json_object": false
+    },
+    {
+      "case": "quoted_prompt_injection",
+      "completed": true,
+      "terminal_stop_seen": true,
+      "reported_pass": true,
+      "request_body_identical_to_captured": true,
+      "decoded_object_matches_report": true,
+      "decoded_object_exactly_equals_expected_fixture": true,
+      "recomputed_checks_match_report": true,
+      "recomputed_checks_all_pass": true,
+      "markdown_fenced": true,
+      "strict_raw_json_object": false
+    }
+  ],
+  "quality_scope": {
+    "reported_passes": 8,
+    "reported_total": 8,
+    "independently_recomputed_passes": 8,
+    "all_extracted_objects_exactly_expected": true,
+    "raw_answers_with_markdown_fences": 8,
+    "strict_raw_json_response_format_demonstrated": false,
+    "clinical_accuracy_qualified": false,
+    "same_clinical_quality_demonstrated": false,
+    "qualification": "The unchanged gate extracts the first syntactically valid object and checks expected facts. Passing it does not establish response-format compliance, prescribing safety or equivalent clinical quality."
+  },
+  "model_provenance": {
+    "runtime_preflight_model": {
+      "model": "medgemma:27b",
+      "kind": "same_source_separately_requantised_mlx_candidate",
+      "weights_bytes": 19478730384,
+      "kv_budget_bytes": 1107296256,
+      "kv_element_bytes": 2,
+      "activation_policy": "mixed_f32_residual_f16_projection",
+      "quantised_kv": false,
+      "clinical_equivalence": "not_qualified",
+      "loading_mode": "mixed-staged",
+      "checksum_io": {
+        "large_safetensors_uncached_fd_count": 435
+      },
+      "batching_enabled": true,
+      "prefix_cache_entry_limit": 10,
+      "prefix_cache_byte_limit": 8589934592,
+      "source_gguf_sha256": "4b97da6b21a8fb1405a0d1efee462bfd6c4d3c46307bac8b34373835f07ca758",
+      "conversion_manifest_sha256": "2a6d9e1cd41375e54c614c0de05b2bd1715a2395ee0482b5ec979b22d7ae0206"
+    },
+    "runtime_residency": {
+      "models": [
+        {
+          "name": "medgemma:27b",
+          "model": "medgemma:27b",
+          "digest": "mlx-candidate:4cd4eaba2ee63daabda9d8e4a46b85bc41a48668ce51e2637be2938b02b88425",
+          "source_ollama_weight_digest": "sha256:4b97da6b21a8fb1405a0d1efee462bfd6c4d3c46307bac8b34373835f07ca758",
+          "backend": "mlx",
+          "conversion_label": "medgemma-27b-text-mlx-source-q4-integer-repack-q6-affine8-candidate"
+        }
+      ]
+    },
+    "manifest_sha_matches_preflight": true,
+    "source_sha256": "4b97da6b21a8fb1405a0d1efee462bfd6c4d3c46307bac8b34373835f07ca758",
+    "source_text_parameters": 27009346304,
+    "source_text_tensors": 808,
+    "candidate_label": "medgemma-27b-text-mlx-source-q4-integer-repack-q6-affine8-candidate",
+    "quantisation_profile": "source-repack4-affine8",
+    "matrix_bit_counts": {
+      "8": 59,
+      "4": 376
+    },
+    "lossless_conversion": false,
+    "clinical_quality_qualified_in_manifest": false,
+    "config_architecture": {
+      "model_type": "gemma3_text",
+      "hidden_size": 5376,
+      "num_hidden_layers": 62,
+      "intermediate_size": 21504,
+      "num_attention_heads": 32,
+      "num_key_value_heads": 16,
+      "head_dim": 128,
+      "vocab_size": 262208
+    },
+    "observed_repair_events": [
+      {
+        "orb_mlx_startup_trace": true,
+        "event": "gemma3_experimental_mixed_projection_first_call",
+        "experimental": true,
+        "residual_input_dtype": "mlx.core.float32",
+        "residual_output_dtype": "mlx.core.float32",
+        "projection_input_dtype": "float16",
+        "qk_norm_output_policy": "cast to values dtype before RoPE/cache",
+        "norm_method_changed": false,
+        "stored_weights_cast": false,
+        "context_or_cache_policy_changed": false,
+        "token_or_tensor_values_emitted": false,
+        "clinical_quality_qualified": false,
+        "original_method_sha256": {
+          "TransformerBlock": "2647bb63d52239895927ae6ca90f5f31c7a2f7222eeb41a948a8d1060c3293f2",
+          "Attention": "a293df9f54178d8a3a9b5962953f0d4d0cddfb6b711db03893fda75c4309b5b8",
+          "RMSNorm": "a459ce2c95139b119c727b1a8438b55b7726f817a7d9324f907ec8e38ebdca00"
+        }
+      },
+      {
+        "orb_mlx_startup_trace": true,
+        "event": "gemma3_experimental_f32_embedding_first_call",
+        "experimental": true,
+        "original_method_sha256": "e65de4285bbd483539024393fa63f30974a7a05b1f551a53ff5b4196c9889653",
+        "embedding_source_dtype": "mlx.core.float16",
+        "model_output_dtype": "mlx.core.float32",
+        "gain_policy": "sqrt(hidden_size) directly inF32, without BF16 rounding",
+        "stored_weights_cast": false,
+        "context_or_cache_changed": false,
+        "token_or_tensor_values_emitted": false,
+        "clinical_quality_qualified": false
+      }
+    ],
+    "no_alternate_model_or_quality_fallback_observed": true,
+    "fallback_review_scope": "All result artifacts declare backend mlx; warmup residency names this candidate; the pinned proxy uses one localhost upstream and no alternate-model fallback. Payload files were not independently rehashed in this audit."
+  },
+  "native_comparisons": [
+    {
+      "report": "earlier_native_report",
+      "quality_case_passes": 8,
+      "quality_case_count": 8,
+      "replay": [
+        {
+          "scope": "general",
+          "same_source_body_sha256": true,
+          "sampling_options_equal": true,
+          "mlx_complete": true,
+          "native_complete": true,
+          "mlx_full_s": 31.647215500008315,
+          "native_full_s": 25.877422249992378,
+          "mlx_first_raw_content_s": 6.643916665983852,
+          "native_first_raw_content_s": 7.311344292014837,
+          "mlx_generated_tokens_if_completed": 206,
+          "native_generated_tokens_if_completed": 139,
+          "mlx_output_sha256": "c7127d19524acc9f599869719258aaf51da672b7f8d4dbaf367b4b0c876598be",
+          "native_output_sha256": "4c9eedd9267532b789b95a66bc2d23492f427d9a4f87f771a0b4e35d0e301112"
+        },
+        {
+          "scope": "patient",
+          "same_source_body_sha256": true,
+          "sampling_options_equal": true,
+          "mlx_complete": true,
+          "native_complete": true,
+          "mlx_full_s": 47.22993450000649,
+          "native_full_s": 33.952440207998734,
+          "mlx_first_raw_content_s": 2.6020750000025146,
+          "native_first_raw_content_s": 2.5565757919684984,
+          "mlx_generated_tokens_if_completed": 360,
+          "native_generated_tokens_if_completed": 244,
+          "mlx_output_sha256": "79373c2dc3d2cad95ab08fd3b9b421aa962b9e1383bd532055af5bec84c31a5a",
+          "native_output_sha256": "1002f1aaa45383f73b18878c811ac744912658f60e6c841101331cd43fc6c13e"
+        },
+        {
+          "scope": "department",
+          "same_source_body_sha256": true,
+          "sampling_options_equal": true,
+          "mlx_complete": false,
+          "native_complete": false,
+          "mlx_full_s": 60.00191258301493,
+          "native_full_s": 60.001770584029146,
+          "mlx_first_raw_content_s": 24.265270749980118,
+          "native_first_raw_content_s": 27.790539125038777,
+          "mlx_generated_tokens_if_completed": null,
+          "native_generated_tokens_if_completed": null,
+          "mlx_output_sha256": "03f6b4e5e08def8f9d2df3970c040cf6a64b6d2914359a4458532b90d5d13e99",
+          "native_output_sha256": "f36847620e2e1405f9d9d4e4dc76300704b6e521959d7d47a4f32d302ba86206"
+        }
+      ]
+    },
+    {
+      "report": "fresh_native_report",
+      "quality_case_passes": 8,
+      "quality_case_count": 8,
+      "replay": [
+        {
+          "scope": "general",
+          "same_source_body_sha256": true,
+          "sampling_options_equal": true,
+          "mlx_complete": true,
+          "native_complete": true,
+          "mlx_full_s": 31.647215500008315,
+          "native_full_s": 32.95351912494516,
+          "mlx_first_raw_content_s": 6.643916665983852,
+          "native_first_raw_content_s": 8.257483582943678,
+          "mlx_generated_tokens_if_completed": 206,
+          "native_generated_tokens_if_completed": 174,
+          "mlx_output_sha256": "c7127d19524acc9f599869719258aaf51da672b7f8d4dbaf367b4b0c876598be",
+          "native_output_sha256": "f99f16056cfa548359ddf74a86b79f98c9f23f773ad1c498bb3950952ace00c4"
+        },
+        {
+          "scope": "patient",
+          "same_source_body_sha256": true,
+          "sampling_options_equal": true,
+          "mlx_complete": true,
+          "native_complete": true,
+          "mlx_full_s": 47.22993450000649,
+          "native_full_s": 43.644637375022285,
+          "mlx_first_raw_content_s": 2.6020750000025146,
+          "native_first_raw_content_s": 2.889593292027712,
+          "mlx_generated_tokens_if_completed": 360,
+          "native_generated_tokens_if_completed": 295,
+          "mlx_output_sha256": "79373c2dc3d2cad95ab08fd3b9b421aa962b9e1383bd532055af5bec84c31a5a",
+          "native_output_sha256": "bd713faf4e51c310a1af20bab3828731f5f62bb1348bb3aee12930b60a4e091f"
+        },
+        {
+          "scope": "department",
+          "same_source_body_sha256": true,
+          "sampling_options_equal": true,
+          "mlx_complete": false,
+          "native_complete": true,
+          "mlx_full_s": 60.00191258301493,
+          "native_full_s": 40.44789800001308,
+          "mlx_first_raw_content_s": 24.265270749980118,
+          "native_first_raw_content_s": 30.781684916000813,
+          "mlx_generated_tokens_if_completed": null,
+          "native_generated_tokens_if_completed": 73,
+          "mlx_output_sha256": "03f6b4e5e08def8f9d2df3970c040cf6a64b6d2914359a4458532b90d5d13e99",
+          "native_output_sha256": "ef4e2893805881927f18d696b9665a43a274e15dab7acb938b10279d19a77853"
+        }
+      ]
+    }
+  ],
+  "source_bound_free_form_spot_checks": [
+    {
+      "scope": "general",
+      "mlx_raw_observation": "The generated cited_sources names Drug BNF and UpToDate although the captured context supplies no retrieved guideline documents. It emits loose detail tags rather than the requested general-scope contract.",
+      "earlier_native_raw_observation": "No named source is invented; the response ends with a details block containing None.",
+      "fresh_native_raw_observation": "No named source is invented; closing detail tags are malformed.",
+      "application_boundary": "Static route review shows MarkerAnswerStreamer and parse_fast_response stop visible prose at a details/bare section tag; cited_sources is restricted to retrieved_ids and overwritten with the validated list. With no retrieved sources, these raw invented names are not valid structured citations. This audit did not execute a browser or full Sage request, so it does not establish a user-visible citation leak.",
+      "medical_claims_assessed": false
+    },
+    {
+      "scope": "patient",
+      "mlx_raw_observation": "Name XqzAA VyxA, age 30, male, bed 1, General Medicine, synthetic diagnosis, stable trajectory/risk unknown, and missing recent vitals/active medications/labs/signed notes/imaging are supplied in the captured context. No new numerical patient observation or completed chart-action claim was found.",
+      "earlier_native_raw_observation": "The same demographics and stable trajectory are reflected; risk-unknown is omitted in the short summary. No completed chart action is claimed.",
+      "fresh_native_raw_observation": "The same demographics, stable trajectory and unknown risk are reflected. No completed chart action is claimed.",
+      "scope_limit": "This is a source-bound spot check of one synthetic sparse chart; it is not medical correctness or clinical noninferiority validation."
+    },
+    {
+      "scope": "department",
+      "mlx_raw_observation": "The incomplete reply places census entries under Stable Patients although the supplied census contains no risk band, vital observations or individual trajectory. The opening acknowledges insufficient data, but the stability heading is unsupported. Printed complete names/bed numbers match the initial supplied rows; the final name is truncated. No claimed chart action was found.",
+      "earlier_native_raw_observation": "The earlier native incomplete reply also uses Stable Patients without supplied risk data.",
+      "fresh_native_raw_observation": "The fresh native completed reply states insufficient clinical information and does not assign a stability category.",
+      "application_boundary": "The census assembler includes risk bands only when an actual risk row is present, and none is present in this captured prompt. The system prompt nevertheless asks for a stable-patient grouping. No deterministic stability-label correction was identified in the reviewed route; actual browser rendering and end-to-end cancellation behavior were not exercised.",
+      "interpretation": "This is a shared prompt/output-grounding weakness observed on both engines, with different behavior on the fresh native run. MLX timed out at 60 seconds; its partial output is not a successful answer."
+    }
+  ],
+  "application_guardrail_source_references": [
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/routes/sage_routes.py",
+      "lines": [
+        1459,
+        1543,
+        1614,
+        1667,
+        3080,
+        3259,
+        3334
+      ],
+      "purpose": "Answer/detail separation and cited-source subset enforcement"
+    },
+    {
+      "path": "/Users/samuelmorningstar/Documents/Projects/Orb/server/services/sage_service.py",
+      "lines": [
+        7948,
+        8006,
+        8041
+      ],
+      "purpose": "Census carries charted facts and only available risk bands"
+    }
+  ],
+  "comparison_limitations": [
+    "The free-form replays use temperature 0.4 or 0.2 without a fixed seed. Different outputs and output lengths prevent a controlled clinical-equivalence or per-answer throughput conclusion.",
+    "Fresh native department completed in 40.45 seconds while MLX timed out at 60 seconds; this difference must remain in the evidence. The earlier native department also timed out.",
+    "Engine-only first content and full answers are different metrics; none of these single-user replays establishes the 3/5/15 second full Orb SLA or 200-request capacity.",
+    "Source-bound semantic spot checks do not evaluate medical correctness of general advice.",
+    "Production Sage parser/citation behavior was inspected statically, not verified with end-to-end rendering.",
+    "The model uses the same source checkpoint with explicitly changed quantized representation and activation arithmetic; identical quantized weights are not claimed."
+  ],
+  "gpu_used_by_audit": false
+}

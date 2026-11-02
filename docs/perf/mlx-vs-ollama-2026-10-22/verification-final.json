@@ -1,0 +1,157 @@
+{
+  "created_at": "2026-10-22T10:59:08.536404+00:00",
+  "focused_cpu_tests": {
+    "passed": 501,
+    "failed": 0,
+    "skipped": 0,
+    "seconds": 4.14,
+    "scope": "Benchmark,conversion,numerical wrappers,guards,restoration and capacity-fixture regression tests; not501clinicalcases"
+  },
+  "ruff": {
+    "rules": [
+      "F",
+      "I"
+    ],
+    "status": "passed",
+    "scope": "Targeted modified runtime and tests"
+  },
+  "mypy": {
+    "status": "passed",
+    "runtime_sources_checked": 11,
+    "scope": "Selected typed runtime sources"
+  },
+  "additional_existing_mypy_findings": {
+    "file": "scripts/qualify_ollama_serving.py",
+    "count": 3,
+    "reproduced_in_original_frozen_snapshot": true,
+    "note": "Dynamic subclass typing and cleanupTaskannotation findings predate these changes; not part of the11-source passing subset."
+  },
+  "final_runtime_snapshot_checks": [
+    {
+      "name": "benchmark_mlx_ollama.py",
+      "current_matches_frozen": true
+    },
+    {
+      "name": "serve_mlx_benchmark.py",
+      "current_matches_frozen": true
+    },
+    {
+      "name": "mlx_ollama_benchmark_proxy.py",
+      "current_matches_frozen": true
+    },
+    {
+      "name": "convert_medgemma_gguf_mlx.py",
+      "current_matches_frozen": true
+    },
+    {
+      "name": "llm_fidelity_cases.py",
+      "current_matches_frozen": true
+    },
+    {
+      "name": "replay_llm_benchmark.py",
+      "current_matches_frozen": true
+    },
+    {
+      "name": "replay_200_llm_benchmark.py",
+      "current_matches_frozen": true
+    },
+    {
+      "name": "ollama_template_oracle.py",
+      "current_matches_frozen": true
+    },
+    {
+      "name": "serve_ollama_candidate.py",
+      "current_matches_frozen": true
+    },
+    {
+      "name": "serve_mlx_benchmark_staged.py",
+      "current_matches_frozen": true
+    },
+    {
+      "name": "qualify_ollama_serving.py",
+      "current_matches_frozen": true
+    },
+    {
+      "name": "serve_mlx_benchmark_trace.py",
+      "current_matches_frozen": true
+    },
+    {
+      "name": "mlx_startup_trace.py",
+      "current_matches_frozen": true
+    },
+    {
+      "name": "serve_mlx_benchmark_precision.py",
+      "current_matches_frozen": true
+    },
+    {
+      "name": "mlx_gemma3_precision.py",
+      "current_matches_frozen": true
+    },
+    {
+      "name": "serve_mlx_benchmark_serial.py",
+      "current_matches_frozen": true
+    },
+    {
+      "name": "mlx_prompt_token_trace.py",
+      "current_matches_frozen": true
+    },
+    {
+      "name": "serve_mlx_benchmark_f32.py",
+      "current_matches_frozen": true
+    },
+    {
+      "name": "mlx_gemma3_f32_embedding.py",
+      "current_matches_frozen": true
+    },
+    {
+      "name": "serve_mlx_benchmark_mixed.py",
+      "current_matches_frozen": true
+    },
+    {
+      "name": "mlx_gemma3_mixed_precision.py",
+      "current_matches_frozen": true
+    },
+    {
+      "name": "probe_native_penalties.py",
+      "current_matches_frozen": true
+    },
+    {
+      "name": "probe_engine_token_distribution.py",
+      "current_matches_frozen": true
+    },
+    {
+      "name": "benchmark_model_residency_lease.py",
+      "current_matches_frozen": true
+    },
+    {
+      "name": "mlx_http_backlog.py",
+      "current_matches_frozen": true
+    },
+    {
+      "name": "loadtest_capacity.py",
+      "current_matches_frozen": true
+    },
+    {
+      "name": "loadtest_capacity_fixture.py",
+      "current_matches_frozen": true
+    },
+    {
+      "name": "capacity_retrieval_fixture.py",
+      "current_matches_frozen": true
+    },
+    {
+      "name": "e2e_server.py",
+      "current_matches_frozen": true
+    },
+    {
+      "name": "mlx_allocator_budget.py",
+      "current_matches_frozen": true
+    },
+    {
+      "name": "offline_benchmark.sb",
+      "current_matches_frozen": true
+    }
+  ],
+  "models_restored_and_verified": true,
+  "no_clinical_or_purchase_qualification": true
+}

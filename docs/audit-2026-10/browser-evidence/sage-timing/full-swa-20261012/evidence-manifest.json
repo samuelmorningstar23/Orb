@@ -1,0 +1,234 @@
+{
+  "schema": "orb.audit.browser-evidence-manifest/1",
+  "status": "FAILED_PARTIAL_PERFORMANCE_INTERMEDIATE",
+  "recorded_at_utc": "2026-10-12T08:39:52.383317+00:00",
+  "raw_run": "/private/tmp/orb-sage-browser-swa-full-20261012",
+  "artifact_count": 37,
+  "png_count": 22,
+  "total_bytes": 4576055,
+  "files": {
+    "00-general.png": {
+      "sha256": "84fc0cf0eb43c0cdb757070fc30259a5fcee1356c3d64e87f4f7e0cbe32546c7",
+      "bytes": 154243
+    },
+    "01-general.png": {
+      "sha256": "6792bfd8653aa428cbca7f134ea0ea43c76f776ef158c7631498239e6f0d9774",
+      "bytes": 157839
+    },
+    "02-patient.png": {
+      "sha256": "e3076373f1d7dc068b2815af00c9f26ac5658a78f367232b8ef470d7d0290007",
+      "bytes": 278179
+    },
+    "03-department.png": {
+      "sha256": "92f31e74873ae8d86a7f932b740745d21f81939b1d52733a1728830d9bfed0c7",
+      "bytes": 234097
+    },
+    "04-general.png": {
+      "sha256": "8961fdd3c70c3d8456e3cc7db7af5e92de4dd8a35400b93385a64f8952535b8c",
+      "bytes": 170308
+    },
+    "05-patient.png": {
+      "sha256": "19881f52484ed8e47a80a79f107dbc6eac60157bf2b8a080e86ac1b53c272852",
+      "bytes": 317578
+    },
+    "06-department.png": {
+      "sha256": "4002995bc3afde409753f56763f008459fbc2d9bfa6e6e03f785aec19b1229c8",
+      "bytes": 245625
+    },
+    "07-general.png": {
+      "sha256": "7a4bde9ee1141976ca056025448f46a07c97842b96fdeee918a296f981f3aeec",
+      "bytes": 182124
+    },
+    "08-patient.png": {
+      "sha256": "7b9841ed84d782bb14de55bf0353da4cf682c4f887d323b8b3f818254a4d2d3c",
+      "bytes": 305762
+    },
+    "09-department.png": {
+      "sha256": "f30effb87f24fb0b67fd196e34142ba12369927c6578f0ba21293069a8fba33c",
+      "bytes": 269811
+    },
+    "README.md": {
+      "sha256": "f05fbc39bca34ff17ea172b8367b3079599c3d2e47a92b0c98847743175b286f",
+      "bytes": 1686
+    },
+    "backend.log": {
+      "sha256": "6dede3290e64f4acd0f48d403a7f116d0fd1ac21b1e357f7c8321d86c7ad9165",
+      "bytes": 292377
+    },
+    "chart-prewarm-patient.png": {
+      "sha256": "cfa953f9c4f22e1d2dbd961999916d9eb53b11ce1ae6f400786c4075ddb5e808",
+      "bytes": 337182
+    },
+    "journey-artifacts/.last-run.json": {
+      "sha256": "91d1c43004802cd49950d78eb11c8fa7d05da8ffffe219a8b13b2f561bc00903",
+      "bytes": 45
+    },
+    "journey-artifacts/06-offline-workflows-all-t-899a6-nst-real-authenticated-APIs-chromium/attachments/real-infection-surveillance-7fb4a18a93f74522953f1b3b606842890cac385c.png": {
+      "sha256": "192c129ce8c9930131b8baf3050ea6ae44505b5698e5c9990dc148e8d1410f7f",
+      "bytes": 129808
+    },
+    "journey-artifacts/06-offline-workflows-all-t-899a6-nst-real-authenticated-APIs-chromium/real-infection-surveillance.png": {
+      "sha256": "192c129ce8c9930131b8baf3050ea6ae44505b5698e5c9990dc148e8d1410f7f",
+      "bytes": 129808
+    },
+    "journey-artifacts/06-offline-workflows-care--fcac2-me-and-reopens-from-storage-chromium/attachments/real-care-plan-persisted-58917ac09bfad24e960f8033679a6ae255e9442c.png": {
+      "sha256": "fa855cacecc0250213e92204244d876feb90049658fe963a2a015ee976618425",
+      "bytes": 94430
+    },
+    "journey-artifacts/06-offline-workflows-care--fcac2-me-and-reopens-from-storage-chromium/real-care-plan-persisted.png": {
+      "sha256": "fa855cacecc0250213e92204244d876feb90049658fe963a2a015ee976618425",
+      "bytes": 94430
+    },
+    "journey-artifacts/06-offline-workflows-compl-c897d-load-with-immutable-history-chromium/attachments/real-feedback-persisted-ff1239e8a8faf071c852cdc1d01300abd5eb815f.png": {
+      "sha256": "57906c4d4ab9e05828546aa291b566a62d8e0b3a72727859155cb49ddd54290f",
+      "bytes": 134237
+    },
+    "journey-artifacts/06-offline-workflows-compl-c897d-load-with-immutable-history-chromium/real-feedback-persisted.png": {
+      "sha256": "57906c4d4ab9e05828546aa291b566a62d8e0b3a72727859155cb49ddd54290f",
+      "bytes": 134237
+    },
+    "journey-artifacts/06-offline-workflows-radio-4bd72-appends-an-audited-addendum-chromium/attachments/real-radiology-signed-7c8a0ae57c0730a9bb907a21bf91d7dcdd59c30d.png": {
+      "sha256": "076a88d78b271acb99dd9e86f3625d74177de76b4f04da59a9170f2f5ef319e1",
+      "bytes": 116325
+    },
+    "journey-artifacts/06-offline-workflows-radio-4bd72-appends-an-audited-addendum-chromium/real-radiology-signed.png": {
+      "sha256": "076a88d78b271acb99dd9e86f3625d74177de76b4f04da59a9170f2f5ef319e1",
+      "bytes": 116325
+    },
+    "journey-artifacts/06-offline-workflows-saved-949e8--previewed-synthetic-cohort-chromium/attachments/real-reporting-preview-ed9d2e5a92b860b1d985d5a77c7dec54252c011c.png": {
+      "sha256": "84d294a3bdbf575e6099a79a60880931c305931968009e7e6ba03a5ab2b35f1e",
+      "bytes": 125680
+    },
+    "journey-artifacts/06-offline-workflows-saved-949e8--previewed-synthetic-cohort-chromium/real-reporting-preview.png": {
+      "sha256": "84d294a3bdbf575e6099a79a60880931c305931968009e7e6ba03a5ab2b35f1e",
+      "bytes": 125680
+    },
+    "journey-artifacts/06-offline-workflows-saved-949e8--previewed-synthetic-cohort-chromium/synthetic-cohort.csv": {
+      "sha256": "9a31b961d7aa806b3bc4dce7a59f7486f5d2c07a5c8a8a7f3d1887ae3929adca",
+      "bytes": 1405
+    },
+    "journeys.json": {
+      "sha256": "bc77b19626f22ddea08e03bf5e05fe6e772b837f3ada2d091663ce8b9e7a8c35",
+      "bytes": 16783
+    },
+    "journeys.log": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    "prewarmed-patient-chart.png": {
+      "sha256": "069b884f8251597d5c34b0c2b78c97e5bf32ee7973ae65238c5e5f24193768f9",
+      "bytes": 156945
+    },
+    "runtime/cleanup.json": {
+      "sha256": "7823391d3832827b92b515717b1c7b49e63b4ca1cdc2ad6748040b4fa32ea515",
+      "bytes": 352
+    },
+    "runtime/controller.log": {
+      "sha256": "c53505764c1c7b15eaf43db21fd7c882d33f2b739d4dc3c788e95266b84ac06b",
+      "bytes": 109
+    },
+    "runtime/ollama.log": {
+      "sha256": "6bf317cb0a403f5dd331a86f466377efa30c4bccfb9a6431086b414076882b4d",
+      "bytes": 66488
+    },
+    "runtime/preflight.json": {
+      "sha256": "7a7ac1671f4a0e7039ed05ea3f9e5863a06517d11f03ced0ce0d0b9960ad1f3f",
+      "bytes": 185
+    },
+    "runtime/runtime.json": {
+      "sha256": "a5358828450b49a9880cc6fbda69ac25b43972ca110a6df8b9f26f3fded754fd",
+      "bytes": 1983
+    },
+    "summary.json": {
+      "sha256": "5ceec318f2c1ced98be286cec899a0d62e51f41aae9d1219767d46726a269f7e",
+      "bytes": 21298
+    },
+    "timing-run.log": {
+      "sha256": "404081841b6722be6df7c7f06d01049d9e526bb487c71d020c27612e2fd1c5b2",
+      "bytes": 2564
+    },
+    "timings.current.json": {
+      "sha256": "1f6eeaa8473dd1cdfe72216a8e6cc857bac1bb6cc7018a7b4632292db5d60def",
+      "bytes": 79888
+    },
+    "timings.json": {
+      "sha256": "82403ae1a85de8c99cb8f7b84e9069734bad2f2cd9e1a2e40438cadc0052afe4",
+      "bytes": 80239
+    }
+  },
+  "compact_summary": {
+    "path": "docs/audit-2026-10/sage-browser-latency-full-swa.json",
+    "sha256": "5ceec318f2c1ced98be286cec899a0d62e51f41aae9d1219767d46726a269f7e"
+  },
+  "source_acceptance": {
+    "results": "docs/audit-2026-10/backend-sage-speed-acceptance-20261012/results.json",
+    "results_sha256": "9c5023cb3684c8fd955ce8dfb4e0e105707574afd67fca296633dd62e8afde36",
+    "source_manifest": "docs/audit-2026-10/backend-sage-speed-acceptance-20261012/source-sha256.json",
+    "source_manifest_sha256": "edee0202111b45ba2276db7791be17f8f770428acc2d03550fb93eaf272e6b7d",
+    "observed_source_matches": {
+      "server/routes/sage_routes.py": {
+        "sha256": "93f9fba9b99f2e2e102c8bce289cd3c064d71ff481ae6844d4865e000988e7a9",
+        "acceptance_sha256": "93f9fba9b99f2e2e102c8bce289cd3c064d71ff481ae6844d4865e000988e7a9",
+        "matches_acceptance": true
+      },
+      "server/services/sage_service.py": {
+        "sha256": "2f77ff28bf3c30551e634f58866e90ffe15ac47b78d245c4aa107d3cf88ab1ed",
+        "acceptance_sha256": "2f77ff28bf3c30551e634f58866e90ffe15ac47b78d245c4aa107d3cf88ab1ed",
+        "matches_acceptance": true
+      },
+      "server/services/llm_providers.py": {
+        "sha256": "13b39ac2a3cd6216486967ddf219a1a16bf4cd144f16994ea9b06590c7436d02",
+        "acceptance_sha256": "13b39ac2a3cd6216486967ddf219a1a16bf4cd144f16994ea9b06590c7436d02",
+        "matches_acceptance": true
+      },
+      "server/services/clinical_knowledge.py": {
+        "sha256": "c53a09ec88dd5ed0feee2cd7bfbbd417c8f0aac6cf6ecce61e7ac23e2f0275cc",
+        "acceptance_sha256": "c53a09ec88dd5ed0feee2cd7bfbbd417c8f0aac6cf6ecce61e7ac23e2f0275cc",
+        "matches_acceptance": true
+      },
+      "server/services/local_transformers.py": {
+        "sha256": "b5777652fb29de126e05eabf35312846fa1ebac108162b83d684993936ccbeca",
+        "acceptance_sha256": "b5777652fb29de126e05eabf35312846fa1ebac108162b83d684993936ccbeca",
+        "matches_acceptance": true
+      },
+      "scripts/sage_browser_timing.cjs": {
+        "sha256": "679ba94194d723cb6a8a85277e307ac54a471edf521b5090e4605b366594d16d",
+        "acceptance_sha256": "679ba94194d723cb6a8a85277e307ac54a471edf521b5090e4605b366594d16d",
+        "matches_acceptance": true
+      },
+      "scripts/sage_browser_timing.test.cjs": {
+        "sha256": "4a545020de316f4ac0a875d458319d13c20ee911130a69487880c6b5113254fb",
+        "acceptance_sha256": "4a545020de316f4ac0a875d458319d13c20ee911130a69487880c6b5113254fb",
+        "matches_acceptance": true
+      },
+      "scripts/sage_browser_timing.md": {
+        "sha256": "4efc1dabd58fcff9fc724a9d4c0792cf4abd16ab62a40689fe8e235237276fa5",
+        "acceptance_sha256": "4efc1dabd58fcff9fc724a9d4c0792cf4abd16ab62a40689fe8e235237276fa5",
+        "matches_acceptance": true
+      },
+      "scripts/e2e_server.py": {
+        "sha256": "90cde4f221b159a951c836e6a60ba46c2ca1eb650c52909cb1ef9178e1e0c755",
+        "acceptance_sha256": "90cde4f221b159a951c836e6a60ba46c2ca1eb650c52909cb1ef9178e1e0c755",
+        "matches_acceptance": true
+      },
+      "scripts/serve-ollama.sh": {
+        "sha256": "031f233edbbbe8e5d92e7f038adbc8a6c10dc9540cad2e9e81569531b1a33a38",
+        "acceptance_sha256": "031f233edbbbe8e5d92e7f038adbc8a6c10dc9540cad2e9e81569531b1a33a38",
+        "matches_acceptance": true
+      }
+    }
+  },
+  "cleanup": {
+    "recorded_at_utc": "2026-10-12T08:34:38.487748+00:00",
+    "owned_controller_exit_code": 0,
+    "owned_daemon_exit_code": 0,
+    "owned_port_11436_connect_ex": 61,
+    "shared_read_only_api_ps": {
+      "models": []
+    },
+    "model_cache_files_unchanged": true,
+    "model_cache_file_count": 33,
+    "launcher_unchanged": true,
+    "shared_service_changed": false
+  }
+}

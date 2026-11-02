@@ -1,0 +1,26 @@
+{
+  "scope": "Read-only observations after the completed post-context browser run; not contemporaneous per-turn telemetry or a causal diagnosis.",
+  "power": {
+    "command": "pmset -g batt",
+    "observed": "AC Power; internal battery100%, charged"
+  },
+  "configured_power_mode": {
+    "command": "pmset -g custom",
+    "observed_ac_powermode": 2,
+    "changed": false
+  },
+  "thermal": {
+    "command": "pmset -g therm",
+    "native_result": "No thermal warning level, performance warning level or CPU power status has been recorded.",
+    "limit": "This is not a historical GPU clock or throttling trace."
+  },
+  "swap": {
+    "command": "sysctl vm.swapusage",
+    "total_mib": 6144.0,
+    "used_mib": 5780.56,
+    "free_mib": 363.44,
+    "encrypted": true,
+    "limit": "A single post-run swap allocation does not establish active thrashing or explain per-turn latency."
+  },
+  "actions": "No power settings, processes, model residency, memory or service configuration were changed. Native read-only thermal/swap commands required sandbox escalation and were approved."
+}

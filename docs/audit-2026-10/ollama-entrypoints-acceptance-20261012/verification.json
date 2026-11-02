@@ -1,0 +1,103 @@
+{
+  "scope": "Canonical Ollama launcher, setup and normal stack startup; synthetic shell/process contracts plus existing operations-health routes.",
+  "interpreter": "/private/tmp/orb-ml-upgrade-20261012/bin/python",
+  "python_version": "3.12.13",
+  "pytest": {
+    "command": [
+      "/private/tmp/orb-ml-upgrade-20261012/bin/python",
+      "-m",
+      "pytest",
+      "-q",
+      "tests/test_ollama_launcher.py",
+      "tests/test_run_orb_launcher.py",
+      "tests/test_install_script.py",
+      "tests/test_ops_health.py"
+    ],
+    "cwd": "/Users/samuelmorningstar/Documents/Projects/Orb/server",
+    "exit_code": 0,
+    "passed": 110,
+    "failed": 0,
+    "skipped": 0,
+    "seconds": 59.99,
+    "membership_case_counts": {
+      "tests/test_ollama_launcher.py": 50,
+      "tests/test_run_orb_launcher.py": 20,
+      "tests/test_install_script.py": 15,
+      "tests/test_ops_health.py": 25
+    },
+    "captured_stdout": "docs/audit-2026-10/ollama-entrypoints-acceptance-20261012/pytest.log",
+    "stdout_sha256": "494d9dfa4277f98083988dde31b2d6a7796a78fafd9e957003c1322d4a119a67"
+  },
+  "checks": [
+    {
+      "command": [
+        "bash",
+        "-n",
+        "run-orb.sh",
+        "scripts/serve-ollama.sh",
+        "setup-mac.sh"
+      ],
+      "cwd": "/Users/samuelmorningstar/Documents/Projects/Orb",
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "git",
+        "diff",
+        "--check",
+        "--",
+        "scripts/serve-ollama.sh",
+        "setup-mac.sh",
+        "run-orb.sh",
+        "server/tests/test_ollama_launcher.py",
+        "server/tests/test_run_orb_launcher.py",
+        "server/services/ops_health_service.py",
+        "docs/OPERATIONS.md",
+        "docs/SETUP.md",
+        ".env.example"
+      ],
+      "cwd": "/Users/samuelmorningstar/Documents/Projects/Orb",
+      "exit_code": 0
+    }
+  ],
+  "source_sha256": {
+    "scripts/serve-ollama.sh": "031f233edbbbe8e5d92e7f038adbc8a6c10dc9540cad2e9e81569531b1a33a38",
+    "setup-mac.sh": "0f1b033f2743c160b12e142ccbb29f350e9c5c03023c55818a803ab71641ae18",
+    "run-orb.sh": "2660694fbe18e2c14522629fa01d291ee3549ec3caf00d46d11ea5adfb4f45ee",
+    "server/tests/test_ollama_launcher.py": "1ca441025cd807c8705595dca19351abb74aa718b7d59ea92b6ff7ecc1026ecf",
+    "server/tests/test_run_orb_launcher.py": "f8e5a249d3ffb57995cb568ad07bbd94e2862c52db96237de6af731abebebc9a",
+    "server/services/ops_health_service.py": "fe3dca11f7ffc76c26b4c21be4a2d83db7cc2438a94c65b04207c173393ab811",
+    "docs/OPERATIONS.md": "51fd4eab1e9daf0d4c50ee9aaa875fb814bc380c6bddc9e9cb4dd06caf629e86",
+    "docs/SETUP.md": "592d2460bc1c1fef0c5293e961dddd28ab4850bf28398f73351dea0662bf5d75",
+    ".env.example": "f92fde55f384d920474c26621f4a69d7c5eba03b388f4f9717ea4d412aa4473a"
+  },
+  "historical_launcher_setup_stage": {
+    "manifest": "docs/audit-2026-10/ollama-launcher-acceptance-20261012/verification.json",
+    "sha256": "85afe7dab626bcbae5a715f5ad25ab1b1c333d5f10a4faf78a4081f98eb399b7",
+    "passed": 65,
+    "seconds": 29.99,
+    "historical_source_hashes_not_rewritten": true,
+    "relationship": "Overlapping earlier stage. Do not add its pass count to this final selection."
+  },
+  "intermediate_run_orb_stage": {
+    "passed": 20,
+    "seconds": 24.83,
+    "relationship": "Overlapping subset of final 110; not additive."
+  },
+  "meaningful_boundaries": [
+    "Exact tested version/hardware eligibility and actual executable version precedence.",
+    "Explicit settings preserved or conflicts rejected; loopback only before version/probe requests.",
+    "Canonical setup endpoint; private log creation; ownership check rejects a different listener.",
+    "Normal startup matches backend loopback URL, including explicit port80 for no-port HTTP URLs.",
+    "Optional AI failure or unavailable executable does not block backend boot.",
+    "Owned daemon tracked separately, bounded cleanup and wait only for app PIDs; reused daemon untouched.",
+    "INT/TERM during optional startup exits130/143 with one cleanup and no later backend launch."
+  ],
+  "limits": [
+    "Launcher and startup tests use synthetic executables/processes; no actual model inference, downloads, shared daemon, live environment or private data touched.",
+    "Actual full-SWA latency/memory pilot is separately recorded in docs/audit-2026-10/sage-swa-cache-control-20261012.json.",
+    "Off does not override independently enabled llama.cpp config.ini settings.",
+    "NO_CLOUD is not an operating-system egress firewall.",
+    "No claim of complete application/clinical acceptance from this focused selection; full v8 and browser acceptance are separate."
+  ]
+}

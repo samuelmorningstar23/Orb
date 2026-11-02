@@ -1,0 +1,83 @@
+{
+  "date": "2026-10-11",
+  "scope": "Offline implementation pass; preserves held clinical decisions and excludes external transport",
+  "runtime": {"python": "3.12", "node": "24.19"},
+  "isolation": {
+    "database": "Disposable synthetic SQLite databases from server/tests/conftest.py",
+    "live_environment_modified": false,
+    "live_database_modified": false,
+    "model_training_performed": false,
+    "external_transport_added": false
+  },
+  "backend": {
+    "combined": {
+      "passed": 570,
+      "failed": 0,
+      "duration_seconds": 64.43,
+      "log": "/private/tmp/orb-offline-final-backend-tests.log",
+      "pytest_paths": [
+        "server/tests/test_local_operations.py",
+        "server/tests/test_reporting_finance.py",
+        "server/tests/test_offline_clinical_records.py",
+        "server/tests/test_record_governance.py",
+        "server/tests/test_radiation_safety.py",
+        "server/tests/test_local_workflow_privacy_export.py",
+        "server/tests/test_infection_surveillance.py",
+        "server/tests/test_vigil_labelled_extract.py",
+        "server/tests/test_offline_module_integration.py",
+        "server/tests/test_offline_patient_picker.py",
+        "server/tests/test_billing.py",
+        "server/tests/test_billing_op_patients.py",
+        "server/tests/test_invoice_supplier_snapshot.py",
+        "server/tests/test_billing_bed_days_and_encounter.py",
+        "server/tests/test_billing_permissions.py",
+        "server/tests/test_billing_reversal_refresh.py",
+        "server/tests/test_bridge_*.py",
+        "server/tests/test_opt_in_platform.py",
+        "server/tests/test_db_exception_aliases.py",
+        "server/tests/test_migrations.py",
+        "server/tests/test_consent_quarantine_retention.py",
+        "server/tests/test_retention_gst_documents.py",
+        "server/tests/test_dpdp_compliance.py",
+        "server/tests/test_request_limits.py",
+        "server/tests/test_unauthenticated_surface.py"
+      ]
+    },
+    "after_final_source_changes": {
+      "passed": 74,
+      "failed": 0,
+      "duration_seconds": 3.02,
+      "log": "/private/tmp/orb-offline-final-source-tests.log",
+      "pytest_paths": [
+        "server/tests/test_local_operations.py",
+        "server/tests/test_infection_surveillance.py",
+        "server/tests/test_record_governance.py"
+      ],
+      "coverage": ["CSSD cycle visibility before pagination", "internal surveillance seal serialization and complete-population replay scope", "immutable retention clocks"],
+      "note": "Overlaps the combined selection; counts must not be added as unique tests."
+    }
+  },
+  "frontend": {
+    "command": "node node_modules/vitest/vitest.mjs run",
+    "passed": 3549,
+    "failed": 0,
+    "test_files": 360,
+    "duration_seconds": 29.03,
+    "log": "/private/tmp/orb-offline-final-ui-tests.log",
+    "note": "Existing jsdom canvas/navigation diagnostics remain; all test assertions pass."
+  },
+  "typecheck": {"command": "node node_modules/typescript/bin/tsc -b", "exit_code": 0},
+  "build": {"command": "node node_modules/vite/bin/vite.js build", "exit_code": 0, "pwa_precache_entries": 183},
+  "lint": {"command": "node scripts/lint-ratchet.mjs", "exit_code": 0, "problems": 9, "baseline": 9, "errors": 0, "note": "Existing warnings remain; no baseline increase or new suppressions."},
+  "contrast": {"command": "node scripts/check-contrast.mjs", "exit_code": 0, "token_surface_pairs": 378, "component_call_sites": 3346, "hover_focus_surfaces": 96},
+  "documentation": {"command": "python scripts/check-doc-citations.py --quiet", "exit_code": 0, "citations": 9020, "correct_symbol_anchors": 490, "total_symbol_anchors": 490},
+  "diff_check": {"command": "git diff --check", "exit_code": 0},
+  "limits": [
+    "No production feature enablement or real-browser hospital acceptance was performed for these new modules.",
+    "Plaintext synthetic database tests do not establish encrypted-appliance performance or hardware behavior.",
+    "No real dataset acquisition, model training, calibration or clinical validation was performed.",
+    "PostgreSQL remains unwired; SQLite/SQLCipher is the supported application backend.",
+    "R026 candidate review and other remaining engineering acceptance are tracked separately.",
+    "Existing billing-category audit failures remain fail-soft."
+  ]
+}

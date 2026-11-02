@@ -1,0 +1,14 @@
+{
+  "clinical_model": "unchanged installed MedGemma 27B GGUF",
+  "network": "sandbox denies outbound; loopback only",
+  "summary_contract": "source-facts-v1: model orders all source facts, no model-written clinical prose",
+  "fixture": "100 synthetic patients; one populated chart, 99 empty charts",
+  "request_plan": "200 fresh AI: 67 general, 67 patient, 66 department",
+  "completion_targets_seconds": {
+    "general": 3,
+    "patient": 5,
+    "department": 15
+  },
+  "clinical_validation": false,
+  "offline_mlx_conversion": "separately labelled existing conversion, never weight-identical"
+}

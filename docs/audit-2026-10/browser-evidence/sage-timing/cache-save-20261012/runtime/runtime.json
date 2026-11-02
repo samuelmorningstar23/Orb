@@ -1,0 +1,32 @@
+{
+  "schema": "orb.sage.canonical-owned-runtime/1",
+  "started_at_utc": "2026-10-12T09:02:27.871849+00:00",
+  "launcher": "scripts/serve-ollama.sh",
+  "launcher_sha256": "3f0dddbf51af4ae5475b5ef1634d69e16244c7f7c2a3769d2ef191a3f22f6985",
+  "runner_config": "config/ollama-xdg/llama.cpp/config.ini",
+  "runner_config_sha256": "c8807fc49c7a03431fa38f8b4c0fcbce1cd612ccba2b97a2521515eac274a4c0",
+  "endpoint": "http://127.0.0.1:11436",
+  "explicit_environment": {
+    "PATH": "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin",
+    "HOME": "/private/tmp/orb-sage-cache-save-runtime-20261012-jthlv2w6/home",
+    "TMPDIR": "/private/tmp/orb-sage-cache-save-runtime-20261012-jthlv2w6",
+    "OLLAMA_HOST": "127.0.0.1:11436",
+    "OLLAMA_MODELS": "/Users/samuelmorningstar/.ollama/models",
+    "ORB_OLLAMA_SWA_FULL": "auto"
+  },
+  "log": "/private/tmp/orb-sage-cache-save-runtime-20261012-jthlv2w6/ollama.log",
+  "control": "Owned daemon; no shared service stop/restart/configuration, no pull or model write.",
+  "model_file_count_before": 33,
+  "owned_pid": 41550,
+  "api_version": {
+    "version": "0.35.1"
+  },
+  "canonical_full_swa_profile_applied": true,
+  "canonical_single_slot_cache_save_profile_applied": true,
+  "ready_at_utc": "2026-10-12T09:02:28.359938+00:00",
+  "stopped_at_utc": "2026-10-12T09:09:31.159190+00:00",
+  "exit_code": 0,
+  "launcher_unchanged": true,
+  "runner_config_unchanged": true,
+  "model_files_unchanged": true
+}

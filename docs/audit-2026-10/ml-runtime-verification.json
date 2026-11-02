@@ -1,0 +1,719 @@
+{
+  "schema": "orb.audit.ml-runtime-verification/1",
+  "date": "2026-10-12",
+  "timezone": "Asia/Kolkata",
+  "scope": "Local-only dense embedding/reranking migration, safe checkpoint/converter contracts, deterministic lexical unit fixtures, Sage informational census intent and caller-named prefetch authorization. Dependency audits and real browser timing are separate.",
+  "runtime": {
+    "python_executable": "/private/tmp/orb-ml-upgrade-20261012/bin/python",
+    "python": "3.12.13",
+    "platform": "macOS-26.5.2-arm64-arm-64bit",
+    "packages": {
+      "torch": "2.14.1",
+      "transformers": "5.19.0",
+      "tokenizers": "0.23.3",
+      "safetensors": "0.8.0",
+      "huggingface-hub": "2.2.0",
+      "fastapi": "0.133.0",
+      "starlette": "1.3.1",
+      "pydantic": "2.14.1",
+      "pytest": "9.0.3"
+    },
+    "installation_scope": "Fresh owned /private/tmp venv only; no project/user environment changes."
+  },
+  "dependency_evidence": "docs/audit-2026-10/ml-security-verification.json",
+  "adapter_contract": {
+    "local_files_only": true,
+    "trust_remote_code": false,
+    "weights_only": true,
+    "weight_preference": "safetensors; provisioned local pytorch_model.bin permitted only with weights_only=True",
+    "dense": "Normalized CLS vectors, float32 output, bounded batches/max_length512; no sparse/ColBERT wrapper or implicit alternative model.",
+    "reranker": "Sequence classification one-label sigmoid, query cap384 tokens, paired cap512, explicit truncation state restoration.",
+    "optional_unavailable": "Existing lexical degradation/model-off guard preserved; no implicit model downloads."
+  },
+  "focused_tests": {
+    "command": [
+      "/private/tmp/orb-ml-upgrade-20261012/bin/python",
+      "-m",
+      "pytest",
+      "tests/test_local_transformers.py",
+      "tests/test_coreml_conversion_contract.py",
+      "tests/test_vigil_cfc_safe_load.py",
+      "tests/test_knowledge_worker.py",
+      "tests/test_models_switch.py",
+      "tests/test_offline_model_guard.py",
+      "tests/test_reranker.py",
+      "tests/test_retrieval_eval.py",
+      "tests/test_corpus_loader.py",
+      "-q"
+    ],
+    "working_directory": "/Users/samuelmorningstar/Documents/Projects/Orb/server",
+    "environment": {
+      "ORB_SKIP_KNOWLEDGE_BASE": "1",
+      "HF_HUB_OFFLINE": "1",
+      "TRANSFORMERS_OFFLINE": "1",
+      "ORB_OLLAMA_BASE_URL": "http://127.0.0.1:9"
+    },
+    "selected_file_count": 9,
+    "passed": 112,
+    "failed": 0,
+    "skipped": 0,
+    "exit_code": 0,
+    "seconds": 6.68,
+    "log": {
+      "path": "/private/tmp/orb-ml-adapter-focused-final-20261012.log",
+      "sha256": "e047c9f4f29b47ec4da4f0462784cdb859942db23390c5fb022e03dac4a92d9c"
+    },
+    "coverage_note": "Includes real tiny randomly initialized XLM-R forward passes and Rust tokenizer pairing, malicious pickled checkpoint refusal, current Vigil checkpoint schema with stubbed CoreML conversion, lazy module teardown, explicit local model configuration, seeded lexical retrieval. No model downloads or production model conversion."
+  },
+  "existing_cached_model_smokes": {
+    "script": {
+      "path": "/private/tmp/orb-ml-smoke-20261012/smoke.py",
+      "sha256": "c76cec0f742b990ca6415a4d1886945756dbd2b6cc0f7f10d9413c10901881a8"
+    },
+    "cases": [
+      {
+        "command": [
+          "/private/tmp/orb-ml-upgrade-20261012/bin/python",
+          "/private/tmp/orb-ml-smoke-20261012/smoke.py",
+          "embed"
+        ],
+        "environment": {
+          "HF_HUB_OFFLINE": "1",
+          "TRANSFORMERS_OFFLINE": "1",
+          "HF_HUB_DISABLE_TELEMETRY": "1",
+          "HF_HUB_DISABLE_PROGRESS_BARS": "1",
+          "TOKENIZERS_PARALLELISM": "false",
+          "OMP_NUM_THREADS": "4"
+        },
+        "exit_code": 0,
+        "result": {
+          "mode": "embed",
+          "device": "mps",
+          "snapshot": "/Users/samuelmorningstar/.cache/huggingface/hub/models--BAAI--bge-m3/snapshots/5617a9f61b028005a4858fdac845db406aefb181",
+          "load_seconds": 5.306556041003205,
+          "inference_seconds": 1.136342334037181,
+          "offline": true,
+          "local_files_only": true,
+          "trust_remote_code": false,
+          "weights_only": true,
+          "network_connect_guard": true,
+          "shape": [
+            3,
+            1024
+          ],
+          "dtype": "float32",
+          "norms": [
+            1.0,
+            1.0,
+            1.0000001192092896
+          ],
+          "cosine": [
+            [
+              1.0,
+              0.7440420985221863,
+              0.3884691298007965
+            ],
+            [
+              0.7440420985221863,
+              1.0,
+              0.409121572971344
+            ],
+            [
+              0.3884691298007965,
+              0.409121572971344,
+              1.0000001192092896
+            ]
+          ],
+          "weight_format": "local pytorch_model.bin; weights_only=True"
+        },
+        "log": {
+          "path": "/private/tmp/orb-ml-smoke-20261012/embed.log",
+          "sha256": "41763af74b30ea2b4c71051e0e111450fae17cc2caa20f279dfa11980286fbba"
+        }
+      },
+      {
+        "command": [
+          "/private/tmp/orb-ml-upgrade-20261012/bin/python",
+          "/private/tmp/orb-ml-smoke-20261012/smoke.py",
+          "rerank"
+        ],
+        "environment": {
+          "HF_HUB_OFFLINE": "1",
+          "TRANSFORMERS_OFFLINE": "1",
+          "HF_HUB_DISABLE_TELEMETRY": "1",
+          "HF_HUB_DISABLE_PROGRESS_BARS": "1",
+          "TOKENIZERS_PARALLELISM": "false",
+          "OMP_NUM_THREADS": "4"
+        },
+        "exit_code": 0,
+        "result": {
+          "mode": "rerank",
+          "device": "mps",
+          "snapshot": "/Users/samuelmorningstar/.cache/huggingface/hub/models--BAAI--bge-reranker-v2-m3/snapshots/953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e",
+          "load_seconds": 5.31437466701027,
+          "inference_seconds": 0.7985662500141189,
+          "offline": true,
+          "local_files_only": true,
+          "trust_remote_code": false,
+          "weights_only": true,
+          "network_connect_guard": true,
+          "scores": [
+            0.9968884587287903,
+            1.6187581422855146e-05
+          ],
+          "long_pair_score": [
+            0.9159594178199768
+          ],
+          "weight_format": "local model.safetensors"
+        },
+        "log": {
+          "path": "/private/tmp/orb-ml-smoke-20261012/rerank.log",
+          "sha256": "71096cedb6f37943aac08fbda916cbde7ea07997b042664107db9eedd4133c38"
+        }
+      }
+    ],
+    "execution": "Separate processes, sequential MPS ownership; both exited before Sage browser timing. Socket connect entry points refused. Synthetic public text only, no application database imported.",
+    "interpretation": "Correctness acceptance for existing cached weights; the timings are single smokes, not comparative performance benchmarks."
+  },
+  "source_sha256": {
+    "server/services/local_transformers.py": "b5777652fb29de126e05eabf35312846fa1ebac108162b83d684993936ccbeca",
+    "server/services/clinical_knowledge.py": "c53a09ec88dd5ed0feee2cd7bfbbd417c8f0aac6cf6ecce61e7ac23e2f0275cc",
+    "server/services/knowledge_worker.py": "4aaf3640eb8845446fc9dd77191f2ae487be522f79b35a109f2469a707bca520",
+    "server/services/corpus_loader.py": "2822aca3b0ad2db32bb2c980a5deb236279af8256ae1675ce2104a934a79dbba",
+    "server/config.py": "cb841588f721ea5290ca86aafcbf4f4524c457f26aa9dbc463ccf4c2c4b2240f",
+    "server/scripts/convert_to_coreml.py": "aca86ecb4a51e5dc5fbbe5ed289eafbf590d9a5a485993d67850823c1a47f7b0",
+    "server/tests/conftest.py": "a3188e64151d68456fc0c177f3de0dcde81d8ebf87849243b3db21a597e9bd55",
+    "server/tests/knowledge_fixtures.py": "f2bb03e407ea155a10d13ade6ad7c196c07dcf940bb417803711f7455a25e8c1",
+    "server/tests/test_local_transformers.py": "62ac8b747c59342b3421c9ab0699acf25380427eb26ae740d161c2c0928356ba",
+    "server/tests/test_coreml_conversion_contract.py": "92a89849d648fb1b4d7f70c6c68b47e3d45a8560bfad4d0261d461a5289fd5c1",
+    "server/tests/test_offline_model_guard.py": "cf63e5e092269f7cf2c05f05858a63d99f307157ef471f4731e1b0c945bc2f76",
+    "server/tests/test_reranker.py": "2732187fc4fe5fd46d4efba948f99e80dd4df99cd64ddc50b4e2e05953163094",
+    "server/tests/test_retrieval_eval.py": "8b002c8c6e93bfe3d7f3ebbba576465fc408d689cab6a852a773670bd347aa03",
+    "server/tests/test_corpus_loader.py": "b281d03eafba02a507908cd42e2036491e391ffc1e11c70913e9657e36be40da",
+    "server/tests/test_sage_department_scope.py": "76c9f4f7fea4bd17428ddc6644fd972ca6b9a26d2d5ec8439628dc7f63d9db07"
+  },
+  "limitations": [
+    "Full Apple speech native installation/inference is not claimed; its complete production dependency graph was metadata-resolved and audited separately.",
+    "CoreML export tooling was stubbed in contract tests; no actual conversion or conversion output was generated.",
+    "Cached model snapshots were read without downloads/conversion/model writes; model weights themselves were not rehashed.",
+    "Full backend and browser acceptance are separate artifacts; overlapping focused selections must not be added as unique test totals."
+  ],
+  "superseded_verification": [
+    {
+      "change": "BROAD num_predict1024 to2048, same existing patient cap; model, prompt, context8192, temperature0.2, strict completion validation and timeout unchanged.",
+      "trigger": "Actual isolated browser five-patient department request ended with provider done_reason=length after42.261s under1024; no failed answer was saved.",
+      "command": [
+        "/private/tmp/orb-ml-upgrade-20261012/bin/python",
+        "-m",
+        "pytest",
+        "tests/test_sage_scope_budget.py",
+        "tests/test_local_model_stream_contract.py",
+        "-q"
+      ],
+      "working_directory": "/Users/samuelmorningstar/Documents/Projects/Orb/server",
+      "environment": {
+        "ORB_SKIP_KNOWLEDGE_BASE": "1",
+        "HF_HUB_OFFLINE": "1",
+        "TRANSFORMERS_OFFLINE": "1",
+        "ORB_OLLAMA_BASE_URL": "http://127.0.0.1:9"
+      },
+      "passed": 15,
+      "failed": 0,
+      "skipped": 0,
+      "exit_code": 0,
+      "seconds": 1.37,
+      "log": {
+        "path": "/private/tmp/orb-sage-scope-budget-20261012.log",
+        "sha256": "bf5d2f7cea5ba75e8d64563f131aa6b570b36126871c46eed9170ccdb3f38090"
+      },
+      "source": {
+        "server/services/sage_service.py": "30c7d4c53c2ed82259df8ddb7736cad5c2dad676073c6f980bd00eacaec425ac",
+        "server/tests/test_sage_scope_budget.py": "cd761ae655e5311bc8ce85d3775c4e5130daaf87348481c5bf59c9b7be8805c9"
+      },
+      "browser_acceptance": "Recorded separately by root/frontend agent; not inferred from synthetic provider tests.",
+      "status": "Superseded diagnostic experiment; not final current behavior or acceptance.",
+      "correction": "The initial budget attribution was incorrect. The exact browser query began Give a concise overview, which the bare give mutation rule classified as an administration order. The route therefore forced the resolved broad census to simple scope and its512-token cap. No actual1024-token BROAD exhaustion was demonstrated. The temporary2048 BROAD change was reverted and the artificial1200-token test was replaced with real route/scope/provider serialization acceptance. The historical15 passing tests and log do not establish final budget adequacy."
+    }
+  ],
+  "sage_scope_and_prefetch": {
+    "scope_budget": "BROAD retains original num_predict1024, context8192, temperature0.2. No timeout, model or clinical prompt changes.",
+    "informational_request_fix": "Only give with an overview/summary object (optional article and bounded concise/brief/short/detailed/quick adjectives) is excluded at the matched administration verb. Other order clauses continue to be examined. A later imperative give after that informational lead remains conservative for unknown drug objects; unrelated reported, hypothetical and polite file-transfer reads retain their prior outcomes.",
+    "exact_route_acceptance": "The unmodified browser benchmark query now drives actual scoped five-patient census retrieval, route intent selection and actual local-provider HTTP serialization with the BROAD prompt and1024 budget; foreign patient is absent, prose and explicit completion are preserved. Model response uses MockTransport, not actual inference.",
+    "prefetch_authorization": "The caller-named patient requires both sage.query and patient.read_all, canonical department/facility enforcement via the DB worker, explicit existence for unscoped callers and fail-closed PHI audit before any cache hit/system warm/model path. Typed missing/malformed IDs fail validation. No R026 resolver or clinical policy change.",
+    "command": [
+      "/private/tmp/orb-ml-upgrade-20261012/bin/python",
+      "-m",
+      "pytest",
+      "tests/test_sage_scope_budget.py",
+      "tests/test_sage_prefetch_scope.py",
+      "tests/test_action_lane_gates.py",
+      "tests/test_order_gate_wording.py",
+      "tests/test_voice_mutation_gate.py",
+      "tests/test_sage_streaming.py",
+      "tests/test_local_model_stream_contract.py",
+      "-q"
+    ],
+    "working_directory": "/Users/samuelmorningstar/Documents/Projects/Orb/server",
+    "environment": {
+      "ORB_SKIP_KNOWLEDGE_BASE": "1",
+      "HF_HUB_OFFLINE": "1",
+      "TRANSFORMERS_OFFLINE": "1",
+      "ORB_OLLAMA_BASE_URL": "http://127.0.0.1:9"
+    },
+    "selected_file_count": 7,
+    "passed": 1192,
+    "failed": 0,
+    "skipped": 0,
+    "exit_code": 0,
+    "seconds": 9.33,
+    "log": {
+      "path": "/private/tmp/orb-sage-information-prefetch-final-20261012.log",
+      "sha256": "f7c8b710c2ddbb6f57790dd44c2bfd92bf52826edd619b8f814f1b05faad1343"
+    },
+    "source_sha256": {
+      "server/services/sage_service.py": "2f77ff28bf3c30551e634f58866e90ffe15ac47b78d245c4aa107d3cf88ab1ed",
+      "server/routes/sage_routes.py": "93f9fba9b99f2e2e102c8bce289cd3c064d71ff481ae6844d4865e000988e7a9",
+      "server/tests/test_sage_scope_budget.py": "edbafc000b1494bb7095fcb3d90baf70250400ea94cbb936c6e74660583fc2b7",
+      "server/tests/test_sage_prefetch_scope.py": "4090ba0351d006d3882ad615f9a4494ad81a92c67de0f67a966d3bbfaf96a1b3"
+    },
+    "prefetch_cases": 13,
+    "browser_acceptance": "Recorded separately by root/frontend agent; actual completion/performance is not inferred from synthetic provider tests.",
+    "intermediate_results": "Initial broader selection had1199 passed and2 failed: introduced polite-file false positive corrected and revalidated against the complete held-out corpus; unrelated source-only inventory false positives for12 new domains assigned to operations agent and excluded from the final7-file selection."
+  },
+  "discharge_png_backend": {
+    "command": [
+      "/private/tmp/orb-ml-upgrade-20261012/bin/python",
+      "-m",
+      "pytest",
+      "tests/test_discharge_qr_backend.py",
+      "tests/test_discharge_review.py",
+      "tests/test_discharge_access.py",
+      "tests/test_discharge_public_base_url.py",
+      "tests/test_discharge_closes_bundles.py",
+      "tests/test_lab_critical.py",
+      "tests/test_lab_critical_ack.py",
+      "tests/test_lab_critical_sweep_loop.py",
+      "tests/test_lab_critical_interfaced.py",
+      "-q"
+    ],
+    "working_directory": "/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb-discharge-diagnostic-20261012-mbpdswu1/source/server",
+    "source": "/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb-discharge-diagnostic-20261012-mbpdswu1/source",
+    "state": "/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb-discharge-diagnostic-20261012-mbpdswu1/state-fixed",
+    "environment_profile": "isolated_environment; own orb_test DB; empty offline HF caches; Ollama:9; SKIP_KNOWLEDGE_BASE1; SCORING1; ingestionhybrid; default test ingestionkey; no live uploads or env copied",
+    "log": {
+      "path": "/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb-discharge-diagnostic-20261012-mbpdswu1/fixed.log",
+      "sha256": "bbeb07533e1f0a28b283e9b49089cb5f648cdf1bfa1352c8b6700d9fd8048d72"
+    },
+    "exit_code": 0,
+    "change": "generate_qr_code explicitly selects the already declared pure-Python PyPNGImage backend; qrcode8.2 default attempts to import optional Pillow before falling back, causing real clean-install discharge failures.",
+    "source_file": "server/services/discharge_service.py",
+    "source_sha256": "3d3406f2c43c57701f7802342c035b3b9bc8b70919983d636212fb73dd687b97",
+    "selected_file_count": 9,
+    "passed": 185,
+    "failed": 0,
+    "skipped": 0,
+    "seconds": 17.35,
+    "regression": "Existing test_discharge_qr_backend.py refuses PIL imports and decodes the resulting PNG with pypng; all existing discharge/lab assertions retained.",
+    "initial_reproduction": {
+      "passed": 18,
+      "failed": 8,
+      "seconds": 8.91,
+      "exit_code": 1,
+      "log": {
+        "path": "/var/folders/jq/lm1fq9x932vbm3lxnz1zsvx00000gn/T/orb-discharge-diagnostic-20261012-mbpdswu1/diagnostic.log",
+        "sha256": "d305c1f331d5c30b6ab368b0fdcd6b5b13d58e9d8d6228250f0d52b13080cadb"
+      },
+      "disposition": "All8 failures were ModuleNotFoundError PIL in the default qrcode image factory; final185-case selection passes without Pillow."
+    },
+    "isolation": "Read only copied source from root disposable snapshot, then copied the single patched service. Tests executed only in owned source/state. No live DB, uploads, secrets or model assets read or changed."
+  },
+  "current_stay_test_fixture_followup": {
+    "reason": "The immutable v3 full-suite snapshot exposed fixtures whose insertion-default admission time followed their intended current-stay observations or medication. Runtime current-stay exclusion was correct; these corrections align admission/admitted_at/created_at with the existing intended records.",
+    "changes": {
+      "server/tests/test_latest_vitals_tiebreak.py": "Explicit admitted_at and created_at at the existing two-hour-old arrival before both observation sets; all correction/tie assertions unchanged.",
+      "server/tests/ward_record_probe.py": "Patient arrival plus admitted_at/created_at set to now minus 48 hours so existing day-old medications belong to the positive-control stay; profile assertions unchanged.",
+      "server/tests/test_ward_record_drug_chart_off.py": "Explicit admitted_at and created_at equal the existing six-hour-old medication/arrival timestamp; all hidden-profile and profile-off positive assertions unchanged."
+    },
+    "source_sha256": {
+      "server/tests/test_latest_vitals_tiebreak.py": "72bb01a440fdb9f7add045217452ad0ba0872f57666505cdbbd8735a12573240",
+      "server/tests/ward_record_probe.py": "c34d18b674276c4934d59461dd4c5f7b76b690b7d798084c7a771580dfe5c2b0",
+      "server/tests/test_ward_record_drug_chart_off.py": "b271636d042a23a35b683d714071f09c55b106904bb10ca3f65d7ed76609e6f8"
+    },
+    "selections": [
+      {
+        "command": [
+          "/private/tmp/orb-ml-upgrade-20261012/bin/python",
+          "-m",
+          "pytest",
+          "tests/test_latest_vitals_tiebreak.py",
+          "tests/test_bridge_current_stay.py",
+          "-q"
+        ],
+        "working_directory": "/private/tmp/orb-portal-tie-fixture-20261012-vxiy7qpe/source/server",
+        "state": "/private/tmp/orb-portal-tie-fixture-20261012-vxiy7qpe/state",
+        "source": "/private/tmp/orb-ml-backend-shards-20261012-v3/source",
+        "test_only_patch": "tests/test_latest_vitals_tiebreak.py admission fixture clocks",
+        "exit_code": 0,
+        "passed": 22,
+        "failed": 0,
+        "skipped": 0,
+        "seconds": 2.26,
+        "purpose": "Latest-vitals tie correction plus current-stay Bridge exclusion regressions.",
+        "log": {
+          "path": "/private/tmp/orb-portal-tie-fixture-20261012-vxiy7qpe/verification.log",
+          "sha256": "917eedb5eeb7ed0e7c2cf8a9e296b08de9623252d5289e874826854a8b623a16"
+        }
+      },
+      {
+        "command": [
+          "/private/tmp/orb-ml-upgrade-20261012/bin/python",
+          "-m",
+          "pytest",
+          "tests/test_ward_record_profile_boot.py",
+          "-q"
+        ],
+        "working_directory": "/private/tmp/orb-portal-tie-fixture-20261012-vxiy7qpe/source/server",
+        "state": "/private/tmp/orb-portal-tie-fixture-20261012-vxiy7qpe/ward-profile-state",
+        "source": "v3snapshot plus2test-onlyfixturecorrections",
+        "exit_code": 0,
+        "passed": 21,
+        "failed": 0,
+        "skipped": 0,
+        "seconds": 15.36,
+        "purpose": "Real subprocess boot/profile probes retain drug-hidden Ward Record assertions and models-off positive controls.",
+        "log": {
+          "path": "/private/tmp/orb-portal-tie-fixture-20261012-vxiy7qpe/ward-profile.log",
+          "sha256": "091ab6d2c77f5d090dd7bf27c62284be9e17efcf3e44ba812552e26a2de3f6db"
+        }
+      },
+      {
+        "command": [
+          "/private/tmp/orb-ml-upgrade-20261012/bin/python",
+          "-m",
+          "pytest",
+          "tests/test_ward_record_drug_chart_off.py",
+          "-q"
+        ],
+        "working_directory": "/private/tmp/orb-portal-tie-fixture-20261012-vxiy7qpe/source/server",
+        "state": "/private/tmp/orb-portal-tie-fixture-20261012-vxiy7qpe/ward-drug-chart-state",
+        "source": "v3 snapshot plus three approved test-only admission fixture corrections",
+        "exit_code": 0,
+        "environment_overrides": {
+          "ORB_SKIP_KNOWLEDGE_BASE": "1",
+          "ORB_SCORING_ENABLED": "1",
+          "ORB_INGESTION_MODE": "hybrid",
+          "ORB_SEPSIS_AUTOSTART": "1",
+          "ORB_INGESTION_API_KEY": "unset; pytest development default"
+        },
+        "passed": 31,
+        "failed": 0,
+        "skipped": 0,
+        "seconds": 4.92,
+        "purpose": "Full Ward Record drug-chart module retains all hidden-profile and profile-off positive assertions.",
+        "log": {
+          "path": "/private/tmp/orb-portal-tie-fixture-20261012-vxiy7qpe/ward-drug-chart.log",
+          "sha256": "5ad36a7eb7d0c10207a1fac9016a5b6af30e43b3402231b9dac814ad28bdc7c3"
+        }
+      }
+    ],
+    "isolation": "All selections run from an owned disposable v3 source copy with owned DB, uploads, watchdog, export and offline cache paths. No live appliance state or inference; no runtime behavior or policy change.",
+    "acceptance_limit": "Focused followups only; the original v3 failure logs remain historical. Parent owns a fresh v4 full-suite snapshot/run. Counts are separate selections and are not added to overlapping broader-suite totals."
+  },
+  "reranker_latency_experiments": {
+    "scope": "Exclusive idle MPS window after owned browser processes stopped; real existing cached reranker weights, fixed synthetic public terminology only, no database, clinical data, model writes/downloads or external connections. No production source change resulted.",
+    "runtime": "/private/tmp/orb-ml-upgrade-20261012/bin/python",
+    "snapshot": "/Users/samuelmorningstar/.cache/huggingface/hub/models--BAAI--bge-reranker-v2-m3/snapshots/953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e",
+    "device": "mps",
+    "environment": {
+      "HF_HUB_OFFLINE": "1",
+      "TRANSFORMERS_OFFLINE": "1",
+      "HF_HUB_DISABLE_TELEMETRY": "1",
+      "HF_HUB_DISABLE_PROGRESS_BARS": "1",
+      "TOKENIZERS_PARALLELISM": "false",
+      "OMP_NUM_THREADS": "4"
+    },
+    "boundaries": {
+      "local_files_only": true,
+      "trust_remote_code": false,
+      "weights_only": true,
+      "network_socket_connect_tripwire": true,
+      "query_max_tokens": 384,
+      "pair_max_tokens": 512
+    },
+    "batch_comparison": {
+      "command": [
+        "/private/tmp/orb-ml-upgrade-20261012/bin/python",
+        "/private/tmp/orb-reranker-batch-20261012/compare.py"
+      ],
+      "script": {
+        "path": "/private/tmp/orb-reranker-batch-20261012/compare.py",
+        "sha256": "72b1beb03ecd9a01ebaa575ff060c768588a4d03a8388361886660dc975a3a6a"
+      },
+      "log": {
+        "path": "/private/tmp/orb-reranker-batch-20261012/compare.log",
+        "sha256": "5d7b258e10c7fad49bb29c81a3998635abba0b8a9f73b6faa1f9f0cd0a73b395"
+      },
+      "result": {
+        "path": "/private/tmp/orb-reranker-batch-20261012/result.json",
+        "sha256": "8f39f743f812627575a81e32b1a28fdb681920878b4e7a5e7fd4c468e6798350"
+      },
+      "cases": 6,
+      "measured_calls": 36,
+      "warmup_calls": 2,
+      "repeats_per_arm_case": 3,
+      "method": "Three fixed query topics, identical varied passage sets of12 and16 pairs, alternating batch8/16 arm order. Includes separately capped long passages. Same loaded model and score semantics.",
+      "batch8_case_median_ms_range": [
+        288.05808298056945,
+        466.3202500087209
+      ],
+      "batch16_case_median_ms_range": [
+        644.511665974278,
+        895.2508330112323
+      ],
+      "median_batch16_saved_ms": -358.22012499556877,
+      "max_score_delta": 0.0,
+      "all_rankings_equal": true,
+      "decision": "Retain batch8. Batch16 was slower in every case; these results do not justify a default/config change.",
+      "exit_code": 0
+    },
+    "length_grouping_comparison": {
+      "command": [
+        "/private/tmp/orb-ml-upgrade-20261012/bin/python",
+        "/private/tmp/orb-reranker-batch-20261012/compare_sort.py"
+      ],
+      "script": {
+        "path": "/private/tmp/orb-reranker-batch-20261012/compare_sort.py",
+        "sha256": "d2035c26f175746975a03f3338102e01933582448722ea98f321d0dd00eb0e11"
+      },
+      "log": {
+        "path": "/private/tmp/orb-reranker-batch-20261012/compare_sort.log",
+        "sha256": "c3ff7614b9a923cbc47045851c598a707b75ee3edd87836b054734471692b555"
+      },
+      "result": {
+        "path": "/private/tmp/orb-reranker-batch-20261012/result_sort.json",
+        "sha256": "d3d6e2aa8c1149b1f368b6b4644356ffd3d585ce2ed1d9dc154fb6f4a7083619"
+      },
+      "cases": 6,
+      "measured_calls": 54,
+      "warmup_calls": 3,
+      "repeats_per_arm_case": 3,
+      "method": "Identical fixed synthetic pairs at batch8, rotating original/stable ascending/stable descending raw combined text length arm order; grouped output restored to original candidate order.",
+      "median_saved_ms": {
+        "ascending": 2.1478745620697737,
+        "descending": -109.28868796327151
+      },
+      "max_score_delta": 0.0,
+      "all_rankings_equal": true,
+      "decision": "Retain original input order. Ascending results were inconsistent with negligible median gain; descending was slower in every case.",
+      "exit_code": 0
+    },
+    "memory_method": "5ms sampled torch MPS current/driver allocation; sampling is not a guaranteed internal allocation peak. Raw per-call bytes and baselines retained in result files.",
+    "acceptance_limit": "These are bounded adapter experiments, not application browser timing or broad model-performance qualification. They do not close the observed strict general-answer 3048.9ms miss and are not counted as pytest cases. An initial sandbox-only attempt reported CPU and aborted before scoring; accepted results above used actual MPS access.",
+    "source_sha256": {
+      "server/services/local_transformers.py": "b5777652fb29de126e05eabf35312846fa1ebac108162b83d684993936ccbeca"
+    }
+  },
+  "department_scope_fixture_followup": {
+    "root_cause": "Earlier test_admission_unassessed_vitals fixtures retain two discharged charts named Unassessed Vitals. The unchanged resolver searches discharged locator rows and matches the surname Vitals in the invented-patient questions, so absence cannot be asserted against the accumulated session database.",
+    "change": "Only the ward test fixture now depends on existing isolated_module_database. Its complete synthetic ward uses a fresh module-owned database; production resolver, clinical policy, all assertions, test case count and previously retained charts are unchanged.",
+    "source": {
+      "path": "server/tests/test_sage_department_scope.py",
+      "sha256": "76c9f4f7fea4bd17428ddc6644fd972ca6b9a26d2d5ec8439628dc7f63d9db07"
+    },
+    "runs": [
+      {
+        "command": [
+          "/private/tmp/orb-ml-upgrade-20261012/bin/python",
+          "-m",
+          "pytest",
+          "tests/test_admission_unassessed_vitals.py",
+          "tests/test_sage_department_scope.py::test_out_of_scope_is_distinguishable_from_no_such_patient",
+          "tests/test_sage_department_scope.py::test_invented_patient_is_still_reported_as_absent",
+          "-q",
+          "-p",
+          "isolation_probe"
+        ],
+        "working_directory": "/private/tmp/orb-sage-scope-isolation-20261012-m8k50ugb/source/server",
+        "source": "/private/tmp/orb-ml-backend-shards-20261012-v5/source",
+        "state": "/private/tmp/orb-sage-scope-isolation-20261012-m8k50ugb/pre-state-thbt2cx0",
+        "log": {
+          "path": "/private/tmp/orb-sage-scope-isolation-20261012-m8k50ugb/pre.log",
+          "sha256": "8c95d6b93a04927d134e73db381c210dca2a91e594f6ee93b77a745744e5f50f"
+        },
+        "exit_code": 1,
+        "probe": {
+          "path": "/private/tmp/orb-sage-scope-isolation-20261012-m8k50ugb/pre-probe.json",
+          "sha256": "1017db1260f51fe31e4a62e0e9b067a3d8371c9e18ac89fa3d2c62f0961caac8"
+        },
+        "passed": 2,
+        "failed": 6,
+        "skipped": 0,
+        "seconds": 2.15,
+        "probe_result": {
+          "before_module": {
+            "database": "/private/tmp/orb-sage-scope-isolation-20261012-m8k50ugb/pre-state-thbt2cx0/orb_test_scope_isolation.db",
+            "retained_contaminants": 2,
+            "surname_matches_question": true
+          },
+          "after_module": {
+            "database": "/private/tmp/orb-sage-scope-isolation-20261012-m8k50ugb/pre-state-thbt2cx0/orb_test_scope_isolation.db",
+            "retained_contaminants": 2,
+            "surname_matches_question": true
+          }
+        }
+      },
+      {
+        "command": [
+          "/private/tmp/orb-ml-upgrade-20261012/bin/python",
+          "-m",
+          "pytest",
+          "tests/test_admission_unassessed_vitals.py",
+          "tests/test_sage_department_scope.py",
+          "-q",
+          "-p",
+          "isolation_probe"
+        ],
+        "working_directory": "/private/tmp/orb-sage-scope-isolation-20261012-m8k50ugb/source/server",
+        "source": "/private/tmp/orb-ml-backend-shards-20261012-v5/source",
+        "state": "/private/tmp/orb-sage-scope-isolation-20261012-m8k50ugb/post-state-9e2je_0j",
+        "log": {
+          "path": "/private/tmp/orb-sage-scope-isolation-20261012-m8k50ugb/post.log",
+          "sha256": "379e384ea965e3d1bc60b11cd54887b6d1db787282e5bfe591dc529f328345b0"
+        },
+        "exit_code": 0,
+        "probe": {
+          "path": "/private/tmp/orb-sage-scope-isolation-20261012-m8k50ugb/post-probe.json",
+          "sha256": "02d9277442287c1a94bc160ec7e57b1eab358c7077eec357dde74069404ab0e8"
+        },
+        "passed": 186,
+        "failed": 0,
+        "skipped": 0,
+        "seconds": 2.85,
+        "probe_result": {
+          "before_module": {
+            "database": "/private/tmp/orb-sage-scope-isolation-20261012-m8k50ugb/post-state-9e2je_0j/orb_test_scope_isolation.db",
+            "retained_contaminants": 2,
+            "surname_matches_question": true
+          },
+          "after_module": {
+            "database": "/private/tmp/orb-sage-scope-isolation-20261012-m8k50ugb/post-state-9e2je_0j/orb_test_scope_isolation.db",
+            "retained_contaminants": 2,
+            "surname_matches_question": true
+          }
+        }
+      }
+    ],
+    "observer": {
+      "path": "/private/tmp/orb-sage-scope-isolation-20261012-m8k50ugb/source/server/isolation_probe.py",
+      "sha256": "648e2826953ddf1260aaae0ca8e3bc295b24f7183e153a5ec9e94b36b4fbfac0"
+    },
+    "observer_checks": "Before scope setup, asserts two discharged predecessor charts exist and their surname matches the question. After scope module teardown, asserts the original database path, chart count and match result are identical; the fix does not delete the contaminating rows.",
+    "environment_overrides": {
+      "ORB_SKIP_KNOWLEDGE_BASE": "1",
+      "ORB_SCORING_ENABLED": "1",
+      "ORB_SEPSIS_AUTOSTART": "1",
+      "ORB_INGESTION_MODE": "hybrid",
+      "ORB_INGESTION_API_KEY": "unset; pytest development default"
+    },
+    "isolation": "Owned disposable v5 source copy and synthetic DB/export/upload/cache paths; empty offline Hugging Face cache and closed loopback model service. No appliance state, inference or network use.",
+    "acceptance_limit": "Focused reproduction and full two-file followup. Counts overlap broader suite selections and are not added to an aggregate unique total. Original v5 full-suite failures remain historical; parent owns fresh v6 full-suite acceptance."
+  },
+  "ollama_batch_latency_diagnostic": {
+    "manifest": "docs/audit-2026-10/ollama-batch-diagnostic-20261012.json",
+    "sha256": "64aa58826ef903937ea60a1b523474fb926fda3b152434594e7a8e875df24a7d",
+    "diagnostic_calls": 18,
+    "restoration_calls": 1,
+    "exit_code": 0,
+    "decision": "Retain application AUTO; no application source change. Explicit512\u21921024 median prefill gains85.941ms general/31.766ms patient, insufficient for prespecified1000ms benefit. AUTO effective512/1024 retained per call. One-token done_reason length is diagnostic-only, not answer/SLA acceptance.",
+    "source_sha256": {
+      "server/services/sage_service.py": "2f77ff28bf3c30551e634f58866e90ffe15ac47b78d245c4aa107d3cf88ab1ed",
+      "server/routes/sage_routes.py": "93f9fba9b99f2e2e102c8bce289cd3c064d71ff481ae6844d4865e000988e7a9",
+      "server/services/llm_providers.py": "afafb65592db26143b6ad91cd11b1c8cb18e6678a0cf498e304253f5221e654e",
+      "server/services/ollama_gateway.py": "77f8f47495448ad1425ca3950606983b3af7fa87ca9885d7a40a71f1a74566ad",
+      "server/services/clinical_knowledge.py": "c53a09ec88dd5ed0feee2cd7bfbbd417c8f0aac6cf6ecce61e7ac23e2f0275cc",
+      "server/services/local_transformers.py": "b5777652fb29de126e05eabf35312846fa1ebac108162b83d684993936ccbeca",
+      "server/config.py": "cb841588f721ea5290ca86aafcbf4f4524c457f26aa9dbc463ccf4c2c4b2240f",
+      "scripts/e2e_server.py": "90cde4f221b159a951c836e6a60ba46c2ca1eb650c52909cb1ef9178e1e0c755",
+      "server/scripts/reset_db_and_seed.py": "364c0e4ae614c0f9ba6c8b8115d944f8180eef4161ba1e72bd7dcd6e2b94b8bf"
+    }
+  },
+  "provider_authoritative_cache_metrics": {
+    "scope": "Logging-only correction. No prompt/request/model/routing/terminal/sanitizer changes. New optional metrics cannot break an otherwise complete answer.",
+    "official_source": "https://github.com/ollama/ollama/blob/v0.35.1/llm/llama_server.go",
+    "counter_semantics": "prompt_eval_count=cache_n+prompt_n; prompt_eval_cached_count=cache_n. Evaluated tokens are total minus cached only when both counters are valid; absent/invalid counters stay unknown. Character-based cache estimate removed.",
+    "command": [
+      "/private/tmp/orb-ml-upgrade-20261012/bin/python",
+      "-m",
+      "pytest",
+      "tests/test_llm_provider_metrics.py",
+      "tests/test_local_model_stream_contract.py",
+      "tests/test_llm_providers.py",
+      "-q"
+    ],
+    "working_directory": "/private/tmp/orb-sage-scope-isolation-20261012-m8k50ugb/source/server",
+    "state": "/private/tmp/orb-provider-cache-metrics-20261012-raew49gb/state",
+    "environment_boundary": "Owned synthetic source/DB/uploads/watchdog/FHIR/cache only. Ollama port9, offline HF flags, native transport mocked; no actual model calls.",
+    "exit_code": 0,
+    "passed": 31,
+    "elapsed_seconds": 1.52,
+    "new_collected_cases": 10,
+    "log": {
+      "path": "/private/tmp/orb-provider-cache-metrics-20261012-raew49gb/pytest.log",
+      "sha256": "6454de4b11e88ead9b2c0ea94b9bfcf89c67be7b328ee39ffb66edb32534d734"
+    },
+    "verification": {
+      "path": "/private/tmp/orb-provider-cache-metrics-20261012-raew49gb/verification.json",
+      "sha256": "62cf78fb08ea6680c461892e52abc435002004183a77ef82f712358bf19edab9"
+    },
+    "source_sha256": {
+      "server/services/llm_providers.py": "13b39ac2a3cd6216486967ddf219a1a16bf4cd144f16994ea9b06590c7436d02",
+      "server/tests/test_llm_provider_metrics.py": "092e11dd157d46ea1e59937a577da6ac06235acce7b219bd3bc3d188a60698ff"
+    },
+    "acceptance_limit": "Synthetic mocked-provider correctness only. No GPU/model calls or performance improvement claimed; previous strict browser latency misses remain open.",
+    "durable_evidence": "docs/audit-2026-10/provider-metrics-acceptance-20261012"
+  },
+  "sage_speed_backend_v7_intermediate": {
+    "manifest": "docs/audit-2026-10/backend-sage-speed-pre-startup-20261012-v7/verification.json",
+    "status": "failed_intermediate_not_final_acceptance",
+    "counts": {
+      "tests": 16091,
+      "passed": 16081,
+      "failures": 1,
+      "errors": 0,
+      "skipped": 9
+    },
+    "fixture_repair": {
+      "path": "server/tests/test_patient_specific_screen.py",
+      "sha256": "fd9a082afe67240e48068261290b7e14127f19f9c67e513a92031902dafb54de",
+      "new_permanent_cases": 0,
+      "pre": {
+        "failed": 1,
+        "passed": 1,
+        "elapsed_seconds": 1.29
+      },
+      "post": {
+        "passed": 115,
+        "elapsed_seconds": 1.99,
+        "permanent_existing_cases": 114,
+        "ephemeral_restoration_cases": 1
+      },
+      "restoration": "Original DB path, catalogue count, catalogue hash and contaminating brand IDs exactly unchanged after isolated module teardown.",
+      "proof_directory": "docs/audit-2026-10/backend-sage-speed-pre-startup-20261012-v7/catalogue-isolation-proof"
+    }
+  },
+  "sage_speed_backend_final_v8": {
+    "manifest": "docs/audit-2026-10/backend-sage-speed-acceptance-20261012/results.json",
+    "status": "passed",
+    "counts": {
+      "tests": 16111,
+      "passed": 16103,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 8
+    },
+    "elapsed_seconds": 365.21,
+    "code_source_drift_count": 0,
+    "dist_drift_count": 0,
+    "acceptance_limit": "No latency or actual model qualification inferred; counts overlap focused selections."
+  }
+}

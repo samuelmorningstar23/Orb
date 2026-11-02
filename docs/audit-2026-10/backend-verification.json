@@ -1,0 +1,2604 @@
+{
+  "audit_date": "2026-10-11",
+  "conclusion": "Original full-suite snapshot executed in two deterministic partitions; one partition was interrupted in a runtime-data traversal and its remaining files then completed. All original observed failures received fresh passing regression checks. Late modified/new code received explicit focused checks and independent final collection. There was no single final all-green full-suite invocation.",
+  "counting_policy": "Results overlap and reflect different source snapshots. Never add broad, remainder and focused results into a passing-suite total. Collection is not execution. Expected failures and skips are retained exactly where reported.",
+  "privacy": "Only test file membership, sanitized failure dispositions, counts, commands and raw-log hashes/paths are saved. No clinical payloads, runtime databases, secrets or raw test logs are included.",
+  "runtime": {
+    "interpreter": "/private/tmp/orb-core-upgrade-20261011/bin/python",
+    "python": "3.12.13",
+    "packages": {
+      "pytest": "9.0.3",
+      "pytest-asyncio": "1.3.0",
+      "python-socketio": "5.16.4",
+      "python-multipart": "0.0.31",
+      "PyJWT": "2.15.1",
+      "cryptography": "50.0.2",
+      "bcrypt": "4.2.1",
+      "pypng": "0.20220715.0",
+      "qrcode": "8.2",
+      "sqlcipher3-wheels": "0.5.7"
+    },
+    "isolation": "Fixed core/tooling distributions installed in a temporary venv; remaining platform/model dependencies inherited through a .pth file. Shared server/.venv was not modified.",
+    "flags": "Broad/remainder/final selections set only ORB_DEPLOYMENT_PROFILE=dev (and unbuffered stdout in launchers); no global model/auth skip flags or maxfail. Some legacy opt-in tests remain skipped as reported."
+  },
+  "original_collection": {
+    "argv": [
+      "/private/tmp/orb-core-upgrade-20261011/bin/python",
+      "-m",
+      "pytest",
+      "--collect-only",
+      "-q",
+      "server/tests"
+    ],
+    "cwd": "/Users/samuelmorningstar/Documents/Projects/Orb",
+    "environment": {
+      "ORB_DEPLOYMENT_PROFILE": "dev"
+    },
+    "collected": 15296,
+    "file_count": 484,
+    "seconds": 29.04,
+    "log": {
+      "path": "/private/tmp/orb-upgraded-full-collection-20261011.log",
+      "sha256": "e5f332cd81c97de1c4a401c0fa6d3796dc8c184b40691cdf00fc5b747deb4922"
+    }
+  },
+  "original_partition_strategy": {
+    "method": "Sort repository-relative test_*.py paths; select files[index::2] for index 0 or 1. Exact original membership is preserved below from the original collection output.",
+    "launcher": "/private/tmp/orb-run-upgraded-pytest-shard.py",
+    "launcher_sha256": "46711b3d82fd6d32831f03ac773af0ff245c6a9babf411fcec51b4b7d4c9e52a",
+    "source_snapshot_note": "Broad tests collected before later telemetry marker and test-fixture edits; already imported modules may retain the earlier version."
+  },
+  "original_partitions": [
+    {
+      "index": 0,
+      "cwd": "/Users/samuelmorningstar/Documents/Projects/Orb",
+      "environment": {
+        "ORB_DEPLOYMENT_PROFILE": "dev",
+        "PYTHONUNBUFFERED": "1"
+      },
+      "launcher_argv": [
+        "/private/tmp/orb-core-upgrade-20261011/bin/python",
+        "/private/tmp/orb-run-upgraded-pytest-shard.py",
+        "0"
+      ],
+      "pytest_argv_prefix": [
+        "/private/tmp/orb-core-upgrade-20261011/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "--tb=short"
+      ],
+      "file_count": 242,
+      "collected": 6746,
+      "executed_outcomes": 6746,
+      "result": {
+        "passed": 6737,
+        "failed": 2,
+        "skipped": 1,
+        "xfailed": 6,
+        "seconds": 1069.59,
+        "exit_code": 1,
+        "completed": true
+      },
+      "log": {
+        "path": "/private/tmp/orb-upgraded-full-shard-0-20261011.log",
+        "sha256": "6f4751d9948e06e222fc171da3521fdf7eff8e5300377398f6e7d06e2d6a1d2e"
+      },
+      "members": [
+        {
+          "file": "server/tests/test_abdm.py",
+          "collected": 81
+        },
+        {
+          "file": "server/tests/test_admin_alerts_list.py",
+          "collected": 9
+        },
+        {
+          "file": "server/tests/test_admin_overview.py",
+          "collected": 14
+        },
+        {
+          "file": "server/tests/test_admission_allergies_charted.py",
+          "collected": 11
+        },
+        {
+          "file": "server/tests/test_admission_index_match.py",
+          "collected": 17
+        },
+        {
+          "file": "server/tests/test_admission_unassessed_vitals.py",
+          "collected": 2
+        },
+        {
+          "file": "server/tests/test_adt_board.py",
+          "collected": 28
+        },
+        {
+          "file": "server/tests/test_adt_census.py",
+          "collected": 26
+        },
+        {
+          "file": "server/tests/test_adt_ledger_migration.py",
+          "collected": 14
+        },
+        {
+          "file": "server/tests/test_adt_location_link.py",
+          "collected": 31
+        },
+        {
+          "file": "server/tests/test_adt_presence.py",
+          "collected": 29
+        },
+        {
+          "file": "server/tests/test_adt_readmit_boundaries.py",
+          "collected": 22
+        },
+        {
+          "file": "server/tests/test_adt_reopen.py",
+          "collected": 19
+        },
+        {
+          "file": "server/tests/test_adt_strict_locations.py",
+          "collected": 21
+        },
+        {
+          "file": "server/tests/test_adt_transfer.py",
+          "collected": 33
+        },
+        {
+          "file": "server/tests/test_agentic_confirm_race.py",
+          "collected": 4
+        },
+        {
+          "file": "server/tests/test_aggregate_reasoning.py",
+          "collected": 6
+        },
+        {
+          "file": "server/tests/test_ai_governance_identifier_scan.py",
+          "collected": 5
+        },
+        {
+          "file": "server/tests/test_allergy_class_charting.py",
+          "collected": 29
+        },
+        {
+          "file": "server/tests/test_allergy_override_prescriber.py",
+          "collected": 28
+        },
+        {
+          "file": "server/tests/test_appointment_types.py",
+          "collected": 6
+        },
+        {
+          "file": "server/tests/test_arch_db_hardening.py",
+          "collected": 13
+        },
+        {
+          "file": "server/tests/test_assessment_tiers.py",
+          "collected": 99
+        },
+        {
+          "file": "server/tests/test_audit.py",
+          "collected": 11
+        },
+        {
+          "file": "server/tests/test_audit_chain_types.py",
+          "collected": 18
+        },
+        {
+          "file": "server/tests/test_audit_fixes.py",
+          "collected": 8
+        },
+        {
+          "file": "server/tests/test_audit_views_facets_and_summaries.py",
+          "collected": 5
+        },
+        {
+          "file": "server/tests/test_auth_lockout_active.py",
+          "collected": 4
+        },
+        {
+          "file": "server/tests/test_auth_mfa_revocation.py",
+          "collected": 8
+        },
+        {
+          "file": "server/tests/test_backup_receipt.py",
+          "collected": 5
+        },
+        {
+          "file": "server/tests/test_batch_coordinator.py",
+          "collected": 4
+        },
+        {
+          "file": "server/tests/test_billing.py",
+          "collected": 45
+        },
+        {
+          "file": "server/tests/test_billing_op_patients.py",
+          "collected": 19
+        },
+        {
+          "file": "server/tests/test_billing_reversal_refresh.py",
+          "collected": 2
+        },
+        {
+          "file": "server/tests/test_bootstrap_admin.py",
+          "collected": 21
+        },
+        {
+          "file": "server/tests/test_bot_alert_wording.py",
+          "collected": 4
+        },
+        {
+          "file": "server/tests/test_bridge_appointments.py",
+          "collected": 13
+        },
+        {
+          "file": "server/tests/test_bridge_vitals_no_verdict.py",
+          "collected": 5
+        },
+        {
+          "file": "server/tests/test_bundle_labels.py",
+          "collected": 4
+        },
+        {
+          "file": "server/tests/test_caller_named_patient_scope.py",
+          "collected": 10
+        },
+        {
+          "file": "server/tests/test_case_room_alert_parity.py",
+          "collected": 10
+        },
+        {
+          "file": "server/tests/test_clinic_schedule.py",
+          "collected": 80
+        },
+        {
+          "file": "server/tests/test_clinician_pin_limiter.py",
+          "collected": 2
+        },
+        {
+          "file": "server/tests/test_command_center.py",
+          "collected": 8
+        },
+        {
+          "file": "server/tests/test_compliance.py",
+          "collected": 19
+        },
+        {
+          "file": "server/tests/test_compliance_evidence.py",
+          "collected": 27
+        },
+        {
+          "file": "server/tests/test_cookie_auth_csrf.py",
+          "collected": 10
+        },
+        {
+          "file": "server/tests/test_cpoe_dose_guard.py",
+          "collected": 6
+        },
+        {
+          "file": "server/tests/test_crypto_atomic_writes.py",
+          "collected": 8
+        },
+        {
+          "file": "server/tests/test_db_encryption.py",
+          "collected": 18
+        },
+        {
+          "file": "server/tests/test_db_session_isolation.py",
+          "collected": 4
+        },
+        {
+          "file": "server/tests/test_dietary.py",
+          "collected": 28
+        },
+        {
+          "file": "server/tests/test_discharge_closes_bundles.py",
+          "collected": 3
+        },
+        {
+          "file": "server/tests/test_discharge_qr_backend.py",
+          "collected": 1
+        },
+        {
+          "file": "server/tests/test_dose_guard.py",
+          "collected": 138
+        },
+        {
+          "file": "server/tests/test_downtime.py",
+          "collected": 17
+        },
+        {
+          "file": "server/tests/test_downtime_fhir_export.py",
+          "collected": 21
+        },
+        {
+          "file": "server/tests/test_downtime_scale2.py",
+          "collected": 11
+        },
+        {
+          "file": "server/tests/test_dpdp_compliance.py",
+          "collected": 48
+        },
+        {
+          "file": "server/tests/test_ehr_extraction_provenance.py",
+          "collected": 6
+        },
+        {
+          "file": "server/tests/test_enterprise_grants.py",
+          "collected": 41
+        },
+        {
+          "file": "server/tests/test_erasure_audio_and_retained.py",
+          "collected": 3
+        },
+        {
+          "file": "server/tests/test_escalation_sweep_loop.py",
+          "collected": 5
+        },
+        {
+          "file": "server/tests/test_event_delivery.py",
+          "collected": 5
+        },
+        {
+          "file": "server/tests/test_evidence_relevance.py",
+          "collected": 51
+        },
+        {
+          "file": "server/tests/test_facility_fence.py",
+          "collected": 47
+        },
+        {
+          "file": "server/tests/test_facility_routes.py",
+          "collected": 22
+        },
+        {
+          "file": "server/tests/test_fast_contract_marker.py",
+          "collected": 48
+        },
+        {
+          "file": "server/tests/test_fast_contract_scaffolding.py",
+          "collected": 236
+        },
+        {
+          "file": "server/tests/test_fhir_ingestion.py",
+          "collected": 26
+        },
+        {
+          "file": "server/tests/test_flight_recorder_service.py",
+          "collected": 8
+        },
+        {
+          "file": "server/tests/test_forecast_service.py",
+          "collected": 16
+        },
+        {
+          "file": "server/tests/test_fresh_database_init.py",
+          "collected": 12
+        },
+        {
+          "file": "server/tests/test_frontdesk.py",
+          "collected": 36
+        },
+        {
+          "file": "server/tests/test_ghost_patient_route_retired.py",
+          "collected": 7
+        },
+        {
+          "file": "server/tests/test_gpu_gate.py",
+          "collected": 6
+        },
+        {
+          "file": "server/tests/test_handoff_blocked.py",
+          "collected": 14
+        },
+        {
+          "file": "server/tests/test_handover_medlist_records.py",
+          "collected": 5
+        },
+        {
+          "file": "server/tests/test_helix_dispense_audit.py",
+          "collected": 8
+        },
+        {
+          "file": "server/tests/test_helix_orders_gate.py",
+          "collected": 10
+        },
+        {
+          "file": "server/tests/test_helix_substitution_safety.py",
+          "collected": 8
+        },
+        {
+          "file": "server/tests/test_his_route_skeletons.py",
+          "collected": 51
+        },
+        {
+          "file": "server/tests/test_hospital_nervous_system.py",
+          "collected": 3
+        },
+        {
+          "file": "server/tests/test_host_gate.py",
+          "collected": 51
+        },
+        {
+          "file": "server/tests/test_housekeeping_adt_link.py",
+          "collected": 21
+        },
+        {
+          "file": "server/tests/test_housekeeping_ward_canonical.py",
+          "collected": 3
+        },
+        {
+          "file": "server/tests/test_impact.py",
+          "collected": 13
+        },
+        {
+          "file": "server/tests/test_ingestion.py",
+          "collected": 45
+        },
+        {
+          "file": "server/tests/test_insight_feedback.py",
+          "collected": 8
+        },
+        {
+          "file": "server/tests/test_interaction_coverage.py",
+          "collected": 71
+        },
+        {
+          "file": "server/tests/test_invoice_supplier_snapshot.py",
+          "collected": 19
+        },
+        {
+          "file": "server/tests/test_ipass_news2_contingency.py",
+          "collected": 38
+        },
+        {
+          "file": "server/tests/test_keep_warm_lane_budget.py",
+          "collected": 10
+        },
+        {
+          "file": "server/tests/test_knowledge_worker_orphans.py",
+          "collected": 3
+        },
+        {
+          "file": "server/tests/test_lab_amend.py",
+          "collected": 28
+        },
+        {
+          "file": "server/tests/test_lab_contract_migration.py",
+          "collected": 21
+        },
+        {
+          "file": "server/tests/test_lab_critical_ack.py",
+          "collected": 18
+        },
+        {
+          "file": "server/tests/test_lab_critical_sweep_loop.py",
+          "collected": 8
+        },
+        {
+          "file": "server/tests/test_lab_instruments.py",
+          "collected": 29
+        },
+        {
+          "file": "server/tests/test_lab_module_flag.py",
+          "collected": 27
+        },
+        {
+          "file": "server/tests/test_lab_order_guard.py",
+          "collected": 44
+        },
+        {
+          "file": "server/tests/test_lab_receipt.py",
+          "collected": 28
+        },
+        {
+          "file": "server/tests/test_lab_report.py",
+          "collected": 31
+        },
+        {
+          "file": "server/tests/test_lab_setup_writes.py",
+          "collected": 8
+        },
+        {
+          "file": "server/tests/test_latest_risk_tiebreak.py",
+          "collected": 22
+        },
+        {
+          "file": "server/tests/test_legacy_erase_retired.py",
+          "collected": 2
+        },
+        {
+          "file": "server/tests/test_lens_filed_disclaimer.py",
+          "collected": 5
+        },
+        {
+          "file": "server/tests/test_live_alert_message_shape.py",
+          "collected": 4
+        },
+        {
+          "file": "server/tests/test_llm_queue_lanes.py",
+          "collected": 23
+        },
+        {
+          "file": "server/tests/test_login_ip_limiter.py",
+          "collected": 2
+        },
+        {
+          "file": "server/tests/test_media_upload_errors.py",
+          "collected": 8
+        },
+        {
+          "file": "server/tests/test_medorder_ai_lanes.py",
+          "collected": 21
+        },
+        {
+          "file": "server/tests/test_medorder_cpoe_lane.py",
+          "collected": 25
+        },
+        {
+          "file": "server/tests/test_medorder_held_labels.py",
+          "collected": 12
+        },
+        {
+          "file": "server/tests/test_medorder_legacy_mirror.py",
+          "collected": 12
+        },
+        {
+          "file": "server/tests/test_medorder_migration.py",
+          "collected": 25
+        },
+        {
+          "file": "server/tests/test_medorder_registries.py",
+          "collected": 21
+        },
+        {
+          "file": "server/tests/test_medorder_sage_binding.py",
+          "collected": 18
+        },
+        {
+          "file": "server/tests/test_medorder_screen_scope.py",
+          "collected": 41
+        },
+        {
+          "file": "server/tests/test_medorder_verify_before_dose.py",
+          "collected": 39
+        },
+        {
+          "file": "server/tests/test_migration_atomicity.py",
+          "collected": 5
+        },
+        {
+          "file": "server/tests/test_migration_import_order.py",
+          "collected": 11
+        },
+        {
+          "file": "server/tests/test_mllp_message_loss.py",
+          "collected": 11
+        },
+        {
+          "file": "server/tests/test_model_router.py",
+          "collected": 12
+        },
+        {
+          "file": "server/tests/test_money.py",
+          "collected": 251
+        },
+        {
+          "file": "server/tests/test_nabh.py",
+          "collected": 42
+        },
+        {
+          "file": "server/tests/test_narrator_timeline_ambient_tier.py",
+          "collected": 9
+        },
+        {
+          "file": "server/tests/test_news2.py",
+          "collected": 109
+        },
+        {
+          "file": "server/tests/test_news2_driver_order.py",
+          "collected": 10
+        },
+        {
+          "file": "server/tests/test_news2_scale2_lanes.py",
+          "collected": 5
+        },
+        {
+          "file": "server/tests/test_nurse_mode.py",
+          "collected": 94
+        },
+        {
+          "file": "server/tests/test_offline_model_guard.py",
+          "collected": 4
+        },
+        {
+          "file": "server/tests/test_ollama_gateway_guard.py",
+          "collected": 5
+        },
+        {
+          "file": "server/tests/test_opd_board_no_phi.py",
+          "collected": 8
+        },
+        {
+          "file": "server/tests/test_opd_chart_writes_closed.py",
+          "collected": 22
+        },
+        {
+          "file": "server/tests/test_opd_no_scoring.py",
+          "collected": 15
+        },
+        {
+          "file": "server/tests/test_opd_prescription.py",
+          "collected": 30
+        },
+        {
+          "file": "server/tests/test_opd_scope.py",
+          "collected": 37
+        },
+        {
+          "file": "server/tests/test_opd_socket_rooms.py",
+          "collected": 15
+        },
+        {
+          "file": "server/tests/test_opd_visit_identity_check.py",
+          "collected": 17
+        },
+        {
+          "file": "server/tests/test_ops_orb_sh.py",
+          "collected": 14
+        },
+        {
+          "file": "server/tests/test_optimized_agentic_orders.py",
+          "collected": 13
+        },
+        {
+          "file": "server/tests/test_order_sets.py",
+          "collected": 61
+        },
+        {
+          "file": "server/tests/test_orders_result_and_read_scope.py",
+          "collected": 7
+        },
+        {
+          "file": "server/tests/test_oru_corrections.py",
+          "collected": 35
+        },
+        {
+          "file": "server/tests/test_patient_matching.py",
+          "collected": 77
+        },
+        {
+          "file": "server/tests/test_patient_read_audit_not_found.py",
+          "collected": 2
+        },
+        {
+          "file": "server/tests/test_patient_specific_screen.py",
+          "collected": 103
+        },
+        {
+          "file": "server/tests/test_patient_timeline.py",
+          "collected": 32
+        },
+        {
+          "file": "server/tests/test_payer.py",
+          "collected": 61
+        },
+        {
+          "file": "server/tests/test_payments.py",
+          "collected": 123
+        },
+        {
+          "file": "server/tests/test_pharmacy_dispense_quantity.py",
+          "collected": 31
+        },
+        {
+          "file": "server/tests/test_pharmacy_grn.py",
+          "collected": 20
+        },
+        {
+          "file": "server/tests/test_pharmacy_not_a_ward.py",
+          "collected": 9
+        },
+        {
+          "file": "server/tests/test_pharmacy_stock_ledger.py",
+          "collected": 41
+        },
+        {
+          "file": "server/tests/test_pharmacy_stock_single_writer.py",
+          "collected": 4
+        },
+        {
+          "file": "server/tests/test_pharmacy_transfers.py",
+          "collected": 36
+        },
+        {
+          "file": "server/tests/test_pharmacy_verification.py",
+          "collected": 29
+        },
+        {
+          "file": "server/tests/test_pharmacy_ward_stock.py",
+          "collected": 44
+        },
+        {
+          "file": "server/tests/test_phi_read_scope_gaps.py",
+          "collected": 18
+        },
+        {
+          "file": "server/tests/test_portal_lis_reports.py",
+          "collected": 43
+        },
+        {
+          "file": "server/tests/test_procurement_cores.py",
+          "collected": 103
+        },
+        {
+          "file": "server/tests/test_procurement_helix_catalogue.py",
+          "collected": 14
+        },
+        {
+          "file": "server/tests/test_readiness.py",
+          "collected": 9
+        },
+        {
+          "file": "server/tests/test_receptionist_role.py",
+          "collected": 73
+        },
+        {
+          "file": "server/tests/test_registration_duplicates.py",
+          "collected": 33
+        },
+        {
+          "file": "server/tests/test_registration_routes.py",
+          "collected": 59
+        },
+        {
+          "file": "server/tests/test_relay_ambient_gate.py",
+          "collected": 19
+        },
+        {
+          "file": "server/tests/test_relay_dm_membership.py",
+          "collected": 29
+        },
+        {
+          "file": "server/tests/test_relay_idempotency.py",
+          "collected": 2
+        },
+        {
+          "file": "server/tests/test_relay_role_guard.py",
+          "collected": 7
+        },
+        {
+          "file": "server/tests/test_relay_unread_exact_reader.py",
+          "collected": 2
+        },
+        {
+          "file": "server/tests/test_reranker.py",
+          "collected": 10
+        },
+        {
+          "file": "server/tests/test_reseed_patient_scope.py",
+          "collected": 10
+        },
+        {
+          "file": "server/tests/test_retention_gst_documents.py",
+          "collected": 5
+        },
+        {
+          "file": "server/tests/test_retrieval_eval.py",
+          "collected": 5
+        },
+        {
+          "file": "server/tests/test_role_batch.py",
+          "collected": 52
+        },
+        {
+          "file": "server/tests/test_roster_dates_left_blank.py",
+          "collected": 3
+        },
+        {
+          "file": "server/tests/test_safety_gate_vigil.py",
+          "collected": 5
+        },
+        {
+          "file": "server/tests/test_sage_ambient_retraction.py",
+          "collected": 41
+        },
+        {
+          "file": "server/tests/test_sage_assessment.py",
+          "collected": 48
+        },
+        {
+          "file": "server/tests/test_sage_cache_vitals_coherence.py",
+          "collected": 1
+        },
+        {
+          "file": "server/tests/test_sage_continuity.py",
+          "collected": 77
+        },
+        {
+          "file": "server/tests/test_sage_department_scope.py",
+          "collected": 184
+        },
+        {
+          "file": "server/tests/test_sage_guardrails.py",
+          "collected": 132
+        },
+        {
+          "file": "server/tests/test_sage_history_marker_pairing.py",
+          "collected": 20
+        },
+        {
+          "file": "server/tests/test_sage_history_render_parity.py",
+          "collected": 236
+        },
+        {
+          "file": "server/tests/test_sage_insight_observed_at.py",
+          "collected": 7
+        },
+        {
+          "file": "server/tests/test_sage_insights_latest_vitals.py",
+          "collected": 26
+        },
+        {
+          "file": "server/tests/test_sage_name_match_bounds.py",
+          "collected": 19
+        },
+        {
+          "file": "server/tests/test_sage_proactive_sirs.py",
+          "collected": 22
+        },
+        {
+          "file": "server/tests/test_sage_relay_context.py",
+          "collected": 65
+        },
+        {
+          "file": "server/tests/test_sage_streaming.py",
+          "collected": 19
+        },
+        {
+          "file": "server/tests/test_sanitizer_lane_parity.py",
+          "collected": 438
+        },
+        {
+          "file": "server/tests/test_scorecard_plain_text.py",
+          "collected": 2
+        },
+        {
+          "file": "server/tests/test_screen_actions_exist.py",
+          "collected": 6
+        },
+        {
+          "file": "server/tests/test_scribe_pipeline.py",
+          "collected": 97
+        },
+        {
+          "file": "server/tests/test_scribe_quick_admit.py",
+          "collected": 8
+        },
+        {
+          "file": "server/tests/test_scribe_structuring_rules.py",
+          "collected": 18
+        },
+        {
+          "file": "server/tests/test_security_headers.py",
+          "collected": 4
+        },
+        {
+          "file": "server/tests/test_seed_modules.py",
+          "collected": 21
+        },
+        {
+          "file": "server/tests/test_seed_pharmacy_store.py",
+          "collected": 21
+        },
+        {
+          "file": "server/tests/test_seed_surgical_cases.py",
+          "collected": 3
+        },
+        {
+          "file": "server/tests/test_sepsis_bundle.py",
+          "collected": 9
+        },
+        {
+          "file": "server/tests/test_shadow_patient_specific_keys.py",
+          "collected": 8
+        },
+        {
+          "file": "server/tests/test_shadow_routes.py",
+          "collected": 45
+        },
+        {
+          "file": "server/tests/test_shutdown_paths.py",
+          "collected": 13
+        },
+        {
+          "file": "server/tests/test_simulated_vitals_provenance.py",
+          "collected": 6
+        },
+        {
+          "file": "server/tests/test_simulator_retention.py",
+          "collected": 1
+        },
+        {
+          "file": "server/tests/test_spa_switches.py",
+          "collected": 10
+        },
+        {
+          "file": "server/tests/test_stay_keying.py",
+          "collected": 22
+        },
+        {
+          "file": "server/tests/test_stop_orb_script.py",
+          "collected": 4
+        },
+        {
+          "file": "server/tests/test_surgery_checklist_storage.py",
+          "collected": 6
+        },
+        {
+          "file": "server/tests/test_surgery_lifecycle.py",
+          "collected": 30
+        },
+        {
+          "file": "server/tests/test_surgery_schedule_news2.py",
+          "collected": 3
+        },
+        {
+          "file": "server/tests/test_synthetic_corpus_exclusion.py",
+          "collected": 6
+        },
+        {
+          "file": "server/tests/test_tier1_small_closes.py",
+          "collected": 7
+        },
+        {
+          "file": "server/tests/test_unauthenticated_surface.py",
+          "collected": 3
+        },
+        {
+          "file": "server/tests/test_vendor_profiles.py",
+          "collected": 38
+        },
+        {
+          "file": "server/tests/test_vigil_analysis_endpoint_removed.py",
+          "collected": 4
+        },
+        {
+          "file": "server/tests/test_vigil_cfc_safe_load.py",
+          "collected": 2
+        },
+        {
+          "file": "server/tests/test_vigil_driver_labels.py",
+          "collected": 15
+        },
+        {
+          "file": "server/tests/test_vitals_carry_forward_age.py",
+          "collected": 25
+        },
+        {
+          "file": "server/tests/test_vitals_emit_patient_name.py",
+          "collected": 3
+        },
+        {
+          "file": "server/tests/test_voice_mutation_gate.py",
+          "collected": 7
+        },
+        {
+          "file": "server/tests/test_ward_brief_scope_and_attribution.py",
+          "collected": 7
+        },
+        {
+          "file": "server/tests/test_ward_clerk_admit_depart.py",
+          "collected": 31
+        },
+        {
+          "file": "server/tests/test_ward_record_blank_boxes.py",
+          "collected": 14
+        },
+        {
+          "file": "server/tests/test_ward_record_clerk_patients.py",
+          "collected": 9
+        },
+        {
+          "file": "server/tests/test_ward_record_clerk_void.py",
+          "collected": 12
+        },
+        {
+          "file": "server/tests/test_ward_record_drug_chart_off.py",
+          "collected": 31
+        },
+        {
+          "file": "server/tests/test_ward_record_profile_boot.py",
+          "collected": 21
+        },
+        {
+          "file": "server/tests/test_ward_record_review.py",
+          "collected": 6
+        },
+        {
+          "file": "server/tests/test_ward_record_rounds_edges.py",
+          "collected": 6
+        },
+        {
+          "file": "server/tests/test_ward_record_switches.py",
+          "collected": 9
+        },
+        {
+          "file": "server/tests/test_ward_reference.py",
+          "collected": 118
+        },
+        {
+          "file": "server/tests/test_wedge_end_to_end.py",
+          "collected": 15
+        },
+        {
+          "file": "server/tests/test_workflow_joins.py",
+          "collected": 9
+        },
+        {
+          "file": "server/tests/test_workforce_mid_month.py",
+          "collected": 5
+        },
+        {
+          "file": "server/tests/test_ws_origin.py",
+          "collected": 40
+        },
+        {
+          "file": "server/tests/test_ws_tv_revocation_gap.py",
+          "collected": 2
+        },
+        {
+          "file": "server/tests/test_zz_prefix_postfix_proof.py",
+          "collected": 4
+        }
+      ]
+    },
+    {
+      "index": 1,
+      "cwd": "/Users/samuelmorningstar/Documents/Projects/Orb",
+      "environment": {
+        "ORB_DEPLOYMENT_PROFILE": "dev",
+        "PYTHONUNBUFFERED": "1"
+      },
+      "launcher_argv": [
+        "/private/tmp/orb-core-upgrade-20261011/bin/python",
+        "/private/tmp/orb-run-upgraded-pytest-shard.py",
+        "1"
+      ],
+      "pytest_argv_prefix": [
+        "/private/tmp/orb-core-upgrade-20261011/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "--tb=short"
+      ],
+      "file_count": 242,
+      "collected": 8550,
+      "executed_outcomes": 7255,
+      "result": {
+        "passed": 7249,
+        "failed": 5,
+        "skipped": 1,
+        "xfailed": 0,
+        "seconds": 1527.32,
+        "exit_code": 2,
+        "completed": false
+      },
+      "log": {
+        "path": "/private/tmp/orb-upgraded-full-shard-1-20261011.log",
+        "sha256": "901607bc0e5943442915cc152dbc9c326e6ca275d253343530d85acc20c98718"
+      },
+      "members": [
+        {
+          "file": "server/tests/test_action_lane_gates.py",
+          "collected": 178
+        },
+        {
+          "file": "server/tests/test_admin_ops.py",
+          "collected": 8
+        },
+        {
+          "file": "server/tests/test_admin_users_guards.py",
+          "collected": 24
+        },
+        {
+          "file": "server/tests/test_admission_form_choices.py",
+          "collected": 17
+        },
+        {
+          "file": "server/tests/test_admission_provenance.py",
+          "collected": 7
+        },
+        {
+          "file": "server/tests/test_adt_admit.py",
+          "collected": 83
+        },
+        {
+          "file": "server/tests/test_adt_capacity_source.py",
+          "collected": 12
+        },
+        {
+          "file": "server/tests/test_adt_end_stay.py",
+          "collected": 43
+        },
+        {
+          "file": "server/tests/test_adt_live_board.py",
+          "collected": 11
+        },
+        {
+          "file": "server/tests/test_adt_nabh_indicators.py",
+          "collected": 21
+        },
+        {
+          "file": "server/tests/test_adt_presence_lanes.py",
+          "collected": 25
+        },
+        {
+          "file": "server/tests/test_adt_relay_transfer.py",
+          "collected": 11
+        },
+        {
+          "file": "server/tests/test_adt_reservations.py",
+          "collected": 42
+        },
+        {
+          "file": "server/tests/test_adt_swap_correct.py",
+          "collected": 23
+        },
+        {
+          "file": "server/tests/test_adversarial.py",
+          "collected": 36
+        },
+        {
+          "file": "server/tests/test_agentic_order_failopen.py",
+          "collected": 6
+        },
+        {
+          "file": "server/tests/test_ai_governance.py",
+          "collected": 9
+        },
+        {
+          "file": "server/tests/test_alert_cooldown_storm.py",
+          "collected": 7
+        },
+        {
+          "file": "server/tests/test_allergy_interlock.py",
+          "collected": 43
+        },
+        {
+          "file": "server/tests/test_allergy_override_prescriber_only.py",
+          "collected": 7
+        },
+        {
+          "file": "server/tests/test_appointments_slots.py",
+          "collected": 46
+        },
+        {
+          "file": "server/tests/test_assessment_relocation.py",
+          "collected": 62
+        },
+        {
+          "file": "server/tests/test_attack_clinical_surfaces.py",
+          "collected": 47
+        },
+        {
+          "file": "server/tests/test_audit_actor_names.py",
+          "collected": 4
+        },
+        {
+          "file": "server/tests/test_audit_fail_closed_categories.py",
+          "collected": 16
+        },
+        {
+          "file": "server/tests/test_audit_trail_attack.py",
+          "collected": 15
+        },
+        {
+          "file": "server/tests/test_auth_dependency_hardening.py",
+          "collected": 11
+        },
+        {
+          "file": "server/tests/test_auth_login_hardening.py",
+          "collected": 11
+        },
+        {
+          "file": "server/tests/test_background_governor.py",
+          "collected": 13
+        },
+        {
+          "file": "server/tests/test_backup_ward_packs.py",
+          "collected": 2
+        },
+        {
+          "file": "server/tests/test_bed_master.py",
+          "collected": 50
+        },
+        {
+          "file": "server/tests/test_billing_bed_days_and_encounter.py",
+          "collected": 10
+        },
+        {
+          "file": "server/tests/test_billing_permissions.py",
+          "collected": 8
+        },
+        {
+          "file": "server/tests/test_biomedical.py",
+          "collected": 66
+        },
+        {
+          "file": "server/tests/test_bootstrap_staff_roles.py",
+          "collected": 10
+        },
+        {
+          "file": "server/tests/test_bridge_admission_only.py",
+          "collected": 13
+        },
+        {
+          "file": "server/tests/test_bridge_red_flag_delivery.py",
+          "collected": 14
+        },
+        {
+          "file": "server/tests/test_bridge_vitals_timestamp.py",
+          "collected": 3
+        },
+        {
+          "file": "server/tests/test_bundle_route_scope.py",
+          "collected": 9
+        },
+        {
+          "file": "server/tests/test_capacity_sim.py",
+          "collected": 13
+        },
+        {
+          "file": "server/tests/test_chart_lab_observations.py",
+          "collected": 4
+        },
+        {
+          "file": "server/tests/test_clinical_safety.py",
+          "collected": 12
+        },
+        {
+          "file": "server/tests/test_coding.py",
+          "collected": 12
+        },
+        {
+          "file": "server/tests/test_command_center_scope_label.py",
+          "collected": 2
+        },
+        {
+          "file": "server/tests/test_compliance_center.py",
+          "collected": 6
+        },
+        {
+          "file": "server/tests/test_consent_quarantine_retention.py",
+          "collected": 6
+        },
+        {
+          "file": "server/tests/test_corpus_loader.py",
+          "collected": 8
+        },
+        {
+          "file": "server/tests/test_create_only_masters.py",
+          "collected": 12
+        },
+        {
+          "file": "server/tests/test_crypto_service.py",
+          "collected": 11
+        },
+        {
+          "file": "server/tests/test_db_exception_aliases.py",
+          "collected": 13
+        },
+        {
+          "file": "server/tests/test_device_pin_identity.py",
+          "collected": 23
+        },
+        {
+          "file": "server/tests/test_discharge_access.py",
+          "collected": 15
+        },
+        {
+          "file": "server/tests/test_discharge_public_base_url.py",
+          "collected": 47
+        },
+        {
+          "file": "server/tests/test_discharge_review.py",
+          "collected": 10
+        },
+        {
+          "file": "server/tests/test_dose_guard_order_lanes.py",
+          "collected": 9
+        },
+        {
+          "file": "server/tests/test_downtime_export_isolation.py",
+          "collected": 12
+        },
+        {
+          "file": "server/tests/test_downtime_pack_freshness.py",
+          "collected": 11
+        },
+        {
+          "file": "server/tests/test_downtime_ward_pack_text.py",
+          "collected": 10
+        },
+        {
+          "file": "server/tests/test_e2e_isolation.py",
+          "collected": 2
+        },
+        {
+          "file": "server/tests/test_emar.py",
+          "collected": 16
+        },
+        {
+          "file": "server/tests/test_erase_plan_retained.py",
+          "collected": 3
+        },
+        {
+          "file": "server/tests/test_escalation_chain.py",
+          "collected": 36
+        },
+        {
+          "file": "server/tests/test_escrow_sheet.py",
+          "collected": 14
+        },
+        {
+          "file": "server/tests/test_event_loop_discipline.py",
+          "collected": 594
+        },
+        {
+          "file": "server/tests/test_extraction_source_note.py",
+          "collected": 4
+        },
+        {
+          "file": "server/tests/test_facility_resolver_loaders.py",
+          "collected": 8
+        },
+        {
+          "file": "server/tests/test_facility_scope.py",
+          "collected": 29
+        },
+        {
+          "file": "server/tests/test_fast_contract_marker_source.py",
+          "collected": 27
+        },
+        {
+          "file": "server/tests/test_fhir_export.py",
+          "collected": 10
+        },
+        {
+          "file": "server/tests/test_field_crypto.py",
+          "collected": 5
+        },
+        {
+          "file": "server/tests/test_forecast_appointments_booked_only.py",
+          "collected": 5
+        },
+        {
+          "file": "server/tests/test_formulary_loader_identity.py",
+          "collected": 3
+        },
+        {
+          "file": "server/tests/test_front_office_mis.py",
+          "collected": 13
+        },
+        {
+          "file": "server/tests/test_frontdesk_consulting_doctor.py",
+          "collected": 6
+        },
+        {
+          "file": "server/tests/test_gpu_coordinator.py",
+          "collected": 18
+        },
+        {
+          "file": "server/tests/test_handoff.py",
+          "collected": 14
+        },
+        {
+          "file": "server/tests/test_handoff_confirm_transaction.py",
+          "collected": 6
+        },
+        {
+          "file": "server/tests/test_helix_db_users_untouched.py",
+          "collected": 2
+        },
+        {
+          "file": "server/tests/test_helix_order_lifecycle.py",
+          "collected": 15
+        },
+        {
+          "file": "server/tests/test_helix_stock_rules.py",
+          "collected": 11
+        },
+        {
+          "file": "server/tests/test_helix_ward_receipt.py",
+          "collected": 16
+        },
+        {
+          "file": "server/tests/test_history_import.py",
+          "collected": 43
+        },
+        {
+          "file": "server/tests/test_hospital_time_surfaces.py",
+          "collected": 13
+        },
+        {
+          "file": "server/tests/test_housekeeping.py",
+          "collected": 74
+        },
+        {
+          "file": "server/tests/test_housekeeping_counts.py",
+          "collected": 3
+        },
+        {
+          "file": "server/tests/test_httpx_client_config.py",
+          "collected": 44
+        },
+        {
+          "file": "server/tests/test_inference_audit_lanes.py",
+          "collected": 8
+        },
+        {
+          "file": "server/tests/test_ingestion_alert_parity.py",
+          "collected": 9
+        },
+        {
+          "file": "server/tests/test_install_script.py",
+          "collected": 9
+        },
+        {
+          "file": "server/tests/test_interaction_db.py",
+          "collected": 9
+        },
+        {
+          "file": "server/tests/test_ipass.py",
+          "collected": 21
+        },
+        {
+          "file": "server/tests/test_ipass_scale2.py",
+          "collected": 29
+        },
+        {
+          "file": "server/tests/test_knowledge_worker.py",
+          "collected": 9
+        },
+        {
+          "file": "server/tests/test_lab_accession.py",
+          "collected": 14
+        },
+        {
+          "file": "server/tests/test_lab_collection.py",
+          "collected": 27
+        },
+        {
+          "file": "server/tests/test_lab_critical.py",
+          "collected": 48
+        },
+        {
+          "file": "server/tests/test_lab_critical_interfaced.py",
+          "collected": 35
+        },
+        {
+          "file": "server/tests/test_lab_delta.py",
+          "collected": 37
+        },
+        {
+          "file": "server/tests/test_lab_master.py",
+          "collected": 51
+        },
+        {
+          "file": "server/tests/test_lab_observation_readers.py",
+          "collected": 30
+        },
+        {
+          "file": "server/tests/test_lab_order_intake.py",
+          "collected": 36
+        },
+        {
+          "file": "server/tests/test_lab_release.py",
+          "collected": 45
+        },
+        {
+          "file": "server/tests/test_lab_result_entry.py",
+          "collected": 53
+        },
+        {
+          "file": "server/tests/test_lab_tat.py",
+          "collected": 22
+        },
+        {
+          "file": "server/tests/test_latest_vitals_tiebreak.py",
+          "collected": 18
+        },
+        {
+          "file": "server/tests/test_lens.py",
+          "collected": 2
+        },
+        {
+          "file": "server/tests/test_lens_review_filing.py",
+          "collected": 10
+        },
+        {
+          "file": "server/tests/test_llm_providers.py",
+          "collected": 4
+        },
+        {
+          "file": "server/tests/test_load_terminology.py",
+          "collected": 33
+        },
+        {
+          "file": "server/tests/test_loop_watchdog.py",
+          "collected": 9
+        },
+        {
+          "file": "server/tests/test_medorder_adoption.py",
+          "collected": 37
+        },
+        {
+          "file": "server/tests/test_medorder_chart_lane.py",
+          "collected": 15
+        },
+        {
+          "file": "server/tests/test_medorder_emar.py",
+          "collected": 15
+        },
+        {
+          "file": "server/tests/test_medorder_helix_link.py",
+          "collected": 32
+        },
+        {
+          "file": "server/tests/test_medorder_list_summary.py",
+          "collected": 5
+        },
+        {
+          "file": "server/tests/test_medorder_reader_registry.py",
+          "collected": 7
+        },
+        {
+          "file": "server/tests/test_medorder_routes.py",
+          "collected": 21
+        },
+        {
+          "file": "server/tests/test_medorder_schedule.py",
+          "collected": 73
+        },
+        {
+          "file": "server/tests/test_medorder_state_machine.py",
+          "collected": 185
+        },
+        {
+          "file": "server/tests/test_mfa_service.py",
+          "collected": 10
+        },
+        {
+          "file": "server/tests/test_migration_discovery.py",
+          "collected": 19
+        },
+        {
+          "file": "server/tests/test_migrations.py",
+          "collected": 23
+        },
+        {
+          "file": "server/tests/test_model_governance.py",
+          "collected": 15
+        },
+        {
+          "file": "server/tests/test_models_switch.py",
+          "collected": 44
+        },
+        {
+          "file": "server/tests/test_multisite_spine.py",
+          "collected": 36
+        },
+        {
+          "file": "server/tests/test_nabh_ward_match.py",
+          "collected": 5
+        },
+        {
+          "file": "server/tests/test_ndps_register.py",
+          "collected": 38
+        },
+        {
+          "file": "server/tests/test_news2_charted_value.py",
+          "collected": 87
+        },
+        {
+          "file": "server/tests/test_news2_prompt_label.py",
+          "collected": 37
+        },
+        {
+          "file": "server/tests/test_no_em_dash_clinical_text.py",
+          "collected": 3
+        },
+        {
+          "file": "server/tests/test_nurse_write_scope.py",
+          "collected": 19
+        },
+        {
+          "file": "server/tests/test_ollama_gateway.py",
+          "collected": 9
+        },
+        {
+          "file": "server/tests/test_opd_allergy_review.py",
+          "collected": 28
+        },
+        {
+          "file": "server/tests/test_opd_charges.py",
+          "collected": 35
+        },
+        {
+          "file": "server/tests/test_opd_consultation.py",
+          "collected": 13
+        },
+        {
+          "file": "server/tests/test_opd_orders.py",
+          "collected": 26
+        },
+        {
+          "file": "server/tests/test_opd_queue_actions.py",
+          "collected": 25
+        },
+        {
+          "file": "server/tests/test_opd_scope_drift.py",
+          "collected": 10
+        },
+        {
+          "file": "server/tests/test_opd_to_ip_conversion.py",
+          "collected": 31
+        },
+        {
+          "file": "server/tests/test_ops_health.py",
+          "collected": 19
+        },
+        {
+          "file": "server/tests/test_opt_in_platform.py",
+          "collected": 50
+        },
+        {
+          "file": "server/tests/test_order_gate_wording.py",
+          "collected": 926
+        },
+        {
+          "file": "server/tests/test_order_time_allergy_grading.py",
+          "collected": 487
+        },
+        {
+          "file": "server/tests/test_orders_service.py",
+          "collected": 14
+        },
+        {
+          "file": "server/tests/test_p3_yield_fallbacks.py",
+          "collected": 3
+        },
+        {
+          "file": "server/tests/test_patient_name_rule.py",
+          "collected": 33
+        },
+        {
+          "file": "server/tests/test_patient_scope_routes.py",
+          "collected": 37
+        },
+        {
+          "file": "server/tests/test_patient_story.py",
+          "collected": 7
+        },
+        {
+          "file": "server/tests/test_patients_registered_status_migration.py",
+          "collected": 15
+        },
+        {
+          "file": "server/tests/test_payer_partial_and_idempotent.py",
+          "collected": 8
+        },
+        {
+          "file": "server/tests/test_pharmacy_crash_cart.py",
+          "collected": 33
+        },
+        {
+          "file": "server/tests/test_pharmacy_drug_identity.py",
+          "collected": 19
+        },
+        {
+          "file": "server/tests/test_pharmacy_master.py",
+          "collected": 34
+        },
+        {
+          "file": "server/tests/test_pharmacy_purchase_orders.py",
+          "collected": 34
+        },
+        {
+          "file": "server/tests/test_pharmacy_stock_reports.py",
+          "collected": 12
+        },
+        {
+          "file": "server/tests/test_pharmacy_store_schema.py",
+          "collected": 54
+        },
+        {
+          "file": "server/tests/test_pharmacy_vendor_returns.py",
+          "collected": 14
+        },
+        {
+          "file": "server/tests/test_pharmacy_ward_returns.py",
+          "collected": 25
+        },
+        {
+          "file": "server/tests/test_phase0_security.py",
+          "collected": 6
+        },
+        {
+          "file": "server/tests/test_portal_labs_and_requests.py",
+          "collected": 8
+        },
+        {
+          "file": "server/tests/test_procurement.py",
+          "collected": 87
+        },
+        {
+          "file": "server/tests/test_procurement_domain_guard.py",
+          "collected": 50
+        },
+        {
+          "file": "server/tests/test_rbac.py",
+          "collected": 23
+        },
+        {
+          "file": "server/tests/test_readmission_same_record.py",
+          "collected": 29
+        },
+        {
+          "file": "server/tests/test_registration_consent.py",
+          "collected": 48
+        },
+        {
+          "file": "server/tests/test_registration_opd_foundation.py",
+          "collected": 12
+        },
+        {
+          "file": "server/tests/test_registration_service.py",
+          "collected": 65
+        },
+        {
+          "file": "server/tests/test_relay_channel_scope.py",
+          "collected": 4
+        },
+        {
+          "file": "server/tests/test_relay_earlier_messages.py",
+          "collected": 4
+        },
+        {
+          "file": "server/tests/test_relay_mixed_timestamps.py",
+          "collected": 3
+        },
+        {
+          "file": "server/tests/test_relay_room_fit.py",
+          "collected": 94
+        },
+        {
+          "file": "server/tests/test_request_limits.py",
+          "collected": 22
+        },
+        {
+          "file": "server/tests/test_reseed_orphans.py",
+          "collected": 5
+        },
+        {
+          "file": "server/tests/test_result_quarantine.py",
+          "collected": 51
+        },
+        {
+          "file": "server/tests/test_retrieval_calibration.py",
+          "collected": 8
+        },
+        {
+          "file": "server/tests/test_risk_block_consistency.py",
+          "collected": 85
+        },
+        {
+          "file": "server/tests/test_room_fit_adversarial.py",
+          "collected": 32
+        },
+        {
+          "file": "server/tests/test_roster_import.py",
+          "collected": 87
+        },
+        {
+          "file": "server/tests/test_sage_ambient_critical_fastpath.py",
+          "collected": 161
+        },
+        {
+          "file": "server/tests/test_sage_answer_timing.py",
+          "collected": 32
+        },
+        {
+          "file": "server/tests/test_sage_assessment_copy.py",
+          "collected": 7
+        },
+        {
+          "file": "server/tests/test_sage_confidence.py",
+          "collected": 49
+        },
+        {
+          "file": "server/tests/test_sage_conversation_threads.py",
+          "collected": 6
+        },
+        {
+          "file": "server/tests/test_sage_guard_gaps.py",
+          "collected": 30
+        },
+        {
+          "file": "server/tests/test_sage_history_marker.py",
+          "collected": 70
+        },
+        {
+          "file": "server/tests/test_sage_history_patient_name.py",
+          "collected": 8
+        },
+        {
+          "file": "server/tests/test_sage_history_summarize.py",
+          "collected": 46
+        },
+        {
+          "file": "server/tests/test_sage_insight_refresh.py",
+          "collected": 8
+        },
+        {
+          "file": "server/tests/test_sage_lane_hygiene.py",
+          "collected": 36
+        },
+        {
+          "file": "server/tests/test_sage_patient_phrasing.py",
+          "collected": 23
+        },
+        {
+          "file": "server/tests/test_sage_provenance.py",
+          "collected": 42
+        },
+        {
+          "file": "server/tests/test_sage_sticky_anchor.py",
+          "collected": 102
+        },
+        {
+          "file": "server/tests/test_sage_warm_retrieval.py",
+          "collected": 20
+        },
+        {
+          "file": "server/tests/test_scheduling_revenue_surgical.py",
+          "collected": 40
+        },
+        {
+          "file": "server/tests/test_scoring_off_house_screens.py",
+          "collected": 6
+        },
+        {
+          "file": "server/tests/test_scribe_audio_tempfiles.py",
+          "collected": 3
+        },
+        {
+          "file": "server/tests/test_scribe_placeholder_sections.py",
+          "collected": 8
+        },
+        {
+          "file": "server/tests/test_scribe_sign_ack_and_audit.py",
+          "collected": 13
+        },
+        {
+          "file": "server/tests/test_seasonal_calendar.py",
+          "collected": 110
+        },
+        {
+          "file": "server/tests/test_seed_clinical_history.py",
+          "collected": 64
+        },
+        {
+          "file": "server/tests/test_seed_pharmacy_queue.py",
+          "collected": 1
+        },
+        {
+          "file": "server/tests/test_seed_shift_catalogue.py",
+          "collected": 1
+        },
+        {
+          "file": "server/tests/test_seed_vitals_window.py",
+          "collected": 21
+        },
+        {
+          "file": "server/tests/test_shadow_clinical_lanes.py",
+          "collected": 21
+        },
+        {
+          "file": "server/tests/test_shadow_producers.py",
+          "collected": 24
+        },
+        {
+          "file": "server/tests/test_shadow_scorecard.py",
+          "collected": 42
+        },
+        {
+          "file": "server/tests/test_simulated_results.py",
+          "collected": 8
+        },
+        {
+          "file": "server/tests/test_simulator_partial_vitals.py",
+          "collected": 6
+        },
+        {
+          "file": "server/tests/test_site_config.py",
+          "collected": 36
+        },
+        {
+          "file": "server/tests/test_speech_offline.py",
+          "collected": 7
+        },
+        {
+          "file": "server/tests/test_stay_times.py",
+          "collected": 19
+        },
+        {
+          "file": "server/tests/test_stream_sanitizer.py",
+          "collected": 535
+        },
+        {
+          "file": "server/tests/test_surgery_detail_location.py",
+          "collected": 3
+        },
+        {
+          "file": "server/tests/test_surgery_package_honesty.py",
+          "collected": 12
+        },
+        {
+          "file": "server/tests/test_surgery_scope.py",
+          "collected": 33
+        },
+        {
+          "file": "server/tests/test_thinking_mode.py",
+          "collected": 85
+        },
+        {
+          "file": "server/tests/test_timestamp_canonical.py",
+          "collected": 13
+        },
+        {
+          "file": "server/tests/test_upload_patient_scope.py",
+          "collected": 4
+        },
+        {
+          "file": "server/tests/test_verify_gate3_ward_shorthand_http.py",
+          "collected": 7
+        },
+        {
+          "file": "server/tests/test_vigil_board_news2.py",
+          "collected": 7
+        },
+        {
+          "file": "server/tests/test_vigil_chart_latest_row.py",
+          "collected": 9
+        },
+        {
+          "file": "server/tests/test_vigil_scoring_parity.py",
+          "collected": 7
+        },
+        {
+          "file": "server/tests/test_vitals_emit_lanes.py",
+          "collected": 14
+        },
+        {
+          "file": "server/tests/test_vitals_source.py",
+          "collected": 124
+        },
+        {
+          "file": "server/tests/test_ward_brief_latest_vitals.py",
+          "collected": 11
+        },
+        {
+          "file": "server/tests/test_ward_brief_watchlist_scope.py",
+          "collected": 5
+        },
+        {
+          "file": "server/tests/test_ward_clerk_role.py",
+          "collected": 16
+        },
+        {
+          "file": "server/tests/test_ward_record_clerk_entry.py",
+          "collected": 10
+        },
+        {
+          "file": "server/tests/test_ward_record_clerk_staffing.py",
+          "collected": 6
+        },
+        {
+          "file": "server/tests/test_ward_record_corrections.py",
+          "collected": 17
+        },
+        {
+          "file": "server/tests/test_ward_record_med_round_off.py",
+          "collected": 5
+        },
+        {
+          "file": "server/tests/test_ward_record_profile_switch.py",
+          "collected": 6
+        },
+        {
+          "file": "server/tests/test_ward_record_rounds.py",
+          "collected": 14
+        },
+        {
+          "file": "server/tests/test_ward_record_scoring_off.py",
+          "collected": 30
+        },
+        {
+          "file": "server/tests/test_ward_record_transcribed_guards.py",
+          "collected": 10
+        },
+        {
+          "file": "server/tests/test_warm_standby.py",
+          "collected": 49
+        },
+        {
+          "file": "server/tests/test_wedge_loop.py",
+          "collected": 63
+        },
+        {
+          "file": "server/tests/test_workforce.py",
+          "collected": 54
+        },
+        {
+          "file": "server/tests/test_world_model.py",
+          "collected": 7
+        },
+        {
+          "file": "server/tests/test_ws_realtime.py",
+          "collected": 11
+        },
+        {
+          "file": "server/tests/test_zz_partial_miss_probe.py",
+          "collected": 1
+        },
+        {
+          "file": "server/tests/test_zzz_scope_diag.py",
+          "collected": 1
+        }
+      ]
+    }
+  ],
+  "interrupted_partition_followup": {
+    "interrupted_shard": 1,
+    "reason": "Source-audit os.walk descended into generated/runtime prediction directories; the same process remained in that metadata traversal for many minutes. SIGINT was sent only to the verified owned pytest process to obtain its results. No application runtime or database was stopped.",
+    "interrupted_pytest_pid": 40149,
+    "fully_completed_files_before_stalled_file": 204,
+    "original_cases_in_those_files": 7239,
+    "stalled_file": "server/tests/test_shadow_producers.py",
+    "already_executed_cases_in_stalled_file": 16,
+    "stalled_file_original_collected_cases": 24,
+    "repair": "Source traversal prunes known runtime/vendor corpora while retaining repository implementation and evaluation harness source. Earlier source inventory was 369 Python files in 0.0282s; the late audio converter adds one source file.",
+    "remaining_original_files": [
+      "server/tests/test_shadow_producers.py",
+      "server/tests/test_shadow_scorecard.py",
+      "server/tests/test_simulated_results.py",
+      "server/tests/test_simulator_partial_vitals.py",
+      "server/tests/test_site_config.py",
+      "server/tests/test_speech_offline.py",
+      "server/tests/test_stay_times.py",
+      "server/tests/test_stream_sanitizer.py",
+      "server/tests/test_surgery_detail_location.py",
+      "server/tests/test_surgery_package_honesty.py",
+      "server/tests/test_surgery_scope.py",
+      "server/tests/test_thinking_mode.py",
+      "server/tests/test_timestamp_canonical.py",
+      "server/tests/test_upload_patient_scope.py",
+      "server/tests/test_verify_gate3_ward_shorthand_http.py",
+      "server/tests/test_vigil_board_news2.py",
+      "server/tests/test_vigil_chart_latest_row.py",
+      "server/tests/test_vigil_scoring_parity.py",
+      "server/tests/test_vitals_emit_lanes.py",
+      "server/tests/test_vitals_source.py",
+      "server/tests/test_ward_brief_latest_vitals.py",
+      "server/tests/test_ward_brief_watchlist_scope.py",
+      "server/tests/test_ward_clerk_role.py",
+      "server/tests/test_ward_record_clerk_entry.py",
+      "server/tests/test_ward_record_clerk_staffing.py",
+      "server/tests/test_ward_record_corrections.py",
+      "server/tests/test_ward_record_med_round_off.py",
+      "server/tests/test_ward_record_profile_switch.py",
+      "server/tests/test_ward_record_rounds.py",
+      "server/tests/test_ward_record_scoring_off.py",
+      "server/tests/test_ward_record_transcribed_guards.py",
+      "server/tests/test_warm_standby.py",
+      "server/tests/test_wedge_loop.py",
+      "server/tests/test_workforce.py",
+      "server/tests/test_world_model.py",
+      "server/tests/test_ws_realtime.py",
+      "server/tests/test_zz_partial_miss_probe.py",
+      "server/tests/test_zzz_scope_diag.py"
+    ],
+    "remaining_original_collected_cases": 1311,
+    "remainder_run": {
+      "name": "Remaining original shard1 files plus two tests added after snapshot",
+      "cwd": "/Users/samuelmorningstar/Documents/Projects/Orb",
+      "environment": {
+        "ORB_DEPLOYMENT_PROFILE": "dev"
+      },
+      "argv": [
+        "/private/tmp/orb-core-upgrade-20261011/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "--tb=short",
+        "server/tests/test_shadow_producers.py",
+        "server/tests/test_shadow_scorecard.py",
+        "server/tests/test_simulated_results.py",
+        "server/tests/test_simulator_partial_vitals.py",
+        "server/tests/test_site_config.py",
+        "server/tests/test_speech_offline.py",
+        "server/tests/test_stay_times.py",
+        "server/tests/test_stream_sanitizer.py",
+        "server/tests/test_surgery_detail_location.py",
+        "server/tests/test_surgery_package_honesty.py",
+        "server/tests/test_surgery_scope.py",
+        "server/tests/test_thinking_mode.py",
+        "server/tests/test_timestamp_canonical.py",
+        "server/tests/test_upload_patient_scope.py",
+        "server/tests/test_verify_gate3_ward_shorthand_http.py",
+        "server/tests/test_vigil_board_news2.py",
+        "server/tests/test_vigil_chart_latest_row.py",
+        "server/tests/test_vigil_scoring_parity.py",
+        "server/tests/test_vitals_emit_lanes.py",
+        "server/tests/test_vitals_source.py",
+        "server/tests/test_ward_brief_latest_vitals.py",
+        "server/tests/test_ward_brief_watchlist_scope.py",
+        "server/tests/test_ward_clerk_role.py",
+        "server/tests/test_ward_record_clerk_entry.py",
+        "server/tests/test_ward_record_clerk_staffing.py",
+        "server/tests/test_ward_record_corrections.py",
+        "server/tests/test_ward_record_med_round_off.py",
+        "server/tests/test_ward_record_profile_switch.py",
+        "server/tests/test_ward_record_rounds.py",
+        "server/tests/test_ward_record_scoring_off.py",
+        "server/tests/test_ward_record_transcribed_guards.py",
+        "server/tests/test_warm_standby.py",
+        "server/tests/test_wedge_loop.py",
+        "server/tests/test_workforce.py",
+        "server/tests/test_world_model.py",
+        "server/tests/test_ws_realtime.py",
+        "server/tests/test_zz_partial_miss_probe.py",
+        "server/tests/test_zzz_scope_diag.py",
+        "server/tests/test_e2e_process_cleanup.py",
+        "server/tests/test_whisper_audio_tempfiles.py"
+      ],
+      "result": {
+        "passed": 1332,
+        "failed": 0,
+        "skipped": 1,
+        "xfailed": 0,
+        "seconds": 98.54
+      },
+      "overlap": "Overlaps broad partitions and/or other focused selections; do not sum this result.",
+      "raw_log": {
+        "path": "/private/tmp/orb-upgraded-remainder-20261011.log",
+        "sha256": "29f8ad0f9ad7d983c3569de4ae958c76b2b273e91ae38fb522aa49a761100dca",
+        "retention": "Temporary host file; raw logs were not copied into the repository."
+      },
+      "notes": "40 files: 38 original remainder files (1311 original cases), plus e2e_process_cleanup and whisper_audio_tempfiles. Also includes eight scorecard cases added after snapshot. Entire stalled file re-run, so 16 previously executed cases overlap. One opt-in real-appliance backup test skipped. This run preceded the late 14 audio cases and A33 test file."
+    },
+    "membership_artifact": "docs/audit-2026-10/backend-remainder-files.json"
+  },
+  "observed_failure_dispositions": [
+    {
+      "node": "server/tests/test_opd_socket_rooms.py::test_a_socket_in_two_of_the_rooms_hears_the_nudge_once",
+      "partition": 0,
+      "cause": "Test fake omitted the packet_class.json contract now used by Socket.IO BaseManager.set_server.",
+      "disposition": "Use the real AsyncServer manager; deduplicated-room delivery assertion preserved. Fresh 15-case module and later 412-case selection pass."
+    },
+    {
+      "node": "server/tests/test_wedge_end_to_end.py::test_the_alert_assessment_does_not_inflate_the_time_saved_proxy",
+      "partition": 0,
+      "cause": "Strict XPASS after service fix became visible to a process that had already collected the old strict-xfail marker.",
+      "disposition": "Remove fixed defect marker and add alert-versus-interactive metric regressions; fresh wedge/scorecard and 412-case selection pass."
+    },
+    {
+      "node": "server/tests/test_dose_guard_order_lanes.py::test_relay_agentic_confirm_refuses_it",
+      "partition": 1,
+      "cause": "Shared catalog contained a competing unstocked generic-name match, yielding existing out-of-stock refusal before the intended dose guard.",
+      "disposition": "Use a unique stocked catalog/lot fixture and explicit target. Clinical order rules and refusal precedence unchanged; fresh module and planted-contamination proof pass."
+    },
+    {
+      "node": "server/tests/test_multisite_spine.py::test_the_status_page_reports_one_facility_in_words",
+      "partition": 1,
+      "cause": "Shared session contained intentional department spelling variants from other modules; status correctly returned attention.",
+      "disposition": "Clean-status scenario uses a test-local initialized database; added polluted-session parameter proves real attention remains before and after. Original clean status assertions preserved; fresh selection passes."
+    },
+    {
+      "node": "server/tests/test_sage_patient_phrasing.py::test_an_invented_name_gets_no_matching_patient[What are {n}'s vitals?]",
+      "partition": 1,
+      "cause": "Accumulated foreign-department census changed the intended absent-patient scenario to an existing out-of-scope denial.",
+      "disposition": "Opt-in module database isolation makes the absent-census fixture deterministic. Original result was a fail-closed outside-department denial with no chart. No patient resolver algorithm or R026 clinical acceptance claim changed."
+    },
+    {
+      "node": "server/tests/test_sage_patient_phrasing.py::test_a_bed_alone_is_enough_to_warn",
+      "partition": 1,
+      "cause": "Shared census contained bed 9917, contradicting the intended nonexistent-bed fixture.",
+      "disposition": "Fresh module database defines the absent-bed scenario; original outcome was fail-closed outside-department denial. Fresh selection and planted-contamination proof pass."
+    },
+    {
+      "node": "server/tests/test_sage_sticky_anchor.py::test_naming_a_patient_who_exists_nowhere_suppresses_the_anchor",
+      "partition": 1,
+      "cause": "Accumulated census violated the intended nonexistent-name fixture.",
+      "disposition": "Fresh module database defines absence; original outcome was fail-closed outside-department denial with no chart. Sticky-anchor/no-matching assertions and resolver clinical policy unchanged; fresh selection passes."
+    }
+  ],
+  "original_expected_failures": {
+    "reported_count": 6,
+    "interpretation": "Original shard0 retained pre-fix xfail markers/imports: five ambient-prefix defects handled by root and the alert-lane telemetry defect. Fresh test_sage_ambient_retraction and test_wedge_end_to_end were included in the 412-case passing selection; no expected failures were reported in that selection."
+  },
+  "focused_runs": [
+    {
+      "name": "Fresh combined regression selection after original broad failures and harness fixes",
+      "cwd": "/Users/samuelmorningstar/Documents/Projects/Orb",
+      "environment": {
+        "ORB_DEPLOYMENT_PROFILE": "dev"
+      },
+      "argv": [
+        "/private/tmp/orb-core-upgrade-20261011/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "--tb=short",
+        "server/tests/test_dose_guard_order_lanes.py",
+        "server/tests/test_multisite_spine.py",
+        "server/tests/test_sage_patient_phrasing.py",
+        "server/tests/test_sage_sticky_anchor.py",
+        "server/tests/test_opd_socket_rooms.py",
+        "server/tests/test_wedge_end_to_end.py",
+        "server/tests/test_shadow_scorecard.py",
+        "server/tests/test_shadow_producers.py",
+        "server/tests/test_sage_ambient_retraction.py",
+        "server/tests/test_backup_receipt.py",
+        "server/tests/test_backup_ward_packs.py",
+        "server/tests/test_warm_standby.py",
+        "server/tests/test_install_script.py",
+        "server/tests/test_auth_dependency_hardening.py",
+        "server/tests/test_discharge_qr_backend.py"
+      ],
+      "result": {
+        "passed": 412,
+        "failed": 0,
+        "skipped": 1,
+        "xfailed": 0,
+        "seconds": 60.78
+      },
+      "overlap": "Overlaps broad partitions and/or other focused selections; do not sum this result.",
+      "raw_log": {
+        "path": "/private/tmp/orb-upgraded-final-regressions-20261011.log",
+        "sha256": "652f36ca3e761ab91880b2df60de4dedb1dde49a532506d9cc8dfc0ece5548d4",
+        "retention": "Temporary host file; raw logs were not copied into the repository."
+      },
+      "notes": "One existing opt-in real-appliance backup test remained skipped. All synthetic backup producer/receipt tests execute. This run preceded the late audio and A33 changes."
+    },
+    {
+      "name": "Fresh downtime and E2E isolation harness regressions",
+      "cwd": "/Users/samuelmorningstar/Documents/Projects/Orb",
+      "environment": {
+        "ORB_DEPLOYMENT_PROFILE": "dev"
+      },
+      "argv": [
+        "/private/tmp/orb-core-upgrade-20261011/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "--tb=short",
+        "server/tests/test_downtime.py",
+        "server/tests/test_e2e_isolation.py"
+      ],
+      "result": {
+        "passed": 19,
+        "failed": 0,
+        "skipped": 0,
+        "xfailed": 0,
+        "seconds": 4.22
+      },
+      "overlap": "Overlaps broad partitions and/or other focused selections; do not sum this result.",
+      "raw_log": {
+        "path": "/private/tmp/orb-upgraded-final-harness-regressions-20261011.log",
+        "sha256": "ecb697f8d098ea793bf2426c551ebc3770c0bb18690412852d975cde63817869",
+        "retention": "Temporary host file; raw logs were not copied into the repository."
+      }
+    },
+    {
+      "name": "Fresh backup producer, receipt and ward archive portability regressions",
+      "cwd": "/Users/samuelmorningstar/Documents/Projects/Orb",
+      "environment": {
+        "ORB_DEPLOYMENT_PROFILE": "dev"
+      },
+      "argv": [
+        "/private/tmp/orb-core-upgrade-20261011/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "--tb=short",
+        "server/tests/test_backup_receipt.py",
+        "server/tests/test_backup_ward_packs.py"
+      ],
+      "result": {
+        "passed": 7,
+        "failed": 0,
+        "skipped": 0,
+        "xfailed": 0,
+        "seconds": 4.66
+      },
+      "overlap": "Overlaps broad partitions and/or other focused selections; do not sum this result.",
+      "raw_log": {
+        "path": "/private/tmp/orb-upgraded-backup-final-20261011.log",
+        "sha256": "cb9baf77bd7e1a9f74ee55aef4dba6005dc879522f6f727979a536922c2c31e1",
+        "retention": "Temporary host file; raw logs were not copied into the repository."
+      },
+      "notes": "Synthetic temporary databases only; exercises real producer and receipts."
+    },
+    {
+      "name": "Synthetic accumulated-census and competing-stock contamination proof",
+      "cwd": "/Users/samuelmorningstar/Documents/Projects/Orb",
+      "environment": {
+        "ORB_DEPLOYMENT_PROFILE": "dev",
+        "PYTHONPATH": "/private/tmp"
+      },
+      "argv": [
+        "/private/tmp/orb-core-upgrade-20261011/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "--tb=short",
+        "-p",
+        "orb_audit_fixture_contamination",
+        "server/tests/test_dose_guard_order_lanes.py",
+        "server/tests/test_sage_patient_phrasing.py",
+        "server/tests/test_sage_sticky_anchor.py"
+      ],
+      "result": {
+        "passed": 134,
+        "failed": 0,
+        "skipped": 0,
+        "xfailed": 0,
+        "seconds": 20.37
+      },
+      "overlap": "Overlaps broad partitions and/or other focused selections; do not sum this result.",
+      "raw_log": {
+        "path": "/private/tmp/orb-upgraded-contamination-proof-20261011.log",
+        "sha256": "7b036fcffaf7ed4a7329c855ce77dc9d6a22ab56f2878ef3ab4232b60a405eea",
+        "retention": "Temporary host file; raw logs were not copied into the repository."
+      },
+      "notes": "Audit-only /private/tmp/orb_audit_fixture_contamination.py plugin plants controlled shared-session contamination; invocation additionally uses -p orb_audit_fixture_contamination with PYTHONPATH=/private/tmp. These are test-fixture isolation checks. Clinical patient-resolution acceptance R026 is not closed."
+    },
+    {
+      "name": "Late private WAV conversion and failure-cleanup regressions",
+      "cwd": "/Users/samuelmorningstar/Documents/Projects/Orb/server",
+      "environment": {},
+      "argv": [
+        "/private/tmp/orb-core-upgrade-20261011/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_whisper_audio_tempfiles.py",
+        "tests/test_speech_offline.py",
+        "tests/test_scribe_audio_tempfiles.py"
+      ],
+      "result": {
+        "passed": 31,
+        "failed": 0,
+        "skipped": 0,
+        "xfailed": 0,
+        "seconds": 1.94
+      },
+      "overlap": "Overlaps broad partitions and/or other focused selections; do not sum this result.",
+      "evidence": "Execution output captured by the audit agent tool; no persistent raw log was written.",
+      "notes": "Backend audit owner supplied exact command/result. No feature flags. No actual MLX/ffmpeg/daemon execution."
+    },
+    {
+      "name": "Late proven dead-helper cleanup and service regression selection",
+      "cwd": "/Users/samuelmorningstar/Documents/Projects/Orb/server",
+      "environment": {},
+      "argv": [
+        "/private/tmp/orb-core-upgrade-20261011/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_adt_census.py",
+        "tests/test_adt_nabh_indicators.py",
+        "tests/test_bed_master.py",
+        "tests/test_sage_proactive_sirs.py",
+        "tests/test_sage_insights_latest_vitals.py",
+        "tests/test_sage_insight_refresh.py",
+        "tests/test_sage_insight_observed_at.py",
+        "tests/test_insight_feedback.py",
+        "tests/test_db_exception_aliases.py::test_no_stdlib_sqlite3_exception_classes_outside_the_seam"
+      ],
+      "result": {
+        "passed": 169,
+        "failed": 0,
+        "skipped": 0,
+        "xfailed": 0,
+        "seconds": 19.6
+      },
+      "overlap": "Overlaps broad partitions and/or other focused selections; do not sum this result.",
+      "evidence": "Execution output captured by the audit agent tool; no persistent raw log was written.",
+      "notes": "Backend audit owner supplied exact command/result. No feature flags. This selection preceded the A33 scope change; affected Sage modules also run in the final A33 selection."
+    },
+    {
+      "name": "Final A33 patient, department and facility authorization plus existing boundary regressions",
+      "cwd": "/Users/samuelmorningstar/Documents/Projects/Orb",
+      "environment": {
+        "ORB_DEPLOYMENT_PROFILE": "dev"
+      },
+      "argv": [
+        "/private/tmp/orb-core-upgrade-20261011/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "--tb=short",
+        "server/tests/test_sage_insight_scope.py",
+        "server/tests/test_handoff_blocked.py",
+        "server/tests/test_insight_feedback.py",
+        "server/tests/test_sage_insight_observed_at.py",
+        "server/tests/test_ward_record_scoring_off.py",
+        "server/tests/test_sage_insights_latest_vitals.py",
+        "server/tests/test_sage_insight_refresh.py",
+        "server/tests/test_sage_proactive_sirs.py",
+        "server/tests/test_nurse_write_scope.py",
+        "server/tests/test_facility_fence.py"
+      ],
+      "result": {
+        "passed": 234,
+        "failed": 0,
+        "skipped": 0,
+        "xfailed": 0,
+        "seconds": 24.7
+      },
+      "overlap": "Overlaps broad partitions and/or other focused selections; do not sum this result.",
+      "raw_log": {
+        "path": "/private/tmp/orb-proactive-scope-final-regressions-20261011.log",
+        "sha256": "3f283a13335b7d5f95a9fc158ec080921297938ea9c31529866e6368cbca9873",
+        "retention": "Temporary host file; raw logs were not copied into the repository."
+      },
+      "notes": "Includes 53 new cases for scoped list/transition/action/evaluate, malformed bodies, assigned and null recipients, idempotent guards, admin/unscoped semantics and preserved default multifacility fence. Independent read-only review found no bypass in the patched HTTP paths."
+    },
+    {
+      "name": "Final source-level event-loop discipline after new audio converter and scope helpers",
+      "cwd": "/Users/samuelmorningstar/Documents/Projects/Orb",
+      "environment": {
+        "ORB_DEPLOYMENT_PROFILE": "dev"
+      },
+      "argv": [
+        "/private/tmp/orb-core-upgrade-20261011/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "--tb=short",
+        "server/tests/test_event_loop_discipline.py"
+      ],
+      "result": {
+        "passed": 596,
+        "failed": 0,
+        "skipped": 0,
+        "xfailed": 0,
+        "seconds": 6.39
+      },
+      "overlap": "Overlaps broad partitions and/or other focused selections; do not sum this result.",
+      "evidence": "Execution output captured by the audit agent tool; no persistent raw log was written.",
+      "notes": "Includes the two newly parameterized source cases for services/audio_conversion.py."
+    }
+  ],
+  "final_collection": {
+    "argv": [
+      "/private/tmp/orb-core-upgrade-20261011/bin/python",
+      "-m",
+      "pytest",
+      "--collect-only",
+      "-q",
+      "server/tests"
+    ],
+    "cwd": "/Users/samuelmorningstar/Documents/Projects/Orb",
+    "environment": {
+      "ORB_DEPLOYMENT_PROFILE": "dev"
+    },
+    "collected": 15408,
+    "file_count": 487,
+    "seconds": 17.63,
+    "log": {
+      "path": "/private/tmp/orb-upgraded-final-collection-20261011.log",
+      "sha256": "cbd5e606ad5fc4264aff743fcf18c6474f701464d9f7b6c899255e6363539cd9"
+    },
+    "new_files": [
+      "server/tests/test_e2e_process_cleanup.py",
+      "server/tests/test_sage_insight_scope.py",
+      "server/tests/test_whisper_audio_tempfiles.py"
+    ],
+    "changed_file_case_counts": [
+      {
+        "file": "server/tests/test_e2e_process_cleanup.py",
+        "original": 0,
+        "final": 7,
+        "delta": 7
+      },
+      {
+        "file": "server/tests/test_event_loop_discipline.py",
+        "original": 594,
+        "final": 596,
+        "delta": 2
+      },
+      {
+        "file": "server/tests/test_multisite_spine.py",
+        "original": 36,
+        "final": 37,
+        "delta": 1
+      },
+      {
+        "file": "server/tests/test_sage_ambient_retraction.py",
+        "original": 41,
+        "final": 55,
+        "delta": 14
+      },
+      {
+        "file": "server/tests/test_sage_insight_scope.py",
+        "original": 0,
+        "final": 53,
+        "delta": 53
+      },
+      {
+        "file": "server/tests/test_shadow_scorecard.py",
+        "original": 42,
+        "final": 50,
+        "delta": 8
+      },
+      {
+        "file": "server/tests/test_wedge_end_to_end.py",
+        "original": 15,
+        "final": 21,
+        "delta": 6
+      },
+      {
+        "file": "server/tests/test_whisper_audio_tempfiles.py",
+        "original": 0,
+        "final": 21,
+        "delta": 21
+      }
+    ],
+    "execution_limit": "This independent collection confirms final inventory and importability; execution evidence is the original partitions, bounded remainder and named focused runs above."
+  },
+  "remaining_limitations": [
+    "ML dependency advisory gate remains red (Torch/Transformers); direct package audit and test success do not close it.",
+    "Full production Apple Silicon dependency installation, Linux GitHub Actions, live hardware ASR/daemon/ffmpeg and real appliance restore were not executed.",
+    "Original broad skip reasons were not all printed by -q; do not infer every skip from the later opt-in backup skip.",
+    "Clinical patient-resolution acceptance R026 remains held; fixture isolation does not validate or change that clinical algorithm."
+  ],
+  "late_developer_audio_benchmark_cleanup": {
+    "files": [
+      "server/scripts/benchmark_asr.py",
+      "server/scripts/benchmark_wer.py"
+    ],
+    "behavior": "Private mkstemp WAV allocation; owned descriptor/audio cleanup on failure/interruption; caller input audio and existing database cleanup behavior preserved. An all-synthesis-failed WER run reports clear stderr and exits 1 before calculating averages.",
+    "synthetic_checks": {
+      "passed": 11,
+      "failed": 0,
+      "permanent_cases_added": 0,
+      "log": {
+        "path": "/private/tmp/orb-benchmark-temp-verification-20261011.log",
+        "sha256": "21c5e3d93680867b75414d5cd995ff4018f7d9d4a25b3f2785ff92cca9d16a52"
+      },
+      "script": {
+        "path": "/private/tmp/orb-benchmark-temp-verification-20261011.py",
+        "sha256": "1bcaf54b1e87c8dd8011794727779cd21374997f053babb7234325ae241c3f03"
+      }
+    },
+    "shared_audio_followup": {
+      "passed": 31,
+      "failed": 0,
+      "seconds": 1.5,
+      "log": {
+        "path": "/private/tmp/orb-benchmark-shared-conversion-20261011.log",
+        "sha256": "516c00b34741eb644f599decf51f35375e7784c87c30d5771b6f73d3d663885f"
+      },
+      "overlaps_existing_audio_selection": true
+    },
+    "collection_count_unchanged": 15408,
+    "limits": "No models, real speech synthesis/audio or database benchmark execution; WER configured-database isolation remains open (A34)."
+  }
+}

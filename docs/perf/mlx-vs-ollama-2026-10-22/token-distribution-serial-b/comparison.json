@@ -1,0 +1,7 @@
+{
+  "status": "inconclusive",
+  "clinical_quality_qualified": false,
+  "full_distributions_compared": false,
+  "requires_separate_mlx_input_tokenization_parity_evidence": true,
+  "reason": "token_evidence_or_fresh_prompt_counts_not_attested"
+}

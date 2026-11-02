@@ -1,0 +1,53 @@
+{
+  "scope": "tiny synthetic arrays only; no model weights or clinical inference",
+  "rows": [
+    {
+      "device": "DeviceType.cpu",
+      "input_dtype": "mlx.core.float16",
+      "weight_dtype": "mlx.core.float32",
+      "rms_output_dtype": "mlx.core.float32",
+      "mixed_dense_output_dtype": "mlx.core.float32",
+      "restored_output_dtype": "mlx.core.float16"
+    },
+    {
+      "device": "DeviceType.cpu",
+      "input_dtype": "mlx.core.bfloat16",
+      "weight_dtype": "mlx.core.float32",
+      "rms_output_dtype": "mlx.core.float32",
+      "mixed_dense_output_dtype": "mlx.core.float32",
+      "restored_output_dtype": "mlx.core.bfloat16"
+    },
+    {
+      "device": "DeviceType.cpu",
+      "input_dtype": "mlx.core.float32",
+      "weight_dtype": "mlx.core.float32",
+      "rms_output_dtype": "mlx.core.float32",
+      "mixed_dense_output_dtype": "mlx.core.float32",
+      "restored_output_dtype": "mlx.core.float32"
+    },
+    {
+      "device": "DeviceType.gpu",
+      "input_dtype": "mlx.core.float16",
+      "weight_dtype": "mlx.core.float32",
+      "rms_output_dtype": "mlx.core.float32",
+      "mixed_dense_output_dtype": "mlx.core.float32",
+      "restored_output_dtype": "mlx.core.float16"
+    },
+    {
+      "device": "DeviceType.gpu",
+      "input_dtype": "mlx.core.bfloat16",
+      "weight_dtype": "mlx.core.float32",
+      "rms_output_dtype": "mlx.core.float32",
+      "mixed_dense_output_dtype": "mlx.core.float32",
+      "restored_output_dtype": "mlx.core.bfloat16"
+    },
+    {
+      "device": "DeviceType.gpu",
+      "input_dtype": "mlx.core.float32",
+      "weight_dtype": "mlx.core.float32",
+      "rms_output_dtype": "mlx.core.float32",
+      "mixed_dense_output_dtype": "mlx.core.float32",
+      "restored_output_dtype": "mlx.core.float32"
+    }
+  ]
+}

@@ -1,0 +1,96 @@
+{
+  "scope": "Installed-source audit and tiny synthetic CPU checkpoint equivalence; not production model memory, latency or clinical validation",
+  "installed_versions": {
+    "transformers": "5.19.0",
+    "torch": "2.14.1"
+  },
+  "findings": [
+    {
+      "source": "modeling_utils.py",
+      "lines": [
+        4098,
+        4100
+      ],
+      "finding": "low_cpu_mem_usage is explicitly popped as no longer used; adding True would be a no-op"
+    },
+    {
+      "source": "modeling_utils.py",
+      "lines": [
+        3734,
+        3761
+      ],
+      "finding": "Ordinary non-Deepspeed model construction already uses torch.device(meta)"
+    },
+    {
+      "source": "modeling_utils.py",
+      "lines": [
+        363,
+        366
+      ],
+      "finding": "Zip-format bin checkpoint loading already uses torch.load mmap=True"
+    },
+    {
+      "source": "modeling_utils.py",
+      "lines": [
+        4455,
+        4478
+      ],
+      "finding": "Safetensors CPU loading uses mmap-backed lazy get_slice materialization"
+    },
+    {
+      "source": "core_model_loading.py",
+      "lines": [
+        1233,
+        1271,
+        1624,
+        1636
+      ],
+      "finding": "Default up-to-four-thread eager parameter materialization is disabled by HF_DEACTIVATE_ASYNC_LOAD=1; the synchronous path returns deferred callables to avoid saturating CPU memory during conversion"
+    }
+  ],
+  "change": {
+    "file": "server/services/knowledge_worker.py",
+    "entrypoint": "_worker_init",
+    "setting": "HF_DEACTIVATE_ASYNC_LOAD=1 forced before Torch/HF imports",
+    "unchanged": [
+      "checkpoint files",
+      "dtype selection",
+      "dtype conversion",
+      "device placement",
+      "runtime precision",
+      "forward math",
+      "tokenization",
+      "batches",
+      "candidate counts",
+      "quality thresholds",
+      "memory guards"
+    ]
+  },
+  "verification": {
+    "file": "server/tests/test_knowledge_worker_serial_loading.py",
+    "architectures": [
+      "XLMRobertaModel",
+      "XLMRobertaForSequenceClassification"
+    ],
+    "fixture": "Complete tiny locally generated CPU float32 safetensors checkpoints; 1 layer, hidden size16, vocabulary32",
+    "assertions": [
+      "Async path actually creates its materialization pool while serial path creates none",
+      "Every loaded state_dict tensor has exact key/shape/dtype and bitwise-equal bytes against both the other loader and the original synthetic checkpoint",
+      "Nonpersistent buffers are bitwise equal",
+      "Embedding hidden states and pooled output, or classifier logits, are bitwise equal on fixed CPU inputs",
+      "Checkpoint SHA256 remains unchanged",
+      "Worker overrides incoming flag0 before Torch import",
+      "No model downloads or GPU inference"
+    ]
+  },
+  "limitations": [
+    "Synthetic tensor/output equivalence does not measure installed full BGE checkpoint peak memory or prove clinical quality",
+    "Serial loading may not materially reduce peak memory because checkpoint loading is already mapped/lazy",
+    "The subsequent whole-model CPU half conversion and MPS transfer remain unchanged",
+    "No production-model download, GPU test or memory-threshold relaxation was performed by this audit"
+  ],
+  "installed_source_sha256": {
+    "modeling_utils.py": "037ef3ca1d0fab4e080bae880adb5c24d68d191e0bd1fe0d626f14f0636ae448",
+    "core_model_loading.py": "c5b6bcdb6401a3cfdf825bc979d41ac3e7e075e09459021363dce5e68c54de22"
+  }
+}

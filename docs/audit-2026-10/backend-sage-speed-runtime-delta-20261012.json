@@ -1,0 +1,145 @@
+{
+  "schema": 1,
+  "verified_at": "2026-10-12T09:04:20.880689+00:00",
+  "status": "application_parity_verified_with_explicit_launcher_delta",
+  "baseline": {
+    "verification": "docs/audit-2026-10/backend-sage-speed-acceptance-20261012/results.json",
+    "source_hashes": "docs/audit-2026-10/backend-sage-speed-acceptance-20261012/source-sha256.json",
+    "source_hashes_sha256": "edee0202111b45ba2276db7791be17f8f770428acc2d03550fb93eaf272e6b7d",
+    "acceptance": {
+      "passed": 16103,
+      "failed": 0,
+      "skipped": 8,
+      "collected": 16111
+    },
+    "immutable_evidence_preserved": true
+  },
+  "method": "Read-only SHA-256 comparison of every v8 manifest path; current git-listed source filtered with identical safe-source exclusions; independent dist inventory comparison and all focused-test source hashes compared. No tests, builds, model calls, or live data/config access.",
+  "application_parity": {
+    "compared_files": 1283,
+    "backend_files": 415,
+    "frontend_files": 868,
+    "definition": "All safely inventoried v8 server application/reference files outside server/tests and server/scripts, plus src files. Operational scripts/tests/docs classified separately.",
+    "changed_paths": [],
+    "new_paths": [],
+    "fingerprint_sha256": "3f32c4b60bd67bccb01a1a77f6665b55cf3c92637db210393b48097460746de6"
+  },
+  "built_frontend_parity": {
+    "compared_files": 181,
+    "changed_paths": [],
+    "new_paths": []
+  },
+  "existing_non_document_source_deltas": [
+    {
+      "path": "scripts/serve-ollama.sh",
+      "v8_sha256": "031f233edbbbe8e5d92e7f038adbc8a6c10dc9540cad2e9e81569531b1a33a38",
+      "current_sha256": "3f0dddbf51af4ae5475b5ef1634d69e16244c7f7c2a3769d2ef191a3f22f6985"
+    },
+    {
+      "path": "server/tests/test_ollama_launcher.py",
+      "v8_sha256": "1ca441025cd807c8705595dca19351abb74aa718b7d59ea92b6ff7ecc1026ecf",
+      "current_sha256": "57d1dee08dbda8d80ae6893509408b4ce72872e79da23d147b0a643e40d4956d"
+    },
+    {
+      "path": "server/tests/test_run_orb_launcher.py",
+      "v8_sha256": "f8e5a249d3ffb57995cb568ad07bbd94e2862c52db96237de6af731abebebc9a",
+      "current_sha256": "07da44592b89639f6cbfcd69b8760a69fc115858b04b25e597f7e1acb09cd7df"
+    }
+  ],
+  "new_non_document_source_deltas": [
+    {
+      "path": "config/ollama-xdg/llama.cpp/config.ini",
+      "current_sha256": "c8807fc49c7a03431fa38f8b4c0fcbce1cd612ccba2b97a2521515eac274a4c0"
+    }
+  ],
+  "documentation_deltas": {
+    "v8_manifest_changes": [
+      {
+        "path": "docs/INSTALL_RUNBOOK.md",
+        "v8_sha256": "462243835a37ee93bfbd80a964bda722083f8e8b1b5e26204af59a7a3aea687f",
+        "current_sha256": "0dfbac9dd73a5b3097297ba802ccdcf1bda4bbcb2e563254fbb7d44a3fc67332"
+      },
+      {
+        "path": "docs/SAGE_SPEED_FIX_2026-10.md",
+        "v8_sha256": "061295db87fe26f337059da2966693ac5bbff655ba82a10fa84f264874f4cdac",
+        "current_sha256": "13e6760b56f7788ff3a1f6661fbd49ab38a187aa3d95a18c2f5e66eeee17abbf"
+      },
+      {
+        "path": "docs/SETUP.md",
+        "v8_sha256": "592d2460bc1c1fef0c5293e961dddd28ab4850bf28398f73351dea0662bf5d75",
+        "current_sha256": "d2e73be1210024fd32018bf1ebdd8f0a5568a30e3aae08e6b89faf56f639f26e"
+      },
+      {
+        "path": "docs/audit-2026-10/ml-runtime-verification.json",
+        "v8_sha256": "44c170f56b7fbabab61cd5e9cd86e029bdf2fe1940bf6d9ff938f253168d1a32",
+        "current_sha256": "a3b61118d336a788c7c2a56bb3f3426ccdd2c3d26b51f831e3069cac88d86371"
+      }
+    ],
+    "nonsecret_template": {
+      "path": ".env.example",
+      "current_sha256": "8c855091eb5ae5bb7137e3f52258fd2113b658a4442f1a958f005912389e5cbc",
+      "comparison": "Excluded from v8 safe-source inventory; explicitly classified as documented nonsecret launcher-template delta. No live .env read."
+    }
+  },
+  "delta_validation": {
+    "verification": "docs/audit-2026-10/ollama-cache-profile-acceptance-20261012/verification.json",
+    "verification_sha256": "dfd55e794046a9df8176b71a6b38ea4c4dd2c1feb0eafec53ad67d68341c7f42",
+    "command": [
+      "/private/tmp/orb-ml-upgrade-20261012/bin/python",
+      "-m",
+      "pytest",
+      "-q",
+      "tests/test_ollama_launcher.py",
+      "tests/test_run_orb_launcher.py",
+      "tests/test_install_script.py",
+      "tests/test_ops_health.py"
+    ],
+    "results": {
+      "passed": 160,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 110.14,
+      "new_parameterized_cases": 50,
+      "membership": {
+        "server/tests/test_ollama_launcher.py": 100,
+        "server/tests/test_run_orb_launcher.py": 20,
+        "server/tests/test_install_script.py": 15,
+        "server/tests/test_ops_health.py": 25
+      }
+    },
+    "tested_source_hashes": {
+      "scripts/serve-ollama.sh": "3f0dddbf51af4ae5475b5ef1634d69e16244c7f7c2a3769d2ef191a3f22f6985",
+      "config/ollama-xdg/llama.cpp/config.ini": "c8807fc49c7a03431fa38f8b4c0fcbce1cd612ccba2b97a2521515eac274a4c0",
+      "server/tests/test_ollama_launcher.py": "57d1dee08dbda8d80ae6893509408b4ce72872e79da23d147b0a643e40d4956d",
+      "server/tests/test_run_orb_launcher.py": "07da44592b89639f6cbfcd69b8760a69fc115858b04b25e597f7e1acb09cd7df",
+      "setup-mac.sh": "0f1b033f2743c160b12e142ccbb29f350e9c5c03023c55818a803ab71641ae18",
+      "run-orb.sh": "2660694fbe18e2c14522629fa01d291ee3549ec3caf00d46d11ea5adfb4f45ee",
+      "server/services/ops_health_service.py": "fe3dca11f7ffc76c26b4c21be4a2d83db7cc2438a94c65b04207c173393ab811",
+      ".env.example": "8c855091eb5ae5bb7137e3f52258fd2113b658a4442f1a958f005912389e5cbc",
+      "docs/SETUP.md": "d2e73be1210024fd32018bf1ebdd8f0a5568a30e3aae08e6b89faf56f639f26e"
+    },
+    "post_focused_validation_hash_drift": []
+  },
+  "independent_review": {
+    "outcome": "No material blocker found.",
+    "checks": [
+      "Exact [default] slot-prompt-similarity INI support and system/user/environment/CLI precedence verified against pinned b11232.",
+      "Original XDG/HOME and system config checked before rebind; existing/dangling/uninspectable paths auto-skip or explicit-on refusal; no user configuration content read or copied.",
+      "Exact runtime/hardware qualification retained; conflicting KV/RAM settings reject; owned canonical INI exact-content/regular/readable/non-symlink guards.",
+      "Only enabled owned daemon receives canonical XDG/full SWA/separate KV/bounded 8192 MiB RAM cache. Parallel remains one, with unchanged application lanes, priorities, prompt/scoring and batch behavior."
+    ],
+    "sources": [
+      "https://raw.githubusercontent.com/ggml-org/llama.cpp/b11232/common/arg.cpp",
+      "https://raw.githubusercontent.com/ggml-org/llama.cpp/b11232/common/common.cpp",
+      "https://raw.githubusercontent.com/ggml-org/llama.cpp/b11232/common/preset.cpp",
+      "https://raw.githubusercontent.com/ollama/ollama/v0.35.1/llm/llama_server.go"
+    ]
+  },
+  "limits": [
+    "Verifies unchanged application code plus an explicitly tested operational delta; does not claim whole-repository equivalence to v8.",
+    "Documentation/evidence work is classified separately; immutable v8 results were not rewritten.",
+    "160 focused cases overlap the prior suite and must not be added as unique tests.",
+    "Actual timing and answer qualification require separate final real-browser acceptance."
+  ]
+}

@@ -1,0 +1,50 @@
+{
+  "synthetic_data_only": true,
+  "evidence_kind": "actual_built_ui_real_orb_api_real_disposable_db_synthetic_generated_draft",
+  "real_model_executed": false,
+  "production_database_used": false,
+  "summary_cache_ready": true,
+  "refresh_button_http_202": true,
+  "displayed_patient_draft": true,
+  "draft_and_partial_history_labels_visible": true,
+  "responses": [
+    {
+      "method": "GET",
+      "path": "/api/patients/CAP-SYNTH-000/summary",
+      "http_status": 200,
+      "patient_id": "CAP-SYNTH-000",
+      "status": "ready",
+      "no_store": "no-store",
+      "job_state": "ready",
+      "requires_clinician_review": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/patients/CAP-SYNTH-000/summary/refresh",
+      "http_status": 202,
+      "patient_id": "CAP-SYNTH-000",
+      "status": "ready",
+      "no_store": "no-store",
+      "job_state": "queued",
+      "requires_clinician_review": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/patients/CAP-SYNTH-000/summary",
+      "http_status": 200,
+      "patient_id": "CAP-SYNTH-000",
+      "status": "ready",
+      "no_store": "no-store",
+      "job_state": "queued",
+      "requires_clinician_review": true
+    }
+  ],
+  "browser_errors": [],
+  "external_request_origins": [],
+  "screenshot": "/Users/samuelmorningstar/Documents/Projects/Orb/docs/perf/capacity-2026-10-21/summary-browser-e2e.png",
+  "limitations": [
+    "The generator was synthetic; this does not qualify clinical accuracy or inference performance.",
+    "Cached snapshots were created by the real summary service; a 30-minute wall-clock refresh cycle was not waited out.",
+    "Temporary test JWT used real authentication/permissions; interactive login/password form was not exercised."
+  ]
+}

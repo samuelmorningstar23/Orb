@@ -1,0 +1,130 @@
+{
+  "schema": 1,
+  "purpose": "Full-answer G/P/D/G one-slot cache-save diagnostic, not browser SLA acceptance",
+  "endpoint": "http://127.0.0.1:11436",
+  "model": "medgemma:27b",
+  "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+  "arms": [
+    {
+      "full_swa": true,
+      "turns": [
+        {
+          "category": "general",
+          "index": 1,
+          "http_status": 200,
+          "first_content_ms": 12727.784165996127,
+          "wall_ms": 17174.816165992524,
+          "load_duration_ms": 8622.51925,
+          "total_duration_ms": 17174.326,
+          "prompt_eval_duration_ms": 4093.513,
+          "eval_duration_ms": 4447.546,
+          "prompt_eval_count": 697,
+          "prompt_eval_cached_count": 0,
+          "eval_count": 72,
+          "done_reason": "stop",
+          "evaluated_prompt_tokens": 697,
+          "answer": "NOACT| Oxygen saturation measures the percentage of hemoglobin in red blood cells that is carrying oxygen. It reflects how well oxygen is being transported from the lungs to the body tissues. Low levels can indicate respiratory or circulatory problems.\n\n<details>\n<cited_sources> [\"DOC-ID\"]</cited_sources>\nNone.\n</details>",
+          "residency": [
+            {
+              "name": "medgemma:27b",
+              "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+              "context_length": 8192,
+              "size": 20524396707,
+              "size_vram": 20524396707
+            }
+          ]
+        },
+        {
+          "category": "patient",
+          "index": 2,
+          "http_status": 200,
+          "first_content_ms": 3267.7482499857433,
+          "wall_ms": 43252.14895798126,
+          "load_duration_ms": 1.651292,
+          "total_duration_ms": 43251.686708,
+          "prompt_eval_duration_ms": 3226.125,
+          "eval_duration_ms": 39985.024,
+          "prompt_eval_count": 1092,
+          "prompt_eval_cached_count": 573,
+          "eval_count": 628,
+          "done_reason": "stop",
+          "evaluated_prompt_tokens": 519,
+          "answer": "NOACT| Ananya Kapoor is a 34y/Female admitted for Diabetic Ketoacidosis (DKA). She is currently in GM-1, bed GM-101. Her vitals are HR 118, BP 100/65, SpO2 97%, Temp 37.2\u00b0C, RR 28. Current medications include an insulin infusion at 0.1U/kg/hr IV continuous and Normal Saline 1L/hr IV continuous with added KCl 20mEq/L to fluids. Recent labs show initial Na 132, K 4.5, Cr 0.7, Glucose 101; later Na 137, K 3.6, Cr 2.1, Glucose 251. The trajectory is noted as stable but risk unknown. There are no signed scribe notes or recent imaging available.\n\n<details>\n<display_mode>concise</display_mode>\n<patient_facts_summary>Ananya Kapoor, 34F, admitted for DKA. Vitals: Tachycardic (HR 118), hypotensive (BP 100/65), tachypneic (RR 28). Meds: Insulin infusion 0.1 U/kg/hr, NS 1L/hr + KCl. Labs show fluctuating electrolytes (Na low then normal, K normal then low), rising creatinine (0.7 -> 2.1), and improving glucose (initial value missing, then 251).</patient_facts_summary>\n<local_policy_guidance>None.</local_policy_guidance>\n<external_guidance>None.</external_guidance>\n<clinical_assessment>Patient presents with DKA, currently receiving standard treatment (insulin infusion, IV fluids). Key concerns include persistent tachycardia, borderline hypotension, elevated respiratory rate, rising creatinine suggesting potential acute kidney injury related to dehydration or other factors, and electrolyte shifts requiring monitoring. Glucose has improved significantly from initial presentation (implied by the second set of labs) but is still above target range for DKA resolution. The trajectory being \"stable\" needs clarification given the vital signs and lab trends. Lack of scribe notes and imaging limits assessment.</clinical_assessment>\n<caveats>The provided context lacks specific details on the patient's initial state (e.g., initial glucose, anion gap, bicarbonate levels) which are crucial for assessing DKA severity and response to treatment. Also, the reason for the stable trajectory despite abnormal vitals and labs isn't clear. Creatinine rise warrants investigation into volume status and renal function.</caveats>\n<escalation>Consider consulting nephrology if AKI persists or worsens. Re-evaluate fluid management based on urine output and hemodynamic parameters. Ensure close monitoring of electrolytes, especially potassium, as insulin therapy progresses.</escalation>\n<cited_sources>None.</cited_sources>\n</details>",
+          "residency": [
+            {
+              "name": "medgemma:27b",
+              "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+              "context_length": 8192,
+              "size": 20524396707,
+              "size_vram": 20524396707
+            }
+          ]
+        },
+        {
+          "category": "department",
+          "index": 3,
+          "http_status": 200,
+          "first_content_ms": 5373.871333023999,
+          "wall_ms": 26885.317375010345,
+          "load_duration_ms": 1.264959,
+          "total_duration_ms": 26884.784209,
+          "prompt_eval_duration_ms": 5316.989,
+          "eval_duration_ms": 21511.634,
+          "prompt_eval_count": 824,
+          "prompt_eval_cached_count": 3,
+          "eval_count": 333,
+          "done_reason": "stop",
+          "evaluated_prompt_tokens": 821,
+          "answer": "**Elevated Risk Patients:**\n\n*   **Suresh Reddy** (**GM-104**) has community-acquired pneumonia with early sepsis, concerning tachycardia (HR: **112**), hypotension (BP: **85/52**), hypoxia (SpO2: **91%**), fever (T: **39.8**), and tachypnea (RR: **28**).\n*   **Priya Nair** (**GM-103**) has dengue fever with thrombocytopenia, concerning hypotension (BP: **95/60**), tachycardia (HR: **108**), and high fever (T: **39.2**).\n*   **Rajesh Iyer** (**GM-102**) has a COPD exacerbation, concerning hypoxemia (SpO2: **88%**), tachycardia (HR: **102**), and tachypnea (RR: **26**).\n*   **Ananya Kapoor** (**GM-101**) has diabetic ketoacidosis, concerning tachycardia (HR: **118**), borderline low blood pressure (BP: **100/65**), and tachypnea (RR: **28**).\n\n**Stable Patients:**\n\n*   **Lakshmi Devi** (**GM-105**) has a UTI with delirium; vitals are HR: **96**, BP: **130/78**, SpO2: **94%**, T: **38.4**, RR: **18**.",
+          "residency": [
+            {
+              "name": "medgemma:27b",
+              "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+              "context_length": 8192,
+              "size": 20524396707,
+              "size_vram": 20524396707
+            }
+          ]
+        },
+        {
+          "category": "general",
+          "index": 4,
+          "http_status": 200,
+          "first_content_ms": 140.85316698765382,
+          "wall_ms": 4890.383374993689,
+          "load_duration_ms": 2.334375,
+          "total_duration_ms": 4889.864167,
+          "prompt_eval_duration_ms": 65.623999,
+          "eval_duration_ms": 4748.866,
+          "prompt_eval_count": 697,
+          "prompt_eval_cached_count": 696,
+          "eval_count": 75,
+          "done_reason": "stop",
+          "evaluated_prompt_tokens": 1,
+          "answer": "NOACT| Oxygen saturation measures the percentage of hemoglobin in red blood cells that is saturated with oxygen. It reflects how well oxygen is being carried from the lungs to the tissues. Low levels can indicate respiratory or circulatory problems.\n\n<details>\n<cited_sources> [\"GUIDE-123\"]</cited_sources>\nNone.\n</details>",
+          "residency": [
+            {
+              "name": "medgemma:27b",
+              "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+              "context_length": 8192,
+              "size": 20524396707,
+              "size_vram": 20524396707
+            }
+          ]
+        }
+      ],
+      "log": "ollama-full.log",
+      "owned_pid": 39366,
+      "model_info": {
+        "gemma3.attention.sliding_window": 1024,
+        "gemma3.block_count": 62,
+        "gemma3.vision.block_count": 27,
+        "general.architecture": "gemma3"
+      },
+      "owned_process_exit_code": 0
+    }
+  ],
+  "prompts_sha256": "b3a024083ddc7a113a97d1b8f54b0ada8ae759518cc7649acc54aa142e50265d",
+  "model_files_unchanged": true,
+  "model_files_count": 33
+}

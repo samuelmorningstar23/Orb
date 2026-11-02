@@ -1,0 +1,48 @@
+{
+  "schema": "orb.security.boundary-regressions/1",
+  "isolation": "Owned source/DB/media/tar fixture only; no network/model calls or live data/config reads.",
+  "lens_scope": {
+    "endpoint": "POST /api/lens/analyze",
+    "caller": "Synthetic Cardiology doctor",
+    "patient": "Synthetic Oncology patient",
+    "response_status": 404,
+    "response": {
+      "detail": "Patient not found"
+    },
+    "new_orphan_files": 1,
+    "registered_analyses": 0,
+    "files_encrypted": true,
+    "file_modes": [
+      "0o600"
+    ],
+    "unauthenticated_control_status": 401,
+    "unauthenticated_control_created_files": 0
+  },
+  "lens_failure_cleanup": {
+    "controlled_model_seam": true,
+    "response_status": 200,
+    "terminal_error_present": true,
+    "new_orphan_files": 1,
+    "registered_analyses": 0
+  },
+  "restore_archive_containment": {
+    "command": [
+      "tar",
+      "-xf",
+      "/private/tmp/orb-security-assessment-20261012-hvm7u_vm/synthetic-uploads.tar",
+      "-C",
+      "/private/tmp/orb-security-assessment-20261012-hvm7u_vm/restore-fixture"
+    ],
+    "exit_code": 0,
+    "member": "review-sentinel.txt",
+    "traversal_or_symlink_used": false,
+    "file_outside_uploads_replaced": true,
+    "restoration_script_invoked": false,
+    "scope": "Exact extraction command only, owned harmless fixture; full restore/gating not exercised."
+  },
+  "source_sha256": {
+    "server/routes/lens_routes.py": "03818e2df360879fc424d8acc1380e8a6d7ec5e59c6fa47f90a83b4b2734f200",
+    "scripts/standby-restore.sh": "85208ce2a127f8477d89a3243a973e7d1e1e7ce19c7173e379ccd02a666367cf",
+    "server/services/crypto_service.py": "3af8edce93b69e74cc2963ff10cb578784769e5548593c15c05720cc9c36a2bb"
+  }
+}

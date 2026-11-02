@@ -1,0 +1,32 @@
+{
+  "audit_date": "2026-10-11",
+  "scope": "Permanent synthetic-browser regressions for the visual checker and actual driver; independent of the application visual sweep.",
+  "command": [
+    "node",
+    "--test",
+    "tests/visual/checks-regression.cjs",
+    "tests/visual/driver-regression.cjs"
+  ],
+  "cwd": "/Users/samuelmorningstar/Documents/Projects/Orb",
+  "result": {
+    "passed": 6,
+    "failed": 0,
+    "skipped": 0,
+    "seconds": 5.641
+  },
+  "evidence": "Backend audit owner supplied exact final result; supersedes earlier five-case selection, not additive.",
+  "regressions": [
+    "Screen-reader-only labels are excluded only from clipped-text detection.",
+    "Genuinely visible clipped nowrap text is still reported.",
+    "Hidden focusable interactive controls are still reported.",
+    "Startup and action console/page errors are consumed once across captures/themes; warnings excluded.",
+    "Failing action still flushes errors during final cleanup.",
+    "Unmatched API fixture produces a fixture-error outside generic 404 allowlisting and causes the actual visual CI gate to exit 1."
+  ],
+  "ci_step": "node --test tests/visual/checks-regression.cjs tests/visual/driver-regression.cjs",
+  "privacy": "Synthetic disposable localhost HTML and mock API only; no clinical data.",
+  "log": {
+    "path": "/private/tmp/orb-visual-regression-20261011-backend-audit.log",
+    "sha256": "626bc04240f5244f3fa7f8e96e276c605a3c2a8803dbdb2d5d58f72aaad8b1de"
+  }
+}

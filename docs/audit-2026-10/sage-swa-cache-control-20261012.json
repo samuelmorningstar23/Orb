@@ -1,0 +1,232 @@
+{
+  "schema": "orb.sage.swa-cache-control/1",
+  "date": "2026-10-12",
+  "recorded_at_utc": "2026-10-12T07:53:02.812575+00:00",
+  "decision": "Adopt guarded full-SWA cache profile for the tested runtime; real browser acceptance is separate and pending.",
+  "hardware": {
+    "chip": "Apple M2 Max",
+    "unified_memory_gib": 64
+  },
+  "runtime": {
+    "ollama": "0.35.1",
+    "llama_cpp": "b11232",
+    "model": "medgemma:27b",
+    "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+    "context": 8192,
+    "parallel": 1,
+    "batch": "AUTO; actual512",
+    "kv_type": "f16"
+  },
+  "controls": "Separate owned loopback daemon11436, temp HOME, cached model directory, NO_CLOUD=1,NOPRUNE=1. Only LLAMA_ARG_SWA_FULL0/1 varied; fixed actual Sage prompts, normal512/2048 budgets, full completed answers, temperature0.4. SerialG/P/G/P in eacharm. Shared11434 daemon never stopped, loaded or altered; /api/ps empty before and after.",
+  "comparison": [
+    {
+      "category": "general",
+      "default": [
+        {
+          "category": "general",
+          "index": 1,
+          "http_status": 200,
+          "first_content_ms": 13411.43983299844,
+          "wall_ms": 18099.911166005768,
+          "load_duration_ms": 8849.155166,
+          "total_duration_ms": 18099.400458,
+          "prompt_eval_duration_ms": 4552.999,
+          "eval_duration_ms": 4688.755,
+          "prompt_eval_count": 697,
+          "prompt_eval_cached_count": 0,
+          "eval_count": 72,
+          "done_reason": "stop",
+          "evaluated_prompt_tokens": 697
+        },
+        {
+          "category": "general",
+          "index": 3,
+          "http_status": 200,
+          "first_content_ms": 3798.4660000074655,
+          "wall_ms": 8591.615749988705,
+          "load_duration_ms": 3.48025,
+          "total_duration_ms": 8591.192,
+          "prompt_eval_duration_ms": 3379.526,
+          "eval_duration_ms": 4793.076,
+          "prompt_eval_count": 697,
+          "prompt_eval_cached_count": 184,
+          "eval_count": 73,
+          "done_reason": "stop",
+          "evaluated_prompt_tokens": 513
+        }
+      ],
+      "full_swa": [
+        {
+          "category": "general",
+          "index": 1,
+          "http_status": 200,
+          "first_content_ms": 7379.793958971277,
+          "wall_ms": 11909.75991700543,
+          "load_duration_ms": 3075.796334,
+          "total_duration_ms": 11909.256292,
+          "prompt_eval_duration_ms": 4294.808,
+          "eval_duration_ms": 4529.43,
+          "prompt_eval_count": 697,
+          "prompt_eval_cached_count": 0,
+          "eval_count": 70,
+          "done_reason": "stop",
+          "evaluated_prompt_tokens": 697
+        },
+        {
+          "category": "general",
+          "index": 3,
+          "http_status": 200,
+          "first_content_ms": 944.2176660522819,
+          "wall_ms": 5567.942291032523,
+          "load_duration_ms": 2.974875,
+          "total_duration_ms": 5567.42575,
+          "prompt_eval_duration_ms": 868.718,
+          "eval_duration_ms": 4623.616,
+          "prompt_eval_count": 697,
+          "prompt_eval_cached_count": 573,
+          "eval_count": 70,
+          "done_reason": "stop",
+          "evaluated_prompt_tokens": 124
+        }
+      ]
+    },
+    {
+      "category": "patient",
+      "default": [
+        {
+          "category": "patient",
+          "index": 2,
+          "http_status": 200,
+          "first_content_ms": 5928.4077499760315,
+          "wall_ms": 40048.02295798436,
+          "load_duration_ms": 3.194708,
+          "total_duration_ms": 40047.578,
+          "prompt_eval_duration_ms": 5917.197,
+          "eval_duration_ms": 34119.754999,
+          "prompt_eval_count": 1092,
+          "prompt_eval_cached_count": 184,
+          "eval_count": 509,
+          "done_reason": "stop",
+          "evaluated_prompt_tokens": 908
+        },
+        {
+          "category": "patient",
+          "index": 4,
+          "http_status": 200,
+          "first_content_ms": 5930.393040995114,
+          "wall_ms": 63400.76633298304,
+          "load_duration_ms": 2.838541,
+          "total_duration_ms": 63400.294458,
+          "prompt_eval_duration_ms": 5921.259,
+          "eval_duration_ms": 57470.488,
+          "prompt_eval_count": 1092,
+          "prompt_eval_cached_count": 184,
+          "eval_count": 853,
+          "done_reason": "stop",
+          "evaluated_prompt_tokens": 908
+        }
+      ],
+      "full_swa": [
+        {
+          "category": "patient",
+          "index": 2,
+          "http_status": 200,
+          "first_content_ms": 3395.3649580362253,
+          "wall_ms": 49797.553250042256,
+          "load_duration_ms": 2.104625,
+          "total_duration_ms": 49797.139917,
+          "prompt_eval_duration_ms": 3385.483,
+          "eval_duration_ms": 46402.082,
+          "prompt_eval_count": 1092,
+          "prompt_eval_cached_count": 573,
+          "eval_count": 683,
+          "done_reason": "stop",
+          "evaluated_prompt_tokens": 519
+        },
+        {
+          "category": "patient",
+          "index": 4,
+          "http_status": 200,
+          "first_content_ms": 3461.647791962605,
+          "wall_ms": 37079.9748749705,
+          "load_duration_ms": 1.670583,
+          "total_duration_ms": 37079.454958,
+          "prompt_eval_duration_ms": 3452.969,
+          "eval_duration_ms": 33618.278,
+          "prompt_eval_count": 1092,
+          "prompt_eval_cached_count": 573,
+          "eval_count": 498,
+          "done_reason": "stop",
+          "evaluated_prompt_tokens": 519
+        }
+      ]
+    }
+  ],
+  "actual_cache_allocation_mib": {
+    "default": {
+      "global": 640,
+      "sliding_window": 624,
+      "sliding_cells": 1536
+    },
+    "full": {
+      "global": 640,
+      "sliding_window": 3328,
+      "sliding_cells": 8192
+    },
+    "increase": 2704
+  },
+  "memory_observation": {
+    "command": "memory_pressure -Q",
+    "before_free_percent": 89,
+    "during_full_residency_free_percent": 51,
+    "limits": "Point observations, not continuous peaks. API size_vram and runner logs retained; neither is a guaranteed total unified-memory peak."
+  },
+  "errors_or_ooms": 0,
+  "model_cache_files_unchanged": 33,
+  "owned_port_closed_after": true,
+  "owned_processes_exit_zero": true,
+  "clinical_behavior": "No prompt, model weight, attention mask, routing, safety floor, thinking mode, score, mutation gate or output budget changes. Full storage preserves rollback data; model architecture retains1024 sliding attention.",
+  "limitations": [
+    "First content is raw engine content and includes the model marker, not browser first readable text. These timings do not qualify browser SLA.",
+    "Initial model load/prefill retained. Sequentialtwo-arm control is not randomized hardware qualification.",
+    "Test uses synthetic charts only; no live clinical validation. Native ASR/hostedCI remain outside this verification."
+  ],
+  "primary_sources": [
+    "https://raw.githubusercontent.com/ollama/ollama/v0.35.1/llm/llama_server.go",
+    "https://raw.githubusercontent.com/ggml-org/llama.cpp/b11232/common/arg.cpp",
+    "https://raw.githubusercontent.com/ggml-org/llama.cpp/b11232/tools/server/server-context.cpp",
+    "https://raw.githubusercontent.com/ggml-org/llama.cpp/b11232/src/llama-kv-cache-iswa.cpp"
+  ],
+  "files": [
+    {
+      "path": "docs/audit-2026-10/sage-swa-cache-control-20261012/compare.py",
+      "sha256": "a7ed873aeeef1885b061df140df19d19fbb52acb08eedc96c76274aae0b0ba10",
+      "bytes": 6436
+    },
+    {
+      "path": "docs/audit-2026-10/sage-swa-cache-control-20261012/control-prompts.json",
+      "sha256": "f7b7b30a7f7e640f3f8b1887e2b9de167a417e49b2f14868edfe1f4b81d0d1e8",
+      "bytes": 7823
+    },
+    {
+      "path": "docs/audit-2026-10/sage-swa-cache-control-20261012/results.json",
+      "sha256": "9686819d61f36473d1fe91cca4fae8587eb83593c8c7aa62cbf976fd7c645a32",
+      "bytes": 19109
+    },
+    {
+      "path": "docs/audit-2026-10/sage-swa-cache-control-20261012/compare.log",
+      "sha256": "a1399c80bc69910a760e0498b5f825f85ae6142c0442322debf96ec3b51a8ce8",
+      "bytes": 3121
+    },
+    {
+      "path": "docs/audit-2026-10/sage-swa-cache-control-20261012/ollama-default.log",
+      "sha256": "c01f59eb9b9993a094fb61ef71a9299807701ea09fcde9f6c13091f5a4b027ca",
+      "bytes": 37970
+    },
+    {
+      "path": "docs/audit-2026-10/sage-swa-cache-control-20261012/ollama-full.log",
+      "sha256": "b469e5a7014717d309750da6c0f204d0b6b3a10ae0b1374bf71c22b6a1ca30c8",
+      "bytes": 33912
+    }
+  ]
+}

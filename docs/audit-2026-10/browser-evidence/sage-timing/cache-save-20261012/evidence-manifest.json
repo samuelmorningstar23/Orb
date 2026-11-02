@@ -1,0 +1,254 @@
+{
+  "schema": "orb.audit.browser-evidence-manifest/1",
+  "status": "PASSED_WARM_TARGETS_WITH_COLD_AND_CHART_PREPARATION_LIMITS",
+  "recorded_at_utc": "2026-10-12T09:14:09.851385+00:00",
+  "artifact_count": 41,
+  "png_count": 22,
+  "total_bytes": 4548335,
+  "files": {
+    "00-general.png": {
+      "sha256": "fb9d626c2cb30f4b4785cc0e70410e2d275b569cce17e46aeb89f7a677f7cec5",
+      "bytes": 154460
+    },
+    "01-general.png": {
+      "sha256": "832cae0ff3f3891d437a2aa9cdb386b5538182a1ab06024175c57b09d9da2496",
+      "bytes": 157814
+    },
+    "02-patient.png": {
+      "sha256": "6ec6828ab67d72663ce844fa8de85da54dca68fcc5e3be78ab11b8a0cb284028",
+      "bytes": 250265
+    },
+    "03-department.png": {
+      "sha256": "8688fd4411284ca2c060a9b845d3493104ae467b7df2dbbd95b171bf752fe6ca",
+      "bytes": 228431
+    },
+    "04-general.png": {
+      "sha256": "f01b67a531f012987f51bed416093986051b50c88ece67fc54a5440e1509fd66",
+      "bytes": 170097
+    },
+    "05-patient.png": {
+      "sha256": "7d2e2026e769a4b6c78a42dcb3b851613589275905131c14d5d4831bf7f0e1c6",
+      "bytes": 305380
+    },
+    "06-department.png": {
+      "sha256": "77927ffda6f07e31b9e99ac5171f3bdac689d03386f5834a8ee54299a92ab6de",
+      "bytes": 240428
+    },
+    "07-general.png": {
+      "sha256": "fbfbb0c756b541aa278c08d7e57b044425e3e0b1bd91c16093c3046e57499c81",
+      "bytes": 178746
+    },
+    "08-patient.png": {
+      "sha256": "dd732a472a451a2990c42a96627ecd54f7c83b58740a18615fca1f4de0ab8788",
+      "bytes": 301996
+    },
+    "09-department.png": {
+      "sha256": "7a8ad532d6505d013e8e09475bd09a0c9cb9c05322e1e664a3e420d141846628",
+      "bytes": 279230
+    },
+    "README.md": {
+      "sha256": "36019c22b90160486a6edf233af42cb2c400f8cd4c0af251d1fb38ab2054ebdb",
+      "bytes": 2023
+    },
+    "backend.log": {
+      "sha256": "f55a16a0f666476434b48032b5da56e2fa470c0a5672ca5f91dd1185eedb9048",
+      "bytes": 294960
+    },
+    "chart-prewarm-patient.png": {
+      "sha256": "7672c0b9fd8d9f30713bfde98cae82f27e4306a9a085a8276acac368d5ac69b6",
+      "bytes": 285499
+    },
+    "journey-artifacts/.last-run.json": {
+      "sha256": "91d1c43004802cd49950d78eb11c8fa7d05da8ffffe219a8b13b2f561bc00903",
+      "bytes": 45
+    },
+    "journey-artifacts/06-offline-workflows-all-t-899a6-nst-real-authenticated-APIs-chromium/attachments/real-infection-surveillance-05dca447e937b42a50236302a405270a4c28319e.png": {
+      "sha256": "23b9f9520f1b5a3d7f38219201e0c34617c415cb90cc99170392ec427889f560",
+      "bytes": 129976
+    },
+    "journey-artifacts/06-offline-workflows-all-t-899a6-nst-real-authenticated-APIs-chromium/real-infection-surveillance.png": {
+      "sha256": "23b9f9520f1b5a3d7f38219201e0c34617c415cb90cc99170392ec427889f560",
+      "bytes": 129976
+    },
+    "journey-artifacts/06-offline-workflows-care--fcac2-me-and-reopens-from-storage-chromium/attachments/real-care-plan-persisted-d98d081a36bf3faaff8e87b4901feeaf839e5f68.png": {
+      "sha256": "11465e98b8123c9c1ddbb7c51e66b4b3475ec37b629ce5dec6d18d6442684a6b",
+      "bytes": 94484
+    },
+    "journey-artifacts/06-offline-workflows-care--fcac2-me-and-reopens-from-storage-chromium/real-care-plan-persisted.png": {
+      "sha256": "11465e98b8123c9c1ddbb7c51e66b4b3475ec37b629ce5dec6d18d6442684a6b",
+      "bytes": 94484
+    },
+    "journey-artifacts/06-offline-workflows-compl-c897d-load-with-immutable-history-chromium/attachments/real-feedback-persisted-9a1d6e59fd086017aea08cc79b8e3dbe5740bdcd.png": {
+      "sha256": "9f9596de03c13a2c0b63ea3d70efffd493b037101f89245c153ce2d1875b5bf9",
+      "bytes": 134884
+    },
+    "journey-artifacts/06-offline-workflows-compl-c897d-load-with-immutable-history-chromium/real-feedback-persisted.png": {
+      "sha256": "9f9596de03c13a2c0b63ea3d70efffd493b037101f89245c153ce2d1875b5bf9",
+      "bytes": 134884
+    },
+    "journey-artifacts/06-offline-workflows-radio-4bd72-appends-an-audited-addendum-chromium/attachments/real-radiology-signed-b75b6308f878123b966bc06421cd8f8c6fe2dbe9.png": {
+      "sha256": "506527bcf9c6d7479151dbb9e00daaccc7375224f77ccbfbee03e54e70c8f28e",
+      "bytes": 117473
+    },
+    "journey-artifacts/06-offline-workflows-radio-4bd72-appends-an-audited-addendum-chromium/real-radiology-signed.png": {
+      "sha256": "506527bcf9c6d7479151dbb9e00daaccc7375224f77ccbfbee03e54e70c8f28e",
+      "bytes": 117473
+    },
+    "journey-artifacts/06-offline-workflows-saved-949e8--previewed-synthetic-cohort-chromium/attachments/real-reporting-preview-6be0e301e3fb8933369272b3a492339a354e029a.png": {
+      "sha256": "ad333b86da8e62ded14a3a48228bc6be96e04002fa6ed3fdadf5164323180b06",
+      "bytes": 126345
+    },
+    "journey-artifacts/06-offline-workflows-saved-949e8--previewed-synthetic-cohort-chromium/real-reporting-preview.png": {
+      "sha256": "ad333b86da8e62ded14a3a48228bc6be96e04002fa6ed3fdadf5164323180b06",
+      "bytes": 126345
+    },
+    "journey-artifacts/06-offline-workflows-saved-949e8--previewed-synthetic-cohort-chromium/synthetic-cohort.csv": {
+      "sha256": "2b9ae5f8712f1f36dde47180b83fd1d4a5144de121bcf066ef94081d9b4f6952",
+      "bytes": 1405
+    },
+    "journeys.json": {
+      "sha256": "46d458bd59d295f7f5e46b5287d63db59e7f705d08cf0df7f413c5ee7463649a",
+      "bytes": 16807
+    },
+    "journeys.log": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    "prewarmed-patient-chart.png": {
+      "sha256": "ea927aa3457af71dc36b46ff62cece36556f1656a729c72d39118f666c3e72c2",
+      "bytes": 199340
+    },
+    "runtime/application-parity.json": {
+      "sha256": "f0db875a3071d9172f23c61a996d84646092b85bd71b9489c69667b0489fef96",
+      "bytes": 7279
+    },
+    "runtime/cleanup.json": {
+      "sha256": "0e54f4e651709893321460606e16388fc15285a2b810e41d7f42d9ad36adf09b",
+      "bytes": 539
+    },
+    "runtime/config.ini": {
+      "sha256": "c8807fc49c7a03431fa38f8b4c0fcbce1cd612ccba2b97a2521515eac274a4c0",
+      "bytes": 37
+    },
+    "runtime/controller.log": {
+      "sha256": "53a0ab4687b486fd10e32db855c2210058532e304bd885651c78545d69f58084",
+      "bytes": 116
+    },
+    "runtime/ollama.log": {
+      "sha256": "aa2edbcb6a7ea94d12c3cc65b45070d438ef97bcbeab9428fa778cb782b323e1",
+      "bytes": 70403
+    },
+    "runtime/preflight.json": {
+      "sha256": "c80b35d488132af5b5fefb15de8b0c66f3de7ba5e04fb14a45c1e30ec01100da",
+      "bytes": 372
+    },
+    "runtime/profile-verification.json": {
+      "sha256": "dfd55e794046a9df8176b71a6b38ea4c4dd2c1feb0eafec53ad67d68341c7f42",
+      "bytes": 5955
+    },
+    "runtime/runtime.json": {
+      "sha256": "0e9f4482fcb7e69725b2154edb82dcaced6623c8de7480fe903b2affa003f8f1",
+      "bytes": 2254
+    },
+    "runtime/serve-ollama.sh": {
+      "sha256": "3f0dddbf51af4ae5475b5ef1634d69e16244c7f7c2a3769d2ef191a3f22f6985",
+      "bytes": 7352
+    },
+    "summary.json": {
+      "sha256": "4a2aa130aae66dfa786191d1870976cf1211e95467995e9a9aaac72abf97da70",
+      "bytes": 24026
+    },
+    "timing-run.log": {
+      "sha256": "859721e33843b32d632d287868eed9bc44968b06887da9afb243ad9bd99b45cf",
+      "bytes": 2561
+    },
+    "timings.current.json": {
+      "sha256": "9e14027e9a6ec6499933591be377d336a8dd7db6443290d96136f8717ba9bce0",
+      "bytes": 76916
+    },
+    "timings.json": {
+      "sha256": "2da1190060792da749b00e286c68f28c7716b7fe66906e3a5c6a7d814b7556ef",
+      "bytes": 77275
+    }
+  },
+  "compact_summary": {
+    "path": "docs/audit-2026-10/sage-browser-latency-cache-save.json",
+    "sha256": "4a2aa130aae66dfa786191d1870976cf1211e95467995e9a9aaac72abf97da70"
+  },
+  "source_acceptance": {
+    "baseline_results": "docs/audit-2026-10/backend-sage-speed-acceptance-20261012/results.json",
+    "baseline_results_sha256": "9c5023cb3684c8fd955ce8dfb4e0e105707574afd67fca296633dd62e8afde36",
+    "source_manifest": "docs/audit-2026-10/backend-sage-speed-acceptance-20261012/source-sha256.json",
+    "source_manifest_sha256": "edee0202111b45ba2276db7791be17f8f770428acc2d03550fb93eaf272e6b7d",
+    "observed_application_and_harness_source_matches": {
+      "server/routes/sage_routes.py": {
+        "sha256": "93f9fba9b99f2e2e102c8bce289cd3c064d71ff481ae6844d4865e000988e7a9",
+        "acceptance_sha256": "93f9fba9b99f2e2e102c8bce289cd3c064d71ff481ae6844d4865e000988e7a9",
+        "matches_acceptance": true
+      },
+      "server/services/sage_service.py": {
+        "sha256": "2f77ff28bf3c30551e634f58866e90ffe15ac47b78d245c4aa107d3cf88ab1ed",
+        "acceptance_sha256": "2f77ff28bf3c30551e634f58866e90ffe15ac47b78d245c4aa107d3cf88ab1ed",
+        "matches_acceptance": true
+      },
+      "server/services/llm_providers.py": {
+        "sha256": "13b39ac2a3cd6216486967ddf219a1a16bf4cd144f16994ea9b06590c7436d02",
+        "acceptance_sha256": "13b39ac2a3cd6216486967ddf219a1a16bf4cd144f16994ea9b06590c7436d02",
+        "matches_acceptance": true
+      },
+      "server/services/clinical_knowledge.py": {
+        "sha256": "c53a09ec88dd5ed0feee2cd7bfbbd417c8f0aac6cf6ecce61e7ac23e2f0275cc",
+        "acceptance_sha256": "c53a09ec88dd5ed0feee2cd7bfbbd417c8f0aac6cf6ecce61e7ac23e2f0275cc",
+        "matches_acceptance": true
+      },
+      "server/services/local_transformers.py": {
+        "sha256": "b5777652fb29de126e05eabf35312846fa1ebac108162b83d684993936ccbeca",
+        "acceptance_sha256": "b5777652fb29de126e05eabf35312846fa1ebac108162b83d684993936ccbeca",
+        "matches_acceptance": true
+      },
+      "scripts/sage_browser_timing.cjs": {
+        "sha256": "679ba94194d723cb6a8a85277e307ac54a471edf521b5090e4605b366594d16d",
+        "acceptance_sha256": "679ba94194d723cb6a8a85277e307ac54a471edf521b5090e4605b366594d16d",
+        "matches_acceptance": true
+      },
+      "scripts/sage_browser_timing.test.cjs": {
+        "sha256": "4a545020de316f4ac0a875d458319d13c20ee911130a69487880c6b5113254fb",
+        "acceptance_sha256": "4a545020de316f4ac0a875d458319d13c20ee911130a69487880c6b5113254fb",
+        "matches_acceptance": true
+      },
+      "scripts/sage_browser_timing.md": {
+        "sha256": "4efc1dabd58fcff9fc724a9d4c0792cf4abd16ab62a40689fe8e235237276fa5",
+        "acceptance_sha256": "4efc1dabd58fcff9fc724a9d4c0792cf4abd16ab62a40689fe8e235237276fa5",
+        "matches_acceptance": true
+      },
+      "scripts/e2e_server.py": {
+        "sha256": "90cde4f221b159a951c836e6a60ba46c2ca1eb650c52909cb1ef9178e1e0c755",
+        "acceptance_sha256": "90cde4f221b159a951c836e6a60ba46c2ca1eb650c52909cb1ef9178e1e0c755",
+        "matches_acceptance": true
+      }
+    },
+    "runtime_delta_parity": "docs/audit-2026-10/backend-sage-speed-runtime-delta-20261012.json",
+    "runtime_delta_parity_sha256": "f0db875a3071d9172f23c61a996d84646092b85bd71b9489c69667b0489fef96",
+    "runtime_delta_verification": "runtime/profile-verification.json",
+    "runtime_delta_focused_passes": 160,
+    "note": "Unchanged application/dist plus explicitly tested operational launcher/config delta. Focused cases overlap v8 and are not added as unique tests."
+  },
+  "cleanup": {
+    "schema": "orb.sage.owned-runtime-cleanup/1",
+    "timestamp_utc": "2026-10-12T09:09:48.642767+00:00",
+    "controller_exit_code": 0,
+    "owned_daemon_pid": 41550,
+    "owned_daemon_exit_code": 0,
+    "owned_port_11436_connect_ex": 61,
+    "owned_port_closed": true,
+    "shared_api_ps": {
+      "models": []
+    },
+    "launcher_unchanged": true,
+    "runner_config_unchanged": true,
+    "model_file_count": 33,
+    "model_files_unchanged": true,
+    "private_home_copied": false,
+    "cleanup_scope": "Only owned PID/process group, no shared service changes."
+  }
+}

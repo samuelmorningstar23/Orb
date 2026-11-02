@@ -1,0 +1,28 @@
+{
+  "status": "candidate_not_qualified",
+  "ollama_version": "0.40.4",
+  "runner_version": "version: 0.6.0-dev (build 1, commit b42b7e6d3)\nbuilt with AppleClang 21.0.0.21000099 for Darwin arm64",
+  "model": {
+    "model": "medgemma:27b",
+    "model_digest": "sha256:4b97da6b21a8fb1405a0d1efee462bfd6c4d3c46307bac8b34373835f07ca758",
+    "weight_bytes": 17397211520,
+    "manifest_sha256": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+    "quantization": "Q4_K_M"
+  },
+  "memory": {
+    "total_bytes": 68719476736,
+    "free_percentage": 75,
+    "estimated_available_bytes": 51539607552,
+    "vm_stat": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                   342545.\nPages active:                                1382162.\nPages inactive:                              1363014.\nPages speculative:                             18070.\nPages throttled:                                   0.\nPages wired down:                             233241.\nPages purgeable:                               35663.\n\"Translation faults\":                     2554636004.\nPages copy-on-write:                       153495577.\nPages zero filled:                        4859139291.\nPages reactivated:                          19293242.\nPages purged:                               49347406.\nFile-backed pages:                           1454264.\nAnonymous pages:                             1308982.\nPages stored in compressor:                  1714203.\nPages occupied by compressor:                 798219.\nDecompressions:                             13688403.\nCompressions:                               22447872.\nPageins:                                    65665236.\nPageouts:                                      67163.\nSwapins:                                      718183.\nSwapouts:                                    1012357.\n"
+  },
+  "required_available_bytes_estimate": 43167015296,
+  "memory_guard_passed": true,
+  "context_per_request": 8192,
+  "parallel": 1,
+  "swa_full": "on",
+  "flash_attention": "auto",
+  "kv_type": "f16",
+  "origin": "http://127.0.0.1:49482",
+  "config_sha256": "c8807fc49c7a03431fa38f8b4c0fcbce1cd612ccba2b97a2521515eac274a4c0",
+  "quality_policy": "Unchanged model digest, sampling, clinical prompts and request output budgets; no speculative decoding."
+}

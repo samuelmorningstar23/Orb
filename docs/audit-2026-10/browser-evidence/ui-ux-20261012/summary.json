@@ -1,0 +1,291 @@
+{
+  "schema": "orb.audit.real-browser-ux-summary/1",
+  "assessment": "Three confirmed layout/focus defects, one separately classified authenticated mobile security-settings discoverability gap. App source unchanged.",
+  "realBackend": true,
+  "apiMocks": false,
+  "modelInference": false,
+  "externalBrowserRequests": false,
+  "browserVersion": "149.0.7827.55",
+  "deviceScaleFactor": 1,
+  "viewports": [
+    {
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "width": 1280,
+      "height": 800
+    },
+    {
+      "width": 390,
+      "height": 844
+    }
+  ],
+  "themes": [
+    "light",
+    "dark"
+  ],
+  "rawStates": 262,
+  "rawPngs": 366,
+  "rawRecordedErrors": 30,
+  "finalFocusedStates": 58,
+  "finalFocusedPngs": 116,
+  "finalFocusedScenarioErrors": 0,
+  "finalFocusedCaveat": "Focused-final initial register loading captures are superseded by all 8 settled registers-verified states. This is an assessment with real defects, not a blanket green visual gate.",
+  "runs": [
+    {
+      "id": "broad",
+      "rawDirectory": "/private/tmp/orb-browser-ux-20261012",
+      "classification": "Broad discovery; 16 missing patient-selection setup steps, 2 deliberately disabled ward-record navigation attempts, 2 genuinely hidden mobile MFA controls.",
+      "startedAt": "2026-10-12T10:49:01.102Z",
+      "finishedAt": "2026-10-12T10:53:37.573Z",
+      "states": 158,
+      "pngs": 158,
+      "errors": 20,
+      "errorTypes": {
+        "scenario-error": 16,
+        "nav-unavailable": 2,
+        "control-unavailable": 2
+      },
+      "browserConsoleOrPageErrors": 0,
+      "externalRequests": 0,
+      "inferenceRequests": 0,
+      "backendSupervisorExit": {
+        "code": 130,
+        "signal": null
+      },
+      "shutdownComplete": true,
+      "originalHarnessSha256": "ff082d5b43245cf4d356043ab9767ab298f856985d630c996dab82f575d3f0f4",
+      "results": "broad/results.json"
+    },
+    {
+      "id": "followup-initial",
+      "rawDirectory": "/private/tmp/orb-browser-ux-followup-20261012",
+      "classification": "Superseded setup: 6 doctor-to-admin login attempts lacked explicit logout; doctor clinical forms and focus measurements retained.",
+      "startedAt": "2026-10-12T10:57:03.761Z",
+      "finishedAt": "2026-10-12T10:58:28.716Z",
+      "states": 36,
+      "pngs": 72,
+      "errors": 6,
+      "errorTypes": {
+        "scenario-error": 6
+      },
+      "browserConsoleOrPageErrors": 0,
+      "externalRequests": 0,
+      "inferenceRequests": 0,
+      "backendSupervisorExit": {
+        "code": 130,
+        "signal": null
+      },
+      "shutdownComplete": true,
+      "originalHarnessSha256": "374ae6e99418867476ac75ce7064f81717e2eb87e59219c9349aa1b069d03aaa",
+      "results": "followup-initial/results.json"
+    },
+    {
+      "id": "focused-final",
+      "rawDirectory": "/private/tmp/orb-browser-ux-focused-final-20261012",
+      "classification": "Final focused interactions: 50 states, no scenario errors. Some initial register screenshots captured loading; settled register evidence below supersedes those register observations.",
+      "startedAt": "2026-10-12T10:59:25.225Z",
+      "finishedAt": "2026-10-12T11:00:22.084Z",
+      "states": 50,
+      "pngs": 100,
+      "errors": 0,
+      "errorTypes": {},
+      "browserConsoleOrPageErrors": 0,
+      "externalRequests": 0,
+      "inferenceRequests": 0,
+      "backendSupervisorExit": {
+        "code": 130,
+        "signal": null
+      },
+      "shutdownComplete": true,
+      "originalHarnessSha256": "e8e40ae13953c662c03db2ebf895ff11090a82fc247a9da3c9940925bea49e69",
+      "results": "focused-final/results.json"
+    },
+    {
+      "id": "registers-initial",
+      "rawDirectory": "/private/tmp/orb-browser-ux-registers-final-20261012",
+      "classification": "Superseded setup: 2 selectors matched both mounted hidden and visible register headings.",
+      "startedAt": "2026-10-12T11:03:34.880Z",
+      "finishedAt": "2026-10-12T11:03:47.202Z",
+      "states": 4,
+      "pngs": 8,
+      "errors": 2,
+      "errorTypes": {
+        "scenario-error": 2
+      },
+      "browserConsoleOrPageErrors": 0,
+      "externalRequests": 0,
+      "inferenceRequests": 0,
+      "backendSupervisorExit": {
+        "code": 130,
+        "signal": null
+      },
+      "shutdownComplete": true,
+      "originalHarnessSha256": "8f518757418e51d842e5254c92d276dd055d40358aa1fc8c3682ff86d8bd529c",
+      "results": "registers-initial/results.json"
+    },
+    {
+      "id": "registers-settled",
+      "rawDirectory": "/private/tmp/orb-browser-ux-registers-settled-20261012",
+      "classification": "Superseded setup: 2 horizontal-pan selectors matched hidden and visible scroll containers.",
+      "startedAt": "2026-10-12T11:04:46.862Z",
+      "finishedAt": "2026-10-12T11:05:00.717Z",
+      "states": 6,
+      "pngs": 12,
+      "errors": 2,
+      "errorTypes": {
+        "scenario-error": 2
+      },
+      "browserConsoleOrPageErrors": 0,
+      "externalRequests": 0,
+      "inferenceRequests": 0,
+      "backendSupervisorExit": {
+        "code": 130,
+        "signal": null
+      },
+      "shutdownComplete": true,
+      "originalHarnessSha256": "0f472211b9a507ef7b773d2e09ea05345917808150538686803f7a5a9182e451",
+      "results": "registers-settled/results.json"
+    },
+    {
+      "id": "registers-verified",
+      "rawDirectory": "/private/tmp/orb-browser-ux-registers-verified-20261012",
+      "classification": "Final settled mobile registers and actual horizontal pan: 8 states, no scenario errors.",
+      "startedAt": "2026-10-12T11:05:23.454Z",
+      "finishedAt": "2026-10-12T11:05:36.394Z",
+      "states": 8,
+      "pngs": 16,
+      "errors": 0,
+      "errorTypes": {},
+      "browserConsoleOrPageErrors": 0,
+      "externalRequests": 0,
+      "inferenceRequests": 0,
+      "backendSupervisorExit": {
+        "code": 130,
+        "signal": null
+      },
+      "shutdownComplete": true,
+      "originalHarnessSha256": "bc728f22fa82522b280038409d584bd562595c73cb191dc81c25d49eb27e1021",
+      "results": "registers-verified/results.json"
+    }
+  ],
+  "findings": [
+    {
+      "id": "UX-01",
+      "priority": "P1",
+      "classification": "confirmed UI defect",
+      "title": "Admission form collapses behind summary on phones",
+      "profiles": "390\u00d7844, light and dark",
+      "evidence": "342px modal, fixed 280px summary, 12px form-content width; input/tab centers hit the summary. Close button shrinks to 19.406\u00d732px. A trial click can still find the tiny exposed edge; total pointer impossibility is not claimed.",
+      "steps": [
+        "Real doctor login",
+        "Click Admit Patient",
+        "Observe identity form and summary at 390px"
+      ],
+      "source": [
+        "src/components/AdmitPatientModal.css:87",
+        "src/components/AdmitPatientModal.css:328",
+        "src/components/AdmitPatientModal.css:69"
+      ],
+      "screenshots": [
+        "focused-final/screenshots/036-390-light-admission-overlap-viewport.png",
+        "focused-final/screenshots/045-390-dark-admission-overlap-viewport.png"
+      ]
+    },
+    {
+      "id": "UX-02",
+      "priority": "P2",
+      "classification": "confirmed UI defect",
+      "title": "Radiation-safety form exceeds mobile content width",
+      "profiles": "390\u00d7844, light and dark",
+      "evidence": "664.781px form in 366px content container; actual horizontal scrollLeft 0\u2192299px. Medical-record register fits 366px and does not reproduce this defect. Document scrollWidth stays 390px, so document-only overflow checks miss it.",
+      "steps": [
+        "Real admin login",
+        "Open Radiation safety",
+        "Wait for actual register heading and form",
+        "Pan its visible content container horizontally to the end"
+      ],
+      "source": [
+        "src/pages/panels/RecordGovernancePanel.css:1",
+        "src/pages/panels/RecordGovernancePanel.css:3"
+      ],
+      "screenshots": [
+        "registers-verified/screenshots/002-390-light-radiation-safety-viewport.png",
+        "registers-verified/screenshots/003-390-light-radiation-safety-horizontal-pan-end-viewport.png",
+        "registers-verified/screenshots/006-390-dark-radiation-safety-viewport.png",
+        "registers-verified/screenshots/007-390-dark-radiation-safety-horizontal-pan-end-viewport.png"
+      ]
+    },
+    {
+      "id": "UX-03",
+      "priority": "P2",
+      "classification": "confirmed keyboard accessibility defect",
+      "title": "Closing admission does not restore trigger focus",
+      "profiles": "1440\u00d71000, 1280\u00d7800 and 390\u00d7844, both themes (6/6)",
+      "evidence": "Open admission, press Escape: modal closes and document.activeElement becomes BODY rather than #btn-admit-patient. Raw focused-final/results.json focus array records all six. The name input autoFocus precedes the trap useEffect capturing activeElement; the cleanup targets the prior inner input. Source explains the observed result; no fix was applied.",
+      "steps": [
+        "Click Admit Patient",
+        "Observe focused dialog input",
+        "Press Escape",
+        "Read activeElement and confirm dialog closed"
+      ],
+      "source": [
+        "src/components/AdmitPatientModal.tsx:795",
+        "src/hooks/useFocusTrap.ts:91",
+        "src/hooks/useFocusTrap.ts:147"
+      ],
+      "screenshots": []
+    },
+    {
+      "id": "UX-04",
+      "priority": "P2",
+      "classification": "confirmed mobile self-service discoverability gap; not MFA enforcement bypass",
+      "title": "Authenticated account-security shortcut is hidden on mobile",
+      "profiles": "390\u00d7844 both themes; visible on both desktop sizes",
+      "evidence": "#btn-mfa-enroll exists but is hidden inside .shell__user-card at \u2264768px. Source search found no alternate authenticated shell activation. Mandatory pre-login enrollment remains available through Login.tsx when mfa_enrollment_required supplies an enrollment ticket.",
+      "steps": [
+        "Real doctor login at 390px",
+        "Inspect Account security control visibility"
+      ],
+      "source": [
+        "src/pages/ClinicianShell.tsx:546",
+        "src/pages/ClinicianShell.css:1082",
+        "src/pages/Login.tsx:513"
+      ],
+      "screenshots": []
+    }
+  ],
+  "secondaryObservations": [
+    "Fixed Sage orb overlaps the mobile radiation next-page label; the seeded next-page button is disabled, so blocked actionable pagination was not proven. It also overlaps content in some scrolling views.",
+    "Raw automatic contrast/small-target findings are retained as info. The visible admission close-target shrink is folded into UX-01. Contrast candidates require contextual verification before elevation.",
+    "Horizontal tab rails/tables and controls behind active modal backdrops are not classified as layout defects solely because geometry lists them."
+  ],
+  "rawAutomaticChecks": [
+    {
+      "type": "aa-contrast",
+      "severity": "info",
+      "count": 26
+    },
+    {
+      "type": "chart-contrast",
+      "severity": "info",
+      "count": 2
+    },
+    {
+      "type": "small-target",
+      "severity": "info",
+      "count": 6
+    }
+  ],
+  "limitedSecurityCheck": {
+    "path": "Persisted synthetic feedback statement, light and dark mobile",
+    "markupExecuted": false,
+    "createdImageElements": 0,
+    "statementRenderedAsText": true,
+    "claimLimit": "One plain-text persisted rendering path, not a comprehensive XSS assessment."
+  },
+  "cleanup": "cleanup-final.json",
+  "provenance": "provenance.json",
+  "screenshotIndex": "screenshots.json"
+}

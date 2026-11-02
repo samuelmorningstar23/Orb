@@ -1,0 +1,356 @@
+{
+  "schema": 1,
+  "date": "2026-10-12",
+  "timezone": "Asia/Kolkata",
+  "recorded_at_utc": "2026-10-12T00:02:47.957115+00:00",
+  "decision": "NEGATIVE: retain application AUTO behavior; no application source/configuration change. The explicit 1024 arm saved only85.941ms general/31.766ms patient median prefill against512, far below the prespecified1000ms useful-improvement threshold; same-tag reloads add latency.",
+  "scope": "Bounded exclusive GPU diagnostic,18 serial one-token requests plus one ordinary AUTO restoration. This is neither successful clinical answer acceptance nor browser response-time/SLA qualification.",
+  "authorization_boundary": "Existing installed same medgemma:27b tag/digest through explicit loopback only; ordinary request reloads permitted. No unload/pull/tag change/global model configuration/model writes, no external transmit, no live clinical data. Application GPU owners stopped before execution and were notified after completion.",
+  "runtime": {
+    "python_executable": "/private/tmp/orb-ml-upgrade-20261012/bin/python",
+    "python": "3.12.13",
+    "ollama_version": "0.35.1",
+    "endpoint": "http://127.0.0.1:11434",
+    "model": "medgemma:27b",
+    "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+    "device": "Apple Metal GPU via existing Ollama llama-server runner",
+    "hardware": {
+      "model": "MacBook Pro",
+      "model_identifier": "Mac14,6",
+      "chip": "Apple M2 Max",
+      "cpu_cores": "12 (8 Performance and4 Efficiency)",
+      "unified_memory_bytes": 68719476736,
+      "reported_memory": "64GB",
+      "kernel": "Darwin25.5.0 arm64"
+    },
+    "hardware_probe": "Read-only sysctl hw.memsize and system_profiler SPHardwareDataType filtered to model/chip/core/memory; device identifiers excluded."
+  },
+  "commands": [
+    [
+      "/private/tmp/orb-ml-upgrade-20261012/bin/python",
+      "/private/tmp/orb-ollama-batch-20261012-5jsm6wff/assemble.py"
+    ],
+    [
+      "/private/tmp/orb-ml-upgrade-20261012/bin/python",
+      "/private/tmp/orb-ollama-batch-20261012-5jsm6wff/compare.py"
+    ]
+  ],
+  "stdout_redirect": "/private/tmp/orb-ollama-batch-20261012-5jsm6wff/compare.log",
+  "exit_code": 0,
+  "controls": {
+    "arms": [
+      "AUTO (omit num_batch)",
+      512,
+      1024
+    ],
+    "rotated_arm_orders": [
+      [
+        "AUTO",
+        512,
+        1024
+      ],
+      [
+        512,
+        1024,
+        "AUTO"
+      ],
+      [
+        1024,
+        "AUTO",
+        512
+      ]
+    ],
+    "categories_per_arm": [
+      "general",
+      "patient"
+    ],
+    "repeats_per_category_arm": 3,
+    "diagnostic_calls": 18,
+    "restoration_calls": 1,
+    "stream": false,
+    "num_ctx": 8192,
+    "num_predict": 1,
+    "temperature": 0.0,
+    "repeat_penalty": 1.15,
+    "repeat_last_n": 256,
+    "keep_alive": "1h",
+    "force_cold_prefix": "Unique fixed-width three-digit nonce prepended to first system message for every call. All18 responses reported prompt_eval_cached_count=0.",
+    "prompt_counts": {
+      "general": 701,
+      "patient": 1096
+    },
+    "source_prompt_summary": {
+      "general": {
+        "scope": "clinical",
+        "characters": 2870,
+        "sha256": "d0223e4cb21b46d4a497676e1babc55b1c94373599b178430e6b7605271d2453"
+      },
+      "patient": {
+        "scope": "patient",
+        "characters": 3799,
+        "sha256": "e2bcf696549e8f42994049addc7b666f49524019bd7f7d4a7a69ca19316b5a8b"
+      }
+    },
+    "prompt_origin": "Actual Sage formatter from the immutable owned source copy and reset_db_and_seed synthetic DB. DOC001, no history, Sage view. Retrieval substituted empty guideline results to match the browser baseline; scoring disabled. No actual model calls during assembly.",
+    "network": "stdlib opener disables proxies; exact127.0.0.1 origin only; no model downloads.",
+    "request_timeout_seconds": 120
+  },
+  "outcomes": {
+    "all_diagnostic_http_200": true,
+    "diagnostic_errors": 0,
+    "done_reason": "All19 responses intentionally ended with length because num_predict=1. HTTP200/done confirms diagnostic protocol completion only; application answer terminal checks would correctly reject these truncated answers.",
+    "all_diagnostic_cached_prompt_count_zero": true,
+    "ooms_observed": false,
+    "comparisons": [
+      {
+        "category": "general",
+        "explicit_512_median_prefill_ms": 4298.978,
+        "explicit_1024_median_prefill_ms": 4213.037,
+        "saved_ms": 85.941,
+        "saved_percent": 1.9991030426301275
+      },
+      {
+        "category": "patient",
+        "explicit_512_median_prefill_ms": 6723.991,
+        "explicit_1024_median_prefill_ms": 6692.225,
+        "saved_ms": 31.766,
+        "saved_percent": 0.4724277590496422
+      }
+    ],
+    "arm_summaries": [
+      {
+        "category": "general",
+        "arm": "AUTO",
+        "count": 3,
+        "median_prefill_ms": 4240.687,
+        "median_load_ms": 2.938,
+        "median_wall_ms": 4644.526042044163,
+        "runner_changes": 1,
+        "actual_batch_flags": [
+          "1024",
+          "512"
+        ],
+        "same_runner_count": 2,
+        "same_runner_median_wall_ms": 4486.441792018013,
+        "reloaded_count": 1,
+        "reloaded_load_duration_ms": [
+          2436.248208
+        ],
+        "sampled_max_combined_runner_rss_kib": 22821680
+      },
+      {
+        "category": "general",
+        "arm": 512,
+        "count": 3,
+        "median_prefill_ms": 4298.978,
+        "median_load_ms": 2435.659875,
+        "median_wall_ms": 6738.55258297408,
+        "runner_changes": 2,
+        "actual_batch_flags": [
+          "512"
+        ],
+        "same_runner_count": 1,
+        "same_runner_median_wall_ms": 4439.893750008196,
+        "reloaded_count": 2,
+        "reloaded_load_duration_ms": [
+          2435.659875,
+          2446.272667
+        ],
+        "sampled_max_combined_runner_rss_kib": 23537840
+      },
+      {
+        "category": "general",
+        "arm": 1024,
+        "count": 3,
+        "median_prefill_ms": 4213.037,
+        "median_load_ms": 2432.6505,
+        "median_wall_ms": 6650.677833007649,
+        "runner_changes": 2,
+        "actual_batch_flags": [
+          "1024"
+        ],
+        "same_runner_count": 1,
+        "same_runner_median_wall_ms": 4352.782124944497,
+        "reloaded_count": 2,
+        "reloaded_load_duration_ms": [
+          8480.697333,
+          2432.6505
+        ],
+        "sampled_max_combined_runner_rss_kib": 21135760
+      },
+      {
+        "category": "patient",
+        "arm": "AUTO",
+        "count": 3,
+        "median_prefill_ms": 6704.244,
+        "median_load_ms": 4.203,
+        "median_wall_ms": 6767.0412919833325,
+        "runner_changes": 0,
+        "actual_batch_flags": [
+          "1024",
+          "512"
+        ],
+        "same_runner_count": 3,
+        "same_runner_median_wall_ms": 6767.0412919833325,
+        "reloaded_count": 0,
+        "reloaded_load_duration_ms": [],
+        "sampled_max_combined_runner_rss_kib": 23537840
+      },
+      {
+        "category": "patient",
+        "arm": 512,
+        "count": 3,
+        "median_prefill_ms": 6723.991,
+        "median_load_ms": 3.703917,
+        "median_wall_ms": 6838.727583992295,
+        "runner_changes": 0,
+        "actual_batch_flags": [
+          "512"
+        ],
+        "same_runner_count": 3,
+        "same_runner_median_wall_ms": 6838.727583992295,
+        "reloaded_count": 0,
+        "reloaded_load_duration_ms": [],
+        "sampled_max_combined_runner_rss_kib": 20056224
+      },
+      {
+        "category": "patient",
+        "arm": 1024,
+        "count": 3,
+        "median_prefill_ms": 6692.225,
+        "median_load_ms": 3.985125,
+        "median_wall_ms": 6772.828000015579,
+        "runner_changes": 0,
+        "actual_batch_flags": [
+          "1024"
+        ],
+        "same_runner_count": 3,
+        "same_runner_median_wall_ms": 6772.828000015579,
+        "reloaded_count": 0,
+        "reloaded_load_duration_ms": [],
+        "sampled_max_combined_runner_rss_kib": 21851824
+      }
+    ],
+    "auto_effective_batches": [
+      "512",
+      "1024"
+    ],
+    "auto_interpretation": "AUTO is dynamic and can reuse an existing AUTO runner; never treat it as fixed512. Clean numeric comparisons use explicit512 and1024 arms.",
+    "runner_pid_changes": 5,
+    "maximum_recorded_load_duration_ms": 8480.697333,
+    "sampled_max_combined_runner_rss_kib": 23537840,
+    "initial_residency": [
+      {
+        "name": "medgemma:27b",
+        "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+        "context_length": 8192,
+        "size": 17498898431,
+        "size_vram": 17498898431
+      }
+    ],
+    "initial_runner": [
+      {
+        "pid": 5466,
+        "rss_kib": 15073600,
+        "flags": {
+          "-c": "8192",
+          "-np": "1",
+          "-b": "512",
+          "-ub": "512"
+        }
+      }
+    ],
+    "restoration": {
+      "requested_options": {
+        "num_ctx": 8192,
+        "num_predict": 1,
+        "temperature": 0.0,
+        "repeat_penalty": 1.15,
+        "repeat_last_n": 256
+      },
+      "num_batch_omitted": true,
+      "http_status": 200,
+      "load_duration_ms": 5.620666,
+      "wall_ms": 4439.928459003568,
+      "runner_pid_changed": false,
+      "final_runner": [
+        {
+          "pid": 13408,
+          "rss_kib": 21239072,
+          "flags": {
+            "-c": "8192",
+            "-np": "1",
+            "-b": "512",
+            "-ub": "512"
+          }
+        }
+      ],
+      "final_residency": [
+        {
+          "name": "medgemma:27b",
+          "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+          "context_length": 8192,
+          "size": 17511292599,
+          "size_vram": 17511292599
+        }
+      ],
+      "error": null
+    }
+  },
+  "official_source_basis": [
+    {
+      "url": "https://github.com/ollama/ollama/blob/v0.35.1/api/types.go",
+      "finding": "Runner includes NumBatch; default options are load-time state."
+    },
+    {
+      "url": "https://github.com/ollama/ollama/blob/v0.35.1/server/sched.go",
+      "finding": "needsReload compares runner options, except batch matching when both requests use AUTO. Automatic generation batch depends on context/memory and can choose512/1024/2048 or lower under constraints."
+    }
+  ],
+  "source_sha256": {
+    "server/services/sage_service.py": "2f77ff28bf3c30551e634f58866e90ffe15ac47b78d245c4aa107d3cf88ab1ed",
+    "server/routes/sage_routes.py": "93f9fba9b99f2e2e102c8bce289cd3c064d71ff481ae6844d4865e000988e7a9",
+    "server/services/llm_providers.py": "afafb65592db26143b6ad91cd11b1c8cb18e6678a0cf498e304253f5221e654e",
+    "server/services/ollama_gateway.py": "77f8f47495448ad1425ca3950606983b3af7fa87ca9885d7a40a71f1a74566ad",
+    "server/services/clinical_knowledge.py": "c53a09ec88dd5ed0feee2cd7bfbbd417c8f0aac6cf6ecce61e7ac23e2f0275cc",
+    "server/services/local_transformers.py": "b5777652fb29de126e05eabf35312846fa1ebac108162b83d684993936ccbeca",
+    "server/config.py": "cb841588f721ea5290ca86aafcbf4f4524c457f26aa9dbc463ccf4c2c4b2240f",
+    "scripts/e2e_server.py": "90cde4f221b159a951c836e6a60ba46c2ca1eb650c52909cb1ef9178e1e0c755",
+    "server/scripts/reset_db_and_seed.py": "364c0e4ae614c0f9ba6c8b8115d944f8180eef4161ba1e72bd7dcd6e2b94b8bf"
+  },
+  "artifacts": {
+    "compare.py": {
+      "path": "docs/audit-2026-10/ollama-batch-diagnostic-20261012/compare.py",
+      "sha256": "fb2f28a38c032912de4b9a681ee0ebe7bcc7223b760754df48d7a79ac4b55846",
+      "bytes": 7751
+    },
+    "compare.log": {
+      "path": "docs/audit-2026-10/ollama-batch-diagnostic-20261012/compare.log",
+      "sha256": "10fb52e31a6c8d9cd445f7997f696bba0e411aac9a15d8dbcb4f7d0df9561982",
+      "bytes": 8222
+    },
+    "result.json": {
+      "path": "docs/audit-2026-10/ollama-batch-diagnostic-20261012/result.json",
+      "sha256": "361228de03f44567abf0dc29b91d9416052b04516c17d728846c320bfe91e2bb",
+      "bytes": 33244
+    },
+    "prompts.json": {
+      "path": "docs/audit-2026-10/ollama-batch-diagnostic-20261012/prompts.json",
+      "sha256": "f7b7b30a7f7e640f3f8b1887e2b9de167a417e49b2f14868edfe1f4b81d0d1e8",
+      "bytes": 7823
+    }
+  },
+  "limitations": [
+    "Three repeats per category/arm on one64GB Apple M2 Max; small bounded experiment, no uncertainty or portability claim.",
+    "One-token answers cannot validate clinical quality, complete output, generation speed, or end-user latency.",
+    "RSS sampled every0.5s and API size/size_vram are not guaranteed peak GPU allocations; no process-wide memory safety proof.",
+    "Reloads and varying AUTO effective state are retained per call and summarized separately; medians do not hide first-load cost.",
+    "The copied scripts are original evidence. compare.py performs authorized local model requests if explicitly executed; assemble.py requires a disposable sibling source copy/state and must never be pointed at the live database. No source copy, clinical DB, model weights, secrets or runtime tree are committed.",
+    "The experiment does not close the independently observed strict general/patient browser latency misses. No further tuning sweep or application setting change is justified by these results."
+  ],
+  "assembly_script_original": {
+    "path": "/private/tmp/orb-ollama-batch-20261012-5jsm6wff/assemble.py",
+    "sha256": "b82bb0fe0eeb386e908af829ee7174c79dcb98c36b71b0cd76ae1b166b2ba4e7",
+    "retention": "Ephemeral original only; durable prompts.json preserves exact synthetic messages."
+  }
+}

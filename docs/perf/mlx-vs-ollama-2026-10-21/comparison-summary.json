@@ -1,0 +1,218 @@
+{
+  "recorded_at": "2026-10-21T17:25:47.619312+00:00",
+  "host": {
+    "chip": "Apple M2 Max",
+    "memory_bytes": 68719476736,
+    "cpu_count": 12
+  },
+  "scope": "Engine-only complete HTTP replies to synthetic captured Orb prompts; not combined hospital workload",
+  "offline_runtime": "localhost_only_sandbox_no_cloud_inference",
+  "ollama_quality": {
+    "total": 8,
+    "completed_cases": 8,
+    "successful": 8,
+    "all_cases_passed": true
+  },
+  "ollama_single_slot": [
+    {
+      "lane": "general",
+      "target_seconds": 3,
+      "complete_http_seconds": 21.30212179198861,
+      "first_raw_content_seconds": 4.7372032920247875,
+      "output_tokens": 232,
+      "success": true,
+      "completed_within_target": false
+    },
+    {
+      "lane": "patient",
+      "target_seconds": 5,
+      "complete_http_seconds": 23.190486916981172,
+      "first_raw_content_seconds": 1.795291125017684,
+      "output_tokens": 301,
+      "success": true,
+      "completed_within_target": false
+    },
+    {
+      "lane": "department",
+      "target_seconds": 15,
+      "complete_http_seconds": 25.09931158402469,
+      "first_raw_content_seconds": 19.082622459041886,
+      "output_tokens": 84,
+      "success": true,
+      "completed_within_target": false
+    }
+  ],
+  "ollama_two_slot_200_simultaneous": {
+    "requests": 200,
+    "successful": 0,
+    "failed": 200,
+    "failures": {
+      "timeout": 200
+    },
+    "wall_s": 20.02735645795474,
+    "lanes": {
+      "general": {
+        "requests": 67,
+        "successful": 0,
+        "full_meeting_target": 0,
+        "target_s": 3.0,
+        "successful_full_http": {
+          "samples": 0,
+          "p50_s": null,
+          "p95_s": null,
+          "p99_s": null,
+          "max_s": null
+        }
+      },
+      "patient": {
+        "requests": 67,
+        "successful": 0,
+        "full_meeting_target": 0,
+        "target_s": 5.0,
+        "successful_full_http": {
+          "samples": 0,
+          "p50_s": null,
+          "p95_s": null,
+          "p99_s": null,
+          "max_s": null
+        }
+      },
+      "department": {
+        "requests": 66,
+        "successful": 0,
+        "full_meeting_target": 0,
+        "target_s": 15.0,
+        "successful_full_http": {
+          "samples": 0,
+          "p50_s": null,
+          "p95_s": null,
+          "p99_s": null,
+          "max_s": null
+        }
+      }
+    },
+    "quantiles_scope": "Successful complete HTTP responses only; all failures remain in target denominators"
+  },
+  "regular_models_present_during_ollama_measurements": true,
+  "mlx_attempts_with_regular_27b_temporarily_released": [
+    {
+      "evidence": "suspended-resident-a",
+      "status": "aborted",
+      "recorded_error_type": "QualificationAborted",
+      "recorded_abort_reason": "synthetic_fidelity_gate_failed_before_timing",
+      "quality_checks": {
+        "total": 8,
+        "completed_cases": 7,
+        "successful": 2,
+        "all_cases_passed": false
+      },
+      "system_wide_pressure": {
+        "scope": "system_wide_not_daemon_rss_or_gpu_peak",
+        "samples": 67,
+        "minimum_os_free_percentage": 40,
+        "maximum_compressed_bytes": 10985668608,
+        "maximum_compression_growth_bytes": 3405250560,
+        "swapout_growth_bytes": 0
+      },
+      "restoration_status": "restored_and_verified",
+      "other_original_residents_unchanged": true
+    },
+    {
+      "evidence": "suspended-resident-affine8-a",
+      "status": "aborted",
+      "recorded_error_type": "QualificationAborted",
+      "recorded_abort_reason": "compression_growth_over_4_gib",
+      "quality_checks": null,
+      "system_wide_pressure": {
+        "scope": "system_wide_not_daemon_rss_or_gpu_peak",
+        "samples": 5,
+        "minimum_os_free_percentage": 48,
+        "maximum_compressed_bytes": 18075336704,
+        "maximum_compression_growth_bytes": 9440854016,
+        "swapout_growth_bytes": 0
+      },
+      "restoration_status": "restored_and_verified",
+      "other_original_residents_unchanged": true
+    },
+    {
+      "evidence": "suspended-resident-affine8-staged-a",
+      "status": "aborted",
+      "recorded_error_type": "HTTPStatusError",
+      "recorded_abort_reason": "Inspect owned local logs",
+      "quality_checks": null,
+      "system_wide_pressure": {
+        "scope": "system_wide_not_daemon_rss_or_gpu_peak",
+        "samples": 6,
+        "minimum_os_free_percentage": 65,
+        "maximum_compressed_bytes": 15975350272,
+        "maximum_compression_growth_bytes": 6378717184,
+        "swapout_growth_bytes": 0
+      },
+      "restoration_status": "restored_and_verified",
+      "other_original_residents_unchanged": true
+    },
+    {
+      "evidence": "suspended-resident-source-repack4-f16-a",
+      "status": "aborted",
+      "recorded_error_type": "QualificationAborted",
+      "recorded_abort_reason": "compression_growth_over_4_gib",
+      "quality_checks": null,
+      "system_wide_pressure": {
+        "scope": "system_wide_not_daemon_rss_or_gpu_peak",
+        "samples": 5,
+        "minimum_os_free_percentage": 51,
+        "maximum_compressed_bytes": 20921139200,
+        "maximum_compression_growth_bytes": 11074322432,
+        "swapout_growth_bytes": 0
+      },
+      "restoration_status": "restored_and_verified",
+      "other_original_residents_unchanged": true
+    },
+    {
+      "evidence": "suspended-resident-source-repack4-f16-staged-a",
+      "status": "not_run_memory_preflight",
+      "recorded_error_type": null,
+      "recorded_abort_reason": null,
+      "quality_checks": null,
+      "system_wide_pressure": {
+        "scope": "system_wide_not_daemon_rss_or_gpu_peak",
+        "samples": 2,
+        "minimum_os_free_percentage": 54,
+        "maximum_compressed_bytes": 10707058688,
+        "maximum_compression_growth_bytes": 0,
+        "swapout_growth_bytes": 0
+      },
+      "restoration_status": "restored_and_verified",
+      "other_original_residents_unchanged": true
+    },
+    {
+      "evidence": "suspended-resident-source-repack4-f16-staged-b",
+      "status": "aborted",
+      "recorded_error_type": "HTTPStatusError",
+      "recorded_abort_reason": "HTTP status 502 on POST /api/generate",
+      "quality_checks": null,
+      "system_wide_pressure": {
+        "scope": "system_wide_not_daemon_rss_or_gpu_peak",
+        "samples": 6,
+        "minimum_os_free_percentage": 61,
+        "maximum_compressed_bytes": 21937897472,
+        "maximum_compression_growth_bytes": 11495424000,
+        "swapout_growth_bytes": 0
+      },
+      "restoration_status": "restored_and_verified",
+      "other_original_residents_unchanged": true
+    }
+  ],
+  "quality_qualified_mlx_timing_available": false,
+  "mlx_speedup_ratio": null,
+  "strict_200_completed_answer_targets_demonstrated": false,
+  "clinical_equivalence_qualified": false,
+  "hardware_purchase_qualified": false,
+  "limitations": [
+    "Eight synthetic checks are a narrow factual/schema diagnostic, not clinical validation.",
+    "High-precision MLX startup attempts produced no quality answers and supply no speed measurement.",
+    "Compression growth is system-wide; guard refusal is not proof of physical OOM.",
+    "No extrapolation to a Studio Ultra or hardware count is justified.",
+    "Summary refresh, ASR, imaging, production encryption/networking and failover were not qualified."
+  ]
+}

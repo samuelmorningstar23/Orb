@@ -1,0 +1,104 @@
+{
+  "schema": "orb.audit.real-browser-ux-provenance/1",
+  "recordedAt": "2026-10-12T11:14:39.787730+00:00",
+  "productionIndexSha256": "c7a759ed29e706bb547eae838157a4de3919393fd8c88d521d13054d2a7577d2",
+  "sourceAnchors": [
+    {
+      "path": "src/components/AdmitPatientModal.css",
+      "start": 87,
+      "end": 91,
+      "fileSha256": "2c5be05beff48f361a9666dc0e123297d0b1d161b85f3de994692a9067efa5aa",
+      "excerpt": "87: .admit-modal__body {\n88:   display: flex;\n89:   flex: 1;\n90:   min-height: 0;\n91: }"
+    },
+    {
+      "path": "src/components/AdmitPatientModal.css",
+      "start": 328,
+      "end": 336,
+      "fileSha256": "2c5be05beff48f361a9666dc0e123297d0b1d161b85f3de994692a9067efa5aa",
+      "excerpt": "328: .admit-modal__summary {\n329:   width: 280px;\n330:   background: var(--bg-glass);\n331:   border-left: 1px solid var(--border-subtle);\n332:   padding: 32px 24px;\n333:   display: flex;\n334:   flex-direction: column;\n335:   gap: 24px;\n336:   overflow-y: auto;"
+    },
+    {
+      "path": "src/components/AdmitPatientModal.css",
+      "start": 69,
+      "end": 79,
+      "fileSha256": "2c5be05beff48f361a9666dc0e123297d0b1d161b85f3de994692a9067efa5aa",
+      "excerpt": "69: .admit-modal__close {\n70:   width: 32px;\n71:   height: 32px;\n72:   display: flex;\n73:   align-items: center;\n74:   justify-content: center;\n75:   border-radius: var(--radius-full);\n76:   color: var(--text-secondary);\n77:   background: var(--bg-glass);\n78:   transition: all var(--transition-fast);\n79: }"
+    },
+    {
+      "path": "src/components/AdmitPatientModal.tsx",
+      "start": 795,
+      "end": 795,
+      "fileSha256": "c2909db81820df06cfc1194bdcc61a7870ea58d84db0cff26fb312ffe63ce9e1",
+      "excerpt": "795:                         <input type=\"text\" className=\"admit-input\" value={formData.name} onChange={e => handleChange('name', e.target.value)} required autoFocus />"
+    },
+    {
+      "path": "src/hooks/useFocusTrap.ts",
+      "start": 91,
+      "end": 91,
+      "fileSha256": "84bb62b631c8adf12557e15d80043e0bf8de224a714fe2e977ebc566a44f47d7",
+      "excerpt": "91:     previouslyFocused.current = document.activeElement as HTMLElement | null"
+    },
+    {
+      "path": "src/hooks/useFocusTrap.ts",
+      "start": 147,
+      "end": 147,
+      "fileSha256": "84bb62b631c8adf12557e15d80043e0bf8de224a714fe2e977ebc566a44f47d7",
+      "excerpt": "147:       previouslyFocused.current?.focus?.()"
+    },
+    {
+      "path": "src/pages/panels/RecordGovernancePanel.css",
+      "start": 1,
+      "end": 5,
+      "fileSha256": "d5d65269705bf4d1e78d211e5926793d78695f764b4795c3b889c542dd4d0364",
+      "excerpt": "1: .record-governance { padding: 1.5rem; max-width: 90rem; margin: auto; color: var(--text-primary); }\n2: .record-governance nav { display: flex; flex-wrap: wrap; gap: .5rem; margin-block: 1rem; }\n3: .record-governance-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,24rem),1fr)); gap: 2rem; }\n4: .record-governance label { display: grid; gap: .35rem; margin-block: .8rem; color: var(--text-secondary); }\n5: .record-governance input,.record-governance select,.record-governance textarea { padding: .65rem; font: inherit; max-width: 100%; min-height: 44px; box-sizing: border-box; color: var(--text-primary); background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); }"
+    },
+    {
+      "path": "src/pages/ClinicianShell.tsx",
+      "start": 536,
+      "end": 550,
+      "fileSha256": "265acad90060bb09bd4baa74e72a1fd793297a2943b5c4f85eea9ecf8fd1f917",
+      "excerpt": "536:           <div className=\"shell__user-card\">\n537:             <div className=\"shell__user-avatar\">{user?.name?.charAt(0)}</div>\n538:             <div className=\"shell__user-info\">\n539:               {/* The chip ellipsizes at sidebar width, so the full name/role\n540:                   must stay recoverable on hover (DEMO_READINESS \u00a72.7). */}\n541:               <span className=\"shell__user-name\" title={user?.name}>{user?.name}</span>\n542:               <span className=\"shell__user-role\" title={roleLine}>{roleLine}</span>\n543:             </div>\n544:             <button\n545:               className=\"shell__user-security\"\n546:               onClick={() => setIsEnrollingMfa(true)}\n547:               id=\"btn-mfa-enroll\"\n548:               title={t('shell.security')}\n549:               aria-label={t('shell.security')}\n550:             >"
+    },
+    {
+      "path": "src/pages/ClinicianShell.tsx",
+      "start": 847,
+      "end": 847,
+      "fileSha256": "265acad90060bb09bd4baa74e72a1fd793297a2943b5c4f85eea9ecf8fd1f917",
+      "excerpt": "847:       {isEnrollingMfa && <MfaEnrollmentModal onClose={() => setIsEnrollingMfa(false)} />}"
+    },
+    {
+      "path": "src/pages/ClinicianShell.css",
+      "start": 1082,
+      "end": 1084,
+      "fileSha256": "cf9129f74eddefd9d1279ff78008833a743fe82b1d13ab95572f34e3a9652986",
+      "excerpt": "1082:   .shell__user-card {\n1083:     display: none;\n1084:   }"
+    },
+    {
+      "path": "src/pages/Login.tsx",
+      "start": 510,
+      "end": 525,
+      "fileSha256": "4337a43548d4a7917653754984a20400cda6443402310ff7c6e3eddfe229393b",
+      "excerpt": "510:       {/* Pre-login MFA self-enrolment. Reached only via a 403\n511:           `mfa_enrollment_required`, which also issues the ticket this runs on. */}\n512:       {enrollTicket && (\n513:         <MfaEnrollmentModal\n514:           enrollTicket={enrollTicket}\n515:           // Only RECORD success here \u2014 clearing the ticket would unmount the\n516:           // modal instantly and the user would never see the success screen or\n517:           // its \"wait for the next code\" warning. The transition happens on close.\n518:           onEnrolled={() => setEnrolled(true)}\n519:           onClose={() => {\n520:             setEnrollTicket(null)\n521:             if (enrolled) {\n522:               // Hand them back to the code step with the credentials they\n523:               // already proved, so they only type the NEXT code.\n524:               setEnrolled(false)\n525:               setMfaRequired(true)"
+    },
+    {
+      "path": "src/components/sage/SageFloatingAssistant.css",
+      "start": 3,
+      "end": 8,
+      "fileSha256": "e97c6958321a1814fa3e88eabb8fbb2af03d36d6f09b58f9e533345ac9c0f47d",
+      "excerpt": "3: .sage-fab {\n4:   position: fixed;\n5:   bottom: 24px;\n6:   right: 24px;\n7:   /* Below .modal-overlay (9999) so open modals paint over the orb. */\n8:   z-index: 9990;"
+    }
+  ],
+  "capturedBackendSourceFiles": 445,
+  "capturedBackendMatchesCurrentAtPackaging": true,
+  "currentAuditScripts": {
+    "scripts/browser_ux_assessment.cjs": "b8a283760fe71e183849a995f18cd9dc6a8c1f22e06ac40c48f30f083e81b5b7",
+    "scripts/browser_ux_followup.cjs": "bc728f22fa82522b280038409d584bd562595c73cb191dc81c25d49eb27e1021",
+    "scripts/e2e_server.py": "90cde4f221b159a951c836e6a60ba46c2ca1eb650c52909cb1ef9178e1e0c755"
+  },
+  "harnessIntegrity": "Each original raw results.harnessSha256 matches the retained original harness file. Current scripts contain subsequent setup/selector corrections; original runs were not reattributed to current hashes.",
+  "selectedScreenshots": [
+    "focused-final/screenshots/036-390-light-admission-overlap-viewport.png",
+    "registers-verified/screenshots/002-390-light-radiation-safety-viewport.png",
+    "registers-verified/screenshots/003-390-light-radiation-safety-horizontal-pan-end-viewport.png"
+  ]
+}

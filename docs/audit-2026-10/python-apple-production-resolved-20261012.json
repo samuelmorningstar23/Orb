@@ -1,0 +1,385 @@
+{
+  "dependencies": [
+    {
+      "name": "jinja2",
+      "version": "3.1.6",
+      "vulns": []
+    },
+    {
+      "name": "markupsafe",
+      "version": "3.0.4",
+      "vulns": []
+    },
+    {
+      "name": "pyjwt",
+      "version": "2.15.1",
+      "vulns": []
+    },
+    {
+      "name": "pyyaml",
+      "version": "6.0.3",
+      "vulns": []
+    },
+    {
+      "name": "pygments",
+      "version": "2.21.0",
+      "vulns": []
+    },
+    {
+      "name": "aiosqlite",
+      "version": "0.21.0",
+      "vulns": []
+    },
+    {
+      "name": "annotated-doc",
+      "version": "0.0.5",
+      "vulns": []
+    },
+    {
+      "name": "annotated-types",
+      "version": "0.8.0",
+      "vulns": []
+    },
+    {
+      "name": "anyio",
+      "version": "4.15.1",
+      "vulns": []
+    },
+    {
+      "name": "bcrypt",
+      "version": "4.2.1",
+      "vulns": []
+    },
+    {
+      "name": "bidict",
+      "version": "0.24.1",
+      "vulns": []
+    },
+    {
+      "name": "certifi",
+      "version": "2026.7.22",
+      "vulns": []
+    },
+    {
+      "name": "cffi",
+      "version": "2.1.1",
+      "vulns": []
+    },
+    {
+      "name": "charset-normalizer",
+      "version": "3.5.2",
+      "vulns": []
+    },
+    {
+      "name": "click",
+      "version": "8.5.0",
+      "vulns": []
+    },
+    {
+      "name": "cryptography",
+      "version": "50.0.2",
+      "vulns": []
+    },
+    {
+      "name": "fastapi",
+      "version": "0.133.0",
+      "vulns": []
+    },
+    {
+      "name": "filelock",
+      "version": "4.1.1",
+      "vulns": []
+    },
+    {
+      "name": "fsspec",
+      "version": "2026.9.0",
+      "vulns": []
+    },
+    {
+      "name": "h11",
+      "version": "0.16.0",
+      "vulns": []
+    },
+    {
+      "name": "hf-xet",
+      "version": "1.7.0",
+      "vulns": []
+    },
+    {
+      "name": "httpcore",
+      "version": "1.0.9",
+      "vulns": []
+    },
+    {
+      "name": "httpcore2",
+      "version": "2.13.1",
+      "vulns": []
+    },
+    {
+      "name": "httptools",
+      "version": "0.9.0",
+      "vulns": []
+    },
+    {
+      "name": "httpx",
+      "version": "0.28.1",
+      "vulns": []
+    },
+    {
+      "name": "httpx2",
+      "version": "2.13.1",
+      "vulns": []
+    },
+    {
+      "name": "huggingface-hub",
+      "version": "2.2.0",
+      "vulns": []
+    },
+    {
+      "name": "idna",
+      "version": "3.20",
+      "vulns": []
+    },
+    {
+      "name": "lightning-whisper-mlx",
+      "version": "0.0.10",
+      "vulns": []
+    },
+    {
+      "name": "llvmlite",
+      "version": "0.50.0",
+      "vulns": []
+    },
+    {
+      "name": "markdown-it-py",
+      "version": "4.2.0",
+      "vulns": []
+    },
+    {
+      "name": "mdurl",
+      "version": "0.1.2",
+      "vulns": []
+    },
+    {
+      "name": "mlx",
+      "version": "0.32.3",
+      "vulns": []
+    },
+    {
+      "name": "mlx-metal",
+      "version": "0.32.3",
+      "vulns": []
+    },
+    {
+      "name": "more-itertools",
+      "version": "11.1.0",
+      "vulns": []
+    },
+    {
+      "name": "mpmath",
+      "version": "1.3.0",
+      "vulns": []
+    },
+    {
+      "name": "networkx",
+      "version": "3.7",
+      "vulns": []
+    },
+    {
+      "name": "numba",
+      "version": "0.68.0",
+      "vulns": []
+    },
+    {
+      "name": "numpy",
+      "version": "2.2.4",
+      "vulns": []
+    },
+    {
+      "name": "packaging",
+      "version": "26.3",
+      "vulns": []
+    },
+    {
+      "name": "pycparser",
+      "version": "3.11",
+      "vulns": []
+    },
+    {
+      "name": "pydantic",
+      "version": "2.14.1",
+      "vulns": []
+    },
+    {
+      "name": "pydantic-core",
+      "version": "2.50.1",
+      "vulns": []
+    },
+    {
+      "name": "pypng",
+      "version": "0.20220715.0",
+      "vulns": []
+    },
+    {
+      "name": "python-dotenv",
+      "version": "1.2.4",
+      "vulns": []
+    },
+    {
+      "name": "python-engineio",
+      "version": "4.14.0",
+      "vulns": []
+    },
+    {
+      "name": "python-multipart",
+      "version": "0.0.31",
+      "vulns": []
+    },
+    {
+      "name": "python-socketio",
+      "version": "5.16.4",
+      "vulns": []
+    },
+    {
+      "name": "qrcode",
+      "version": "8.2",
+      "vulns": []
+    },
+    {
+      "name": "regex",
+      "version": "2026.9.29",
+      "vulns": []
+    },
+    {
+      "name": "requests",
+      "version": "2.34.2",
+      "vulns": []
+    },
+    {
+      "name": "rich",
+      "version": "15.0.0",
+      "vulns": []
+    },
+    {
+      "name": "safetensors",
+      "version": "0.8.0",
+      "vulns": []
+    },
+    {
+      "name": "scipy",
+      "version": "1.18.1",
+      "vulns": []
+    },
+    {
+      "name": "setuptools",
+      "version": "84.0.0",
+      "vulns": []
+    },
+    {
+      "name": "shellingham",
+      "version": "1.5.4",
+      "vulns": []
+    },
+    {
+      "name": "simple-websocket",
+      "version": "1.1.0",
+      "vulns": []
+    },
+    {
+      "name": "sqlcipher3-wheels",
+      "version": "0.5.7",
+      "vulns": []
+    },
+    {
+      "name": "sqlite-vec",
+      "version": "0.1.6",
+      "vulns": []
+    },
+    {
+      "name": "starlette",
+      "version": "1.3.1",
+      "vulns": []
+    },
+    {
+      "name": "sympy",
+      "version": "1.14.0",
+      "vulns": []
+    },
+    {
+      "name": "tiktoken",
+      "version": "0.3.3",
+      "vulns": []
+    },
+    {
+      "name": "tokenizers",
+      "version": "0.23.3",
+      "vulns": []
+    },
+    {
+      "name": "torch",
+      "version": "2.14.1",
+      "vulns": []
+    },
+    {
+      "name": "tqdm",
+      "version": "4.70.1",
+      "vulns": []
+    },
+    {
+      "name": "transformers",
+      "version": "5.19.0",
+      "vulns": []
+    },
+    {
+      "name": "truststore",
+      "version": "0.10.4",
+      "vulns": []
+    },
+    {
+      "name": "typer",
+      "version": "0.27.3",
+      "vulns": []
+    },
+    {
+      "name": "typing-inspection",
+      "version": "0.4.4",
+      "vulns": []
+    },
+    {
+      "name": "typing-extensions",
+      "version": "4.16.0",
+      "vulns": []
+    },
+    {
+      "name": "urllib3",
+      "version": "2.8.0",
+      "vulns": []
+    },
+    {
+      "name": "uvicorn",
+      "version": "0.34.2",
+      "vulns": []
+    },
+    {
+      "name": "uvloop",
+      "version": "0.23.0",
+      "vulns": []
+    },
+    {
+      "name": "watchfiles",
+      "version": "1.3.0",
+      "vulns": []
+    },
+    {
+      "name": "websockets",
+      "version": "17.2",
+      "vulns": []
+    },
+    {
+      "name": "wsproto",
+      "version": "1.3.2",
+      "vulns": []
+    }
+  ],
+  "fixes": []
+}

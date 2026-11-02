@@ -1,0 +1,48 @@
+{
+  "recorded_at": "2026-10-21T17:27:03.253567+00:00",
+  "synthetic_cpu_unit_and_supervisor_tests": {
+    "passed": 386,
+    "skipped": 0,
+    "wall_seconds": 3.98,
+    "python": "/private/tmp/orb-mlx-benchmark-20261021/venv/bin/python"
+  },
+  "ruff_selected_rules": [
+    "F",
+    "I"
+  ],
+  "ruff_result": "passed",
+  "mypy_result": "passed_7_source_files",
+  "source_sha256": {
+    "benchmark_mlx_ollama.py": "531de3de0ebda4c3c83e2e0634e1f03f9a97c5ba1d3d6688b33ae64f6e23826a",
+    "benchmark_model_residency_lease.py": "0153e1ae7205986b864fd19586c61afaff568533f1afc4fd71a01117fa368cbe",
+    "convert_medgemma_gguf_mlx.py": "3655f444fd6b47b54343ecadb6923d7f7b48e94b4b073ce866f2c39fff606da7",
+    "gguf_mlx_repack.py": "e39e4e4d5a71de81207bd3194836ac63171721c438420e425c9249ac1d74805e",
+    "guard_mlx_conversion.py": "cfe83864eac8560f965f3d045f1274bd06c44ac27cc06a073f61b71c46f3443b",
+    "serve_mlx_benchmark.py": "abfdfbcaeaa13ac539abb7fb3195e335a1d69816e823a44fd1ea3139934451ac",
+    "serve_mlx_benchmark_staged.py": "c9311445d21cbbbeb89aa0cf7a82ab0afb7d7dfb79869e6429de0b142a374ed4",
+    "qualify_ollama_serving.py": "37a596b8c82b423b20fd177a597242b878f8a3b7a8149cf220fd7bb875815528"
+  },
+  "limitations": [
+    "These tests are not model clinical validation or a hardware throughput qualification."
+  ],
+  "mypy_checked_sources": [
+    "benchmark_mlx_ollama.py",
+    "benchmark_model_residency_lease.py",
+    "convert_medgemma_gguf_mlx.py",
+    "gguf_mlx_repack.py",
+    "guard_mlx_conversion.py",
+    "serve_mlx_benchmark.py",
+    "serve_mlx_benchmark_staged.py"
+  ],
+  "ruff_checked_sources": [
+    "benchmark_mlx_ollama.py",
+    "benchmark_model_residency_lease.py",
+    "convert_medgemma_gguf_mlx.py",
+    "gguf_mlx_repack.py",
+    "guard_mlx_conversion.py",
+    "serve_mlx_benchmark.py",
+    "serve_mlx_benchmark_staged.py",
+    "qualify_ollama_serving.py"
+  ],
+  "note": "Final diagnostics preserve an explicitly recorded guard trigger before termination can be cancelled. This instrumentation was unit-tested after the final model run; historical model reports are unchanged."
+}

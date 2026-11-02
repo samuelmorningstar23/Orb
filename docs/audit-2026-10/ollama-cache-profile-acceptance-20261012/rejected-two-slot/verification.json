@@ -1,0 +1,44 @@
+{
+  "status": "rejected_candidate_not_promoted",
+  "reason": "Independent interactive/background app lanes require daemon parallel=1 to prevent real inference overlap. Two live slots could permit concurrency despite intended single request ownership.",
+  "directory": "/private/tmp/orb-two-slot-candidate-20261012-eoouro6j",
+  "command": "/private/tmp/orb-ml-upgrade-20261012/bin/python -m pytest -q tests/test_ollama_launcher.py tests/test_run_orb_launcher.py",
+  "cwd": "/private/tmp/orb-two-slot-candidate-20261012-eoouro6j/candidate/server",
+  "result": {
+    "passed": 104,
+    "failed": 0,
+    "skipped": 0,
+    "seconds": 72.96,
+    "new_parameterized_cases": 34
+  },
+  "checks": {
+    "bash_syntax_exit": 0,
+    "git_apply_check_whitespace_error_exit": 0,
+    "repository_baseline_unchanged": true
+  },
+  "repository_files_sha256": {
+    "scripts/serve-ollama.sh": "031f233edbbbe8e5d92e7f038adbc8a6c10dc9540cad2e9e81569531b1a33a38",
+    "setup-mac.sh": "0f1b033f2743c160b12e142ccbb29f350e9c5c03023c55818a803ab71641ae18",
+    "run-orb.sh": "2660694fbe18e2c14522629fa01d291ee3549ec3caf00d46d11ea5adfb4f45ee",
+    "server/tests/test_ollama_launcher.py": "1ca441025cd807c8705595dca19351abb74aa718b7d59ea92b6ff7ecc1026ecf",
+    "server/tests/test_run_orb_launcher.py": "f8e5a249d3ffb57995cb568ad07bbd94e2862c52db96237de6af731abebebc9a"
+  },
+  "candidate_files_sha256": {
+    "scripts/serve-ollama.sh": "05697bb01755ccee394a96d73c18e9c5030256278846d1c17cba32ad2baba2c2",
+    "server/tests/test_ollama_launcher.py": "4ebc341e6b27bcfa231bdf89c64451982f19ede85888248c9594a942aa74c845",
+    "server/tests/test_run_orb_launcher.py": "2a518b4251d9d862a4bc63f6680c7d8d715aa641d58d5aedeabd310d24a30483"
+  },
+  "patch": {
+    "path": "/private/tmp/orb-two-slot-candidate-20261012-eoouro6j/two-slot.patch",
+    "sha256": "10ffe3c19666a0743ee995471c89ab80bc683ed9ad331a8e53d15bb0aa0978ac"
+  },
+  "log": {
+    "path": "/private/tmp/orb-two-slot-candidate-20261012-eoouro6j/pytest.log",
+    "sha256": "9412f8642e7f4a9e7dff5466a443b2467fef0fe86f36dd3234045bc015687553"
+  },
+  "limits": [
+    "Fake executables only: no actual daemon, model weights, network, inference, or runtime memory validation.",
+    "No application, launcher, test, or documentation source was changed in the repository.",
+    "Synthetic success does not validate two-slot concurrency safety."
+  ]
+}

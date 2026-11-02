@@ -1,0 +1,91 @@
+{
+  "schema": "orb.audit.shared-model-context-verification/1",
+  "date": "2026-10-12",
+  "scope": "Prevent confirmed default same-model ambient/foreground runner context churn without changing lane behavior or clinical rules.",
+  "runtime": "/private/tmp/orb-ml-upgrade-20261012/bin/python",
+  "source_copy_base": "/private/tmp/orb-ml-backend-shards-20261012-v4/source",
+  "cwd": "/private/tmp/orb-shared-context-20261012-8z62wzgm/source/server",
+  "command": [
+    "env",
+    "-u",
+    "ORB_DB_PATH",
+    "ORB_SKIP_KNOWLEDGE_BASE=1",
+    "HF_HUB_OFFLINE=1",
+    "TRANSFORMERS_OFFLINE=1",
+    "ORB_OLLAMA_HOST=http://127.0.0.1:9",
+    "ORB_SEPSIS_AUTOSTART=1",
+    "ORB_FHIR_EXPORT_DIR=/private/tmp/orb-shared-context-exports",
+    "ORB_WATCHDOG_DIR=/private/tmp/orb-shared-context-watchdog",
+    "/private/tmp/orb-ml-upgrade-20261012/bin/python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/test_ollama_gateway.py",
+    "tests/test_ollama_gateway_guard.py",
+    "tests/test_narrator_timeline_ambient_tier.py"
+  ],
+  "result": {
+    "passed": 51,
+    "failed": 0,
+    "skipped": 0,
+    "seconds": 8.87
+  },
+  "log": "/private/tmp/orb-shared-context-focused-20261012.log",
+  "log_sha256": "44ee40dc46aa4d63a4cab514a00aa0040637dd9c8bea1bac394e229813e96899",
+  "source_hashes": {
+    "server/services/ollama_gateway.py": "77f8f47495448ad1425ca3950606983b3af7fa87ca9885d7a40a71f1a74566ad",
+    "server/tests/test_ollama_gateway.py": "928a7941598210603b6496666ea448d74ff76b4efba7349d23b1e3467f72f9c5",
+    "server/tests/test_narrator_timeline_ambient_tier.py": "2b9b1ff371ab2bd692d3a3534c6f5f55f5125d9721e27aa397200ad82015f2b3"
+  },
+  "new_collected_cases": {
+    "total": 28,
+    "gateway": 26,
+    "real_narrator_and_projection_parameterization": 2
+  },
+  "condition": {
+    "purposes": [
+      "ward_narrator",
+      "expected_course_projection",
+      "vigil_recommendation",
+      "relay_ambient_classify",
+      "relay_room_fit_check"
+    ],
+    "model": "Exact nonempty string equality: request.model == config.AMBIENT_LLM_MODEL == config.LLM_MODEL.",
+    "existing_contexts": [
+      2048,
+      4096
+    ],
+    "new_context": "services.sage_service.INTERACTIVE_NUM_CTX (8192).",
+    "other_contexts": "Absent, non-integer, unfamiliar, already8192 and larger explicit contexts are unchanged.",
+    "mutation": "New payload and options dictionaries; caller-owned values preserved."
+  },
+  "unchanged": [
+    "Model routing and residency checks.",
+    "Prompts, system/messages, format, output budgets, sampling temperatures and keep_alive.",
+    "Client timeouts, queue priorities/admission, background gates, yielding and safety/clinical policy.",
+    "Models-off refusal remains before context normalization, request dispatch or audit.",
+    "Separate ambient-model contexts, including4096 for narrator/projection and2048 for room-fit.",
+    "Streaming/provider seams and unrelated gateway purposes."
+  ],
+  "verification": [
+    "Captured fake HTTP requests cover all5 purposes and both existing contexts across /api/chat and /api/generate.",
+    "Negative cases cover distinct configured models, requested-model mismatch, near-match tags, empty/missing model, unrelated purpose and absent/unfamiliar/larger windows.",
+    "Original request dictionaries/options remain unchanged, and audit receives the dispatched payload with identical prompt hash.",
+    "Real narrator/projection call paths run in shared and distinct configurations and preserve output budgets.",
+    "Existing audit, yield/cancellation and gateway source guards remain green."
+  ],
+  "documentation": {
+    "command": "/private/tmp/orb-ml-upgrade-20261012/bin/python scripts/check-doc-citations.py",
+    "citations": "9020/9020",
+    "symbol_anchors": "490/490",
+    "exit_code": 0,
+    "log": "/private/tmp/orb-doc-citations-shared-context-20261012.log",
+    "log_sha256": "2bd4bba351a0f68bd6416e71dca72b1f746b1f0900a7ae341e04f5e855e62dfa",
+    "git_diff_check": "passed"
+  },
+  "limits": [
+    "Only synthetic captured HTTP/model responses were used; no actual inference, model loading or network request was run.",
+    "Focused tests establish dispatch/gate behavior, not latency improvement, output quality or clinical acceptance. Root owns the later full suite and measured browser timing.",
+    "No live environment, database, uploads, backups or model weights were accessed or modified."
+  ]
+}

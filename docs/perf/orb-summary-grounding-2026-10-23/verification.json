@@ -1,0 +1,58 @@
+{
+  "core_regression_test_batches": [
+    {
+      "passed": 229,
+      "files": [
+        "server/tests/test_sage_cache_vitals_coherence.py",
+        "server/tests/test_sage_read_only_patient_summary.py",
+        "server/tests/test_summary_grounding.py",
+        "server/tests/test_patient_summary_snapshots.py",
+        "server/tests/test_sage_summary_evidence.py",
+        "server/tests/test_disconnect_stream.py",
+        "tests/test_capacity_answer_quality.py",
+        "tests/test_mlx_workflow_cleanup.py"
+      ]
+    },
+    {
+      "passed": 635,
+      "files": [
+        "server/tests/test_sage_department_scope.py",
+        "server/tests/test_sage_facility_locator.py",
+        "server/tests/test_sage_inference_outcome.py",
+        "server/tests/test_sage_sticky_anchor.py",
+        "server/tests/test_action_lane_gates.py",
+        "server/tests/test_sage_streaming.py",
+        "server/tests/test_sage_history_marker.py",
+        "server/tests/test_sage_turn_atomicity.py",
+        "server/tests/test_local_model_stream_contract.py"
+      ]
+    },
+    {
+      "passed": 42,
+      "files": [
+        "tests/test_benchmark_model_residency_lease.py"
+      ]
+    }
+  ],
+  "core_and_lease_tests_total_disjoint_files": 906,
+  "ruff_F_I": "passed_on_changed_core_and_benchmark_files",
+  "focused_mypy": "summary_grounding.py and patient_summary_service.py passed with follow-imports=skip; summary_grounding.py and disconnect_stream.py also passed follow-imports=silent",
+  "fake_model_smoke": {
+    "real_inference": false,
+    "http_successful": 6,
+    "http_total": 6,
+    "source_contract_patient_passed": 2,
+    "source_contract_patient_total": 2
+  },
+  "clinical_validation": false,
+  "capacity_qualification": false,
+  "resident_harness_cpu_tests_passed": 8,
+  "resident_harness_ruff": "passed",
+  "resident_harness_mypy": "passed",
+  "serial_loader_worker_test_batch": {
+    "passed": 75,
+    "scope": "CPU worker/memory and tiny complete XLMRoberta checkpoint bitwise equality; not a production-checkpoint clinical test",
+    "ruff_F_I": "passed",
+    "focused_mypy": "passed"
+  }
+}

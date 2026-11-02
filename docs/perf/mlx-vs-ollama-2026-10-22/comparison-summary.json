@@ -1,0 +1,1330 @@
+{
+  "created_at": "2026-10-22T10:59:08.536404+00:00",
+  "hardware": "Apple M2 Max,64GiB unified memory",
+  "source_gguf_sha256": "4b97da6b21a8fb1405a0d1efee462bfd6c4d3c46307bac8b34373835f07ca758",
+  "conversion_manifest_sha256": "2a6d9e1cd41375e54c614c0de05b2bd1715a2395ee0482b5ec979b22d7ae0206",
+  "same_checkpoint_lineage_but_not_identical_quantized_weights": true,
+  "runtime_network": "Inherited sandbox denies outbound exceptlocalhost; no downloads or cloud inference",
+  "same_200_input_capture_sha256": "7478095ea809d77f4968c811313748c3f6633e8a5a0c4b9464e20b1b8def233e",
+  "reports": {
+    "initial_mlx_single": {
+      "artifact": {
+        "path": "mixed-comparison-a/mlx-p1/report.json",
+        "sha256": "e0433e4441206e63074a836eea021f044c010701bca8f95b60d3f1edc133cdf6"
+      },
+      "status": "complete",
+      "abort_reason": null,
+      "quality": {
+        "status": "complete",
+        "planned": 8,
+        "attempted": 8,
+        "completed": 8,
+        "passed": 8,
+        "failed_cases": [],
+        "scope": "Synthetic fact/type extraction; markdown fences tolerated; not clinical noninferiority"
+      },
+      "pressure": {
+        "scope": "system_wide_not_daemon_rss_or_gpu_peak",
+        "samples": 121,
+        "minimum_os_free_percentage": 40,
+        "maximum_compressed_bytes": 9531228160,
+        "maximum_compression_growth_bytes": 1784348672,
+        "swapout_growth_bytes": 0
+      },
+      "model_configuration": {
+        "model": "medgemma:27b",
+        "kind": "same_source_separately_requantised_mlx_candidate",
+        "weights_bytes": 19478730384,
+        "kv_budget_bytes": 1107296256,
+        "kv_element_bytes": 2,
+        "activation_policy": "mixed_f32_residual_f16_projection",
+        "quantised_kv": false,
+        "clinical_equivalence": "not_qualified",
+        "loading_mode": "mixed-staged",
+        "checksum_io": {
+          "large_safetensors_uncached_fd_count": 435
+        },
+        "batching_enabled": true,
+        "prefix_cache_entry_limit": 10,
+        "prefix_cache_byte_limit": 8589934592,
+        "source_gguf_sha256": "4b97da6b21a8fb1405a0d1efee462bfd6c4d3c46307bac8b34373835f07ca758",
+        "conversion_manifest_sha256": "2a6d9e1cd41375e54c614c0de05b2bd1715a2395ee0482b5ec979b22d7ae0206"
+      },
+      "retrieval_integrity_verified": false,
+      "strict_200_latency_targets_demonstrated": false,
+      "phases": [
+        {
+          "name": "replay",
+          "status": "complete",
+          "scope": "engine_only_exact_captured_bodies_not_Orb_latency_or_clinical_validation",
+          "capture_provenance": {
+            "path": "/Users/samuelmorningstar/Documents/Projects/Orb/docs/perf/mlx-vs-ollama-2026-10-21/full-rag-input-capture-c/capture/requests.jsonl",
+            "sha256": "5127bb696dfaf32299365d7dd23f7a3cb475e8ee4eb730c439e100d839a69587",
+            "bytes": 16066,
+            "chat_requests": 3,
+            "skipped_generate_requests": 0,
+            "synthetic_metadata_sha256": "b6597f314866c824dd71f624197c84b78a02e2ffb04674793f1b3e163a187c94"
+          },
+          "requests": [
+            {
+              "source_body_sha256": "a79ff599fb06716dc10b8aadbeff634ffaf33e48f5ff023dc9dce947e54253cb",
+              "success": true,
+              "first_raw_content_s": 6.643916665983852,
+              "terminal": {
+                "done_reason": "stop",
+                "model": "medgemma:27b",
+                "prompt_eval_count": 704,
+                "eval_count": 206
+              },
+              "full_s": 31.647215500008315
+            },
+            {
+              "source_body_sha256": "4342b0651dc2c39847382b1eabdda341b904160a7051625219146838a967a92e",
+              "success": true,
+              "first_raw_content_s": 2.6020750000025146,
+              "terminal": {
+                "done_reason": "stop",
+                "model": "medgemma:27b",
+                "prompt_eval_count": 809,
+                "eval_count": 360
+              },
+              "full_s": 47.22993450000649
+            },
+            {
+              "source_body_sha256": "86d0d6a261388e2891b7192ae42d284f9d3cc31f1e9effb4648b025e1cf96057",
+              "success": false,
+              "first_raw_content_s": 24.265270749980118,
+              "error_type": "TimeoutError",
+              "full_s": 60.00191258301493
+            }
+          ]
+        }
+      ]
+    },
+    "initial_native_single": {
+      "artifact": {
+        "path": "mixed-comparison-a/ollama-p1/report.json",
+        "sha256": "0a82b461da21f38abb81936fc3b91b48d6ec8ab46a9c4ebb18d52d6d463a38e7"
+      },
+      "status": "complete",
+      "abort_reason": null,
+      "quality": {
+        "status": "complete",
+        "planned": 8,
+        "attempted": 8,
+        "completed": 8,
+        "passed": 8,
+        "failed_cases": [],
+        "scope": "Synthetic fact/type extraction; markdown fences tolerated; not clinical noninferiority"
+      },
+      "pressure": {
+        "scope": "system_wide_not_daemon_rss_or_gpu_peak",
+        "samples": 114,
+        "minimum_os_free_percentage": 45,
+        "maximum_compressed_bytes": 9452011520,
+        "maximum_compression_growth_bytes": 0,
+        "swapout_growth_bytes": 0
+      },
+      "model_configuration": {
+        "model": "medgemma:27b",
+        "model_digest": "sha256:4b97da6b21a8fb1405a0d1efee462bfd6c4d3c46307bac8b34373835f07ca758",
+        "weight_bytes": 17397211520,
+        "manifest_sha256": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+        "quantization": "Q4_K_M"
+      },
+      "retrieval_integrity_verified": false,
+      "strict_200_latency_targets_demonstrated": false,
+      "phases": [
+        {
+          "name": "replay",
+          "status": "complete",
+          "scope": "engine_only_exact_captured_bodies_not_Orb_latency_or_clinical_validation",
+          "capture_provenance": {
+            "path": "/Users/samuelmorningstar/Documents/Projects/Orb/docs/perf/mlx-vs-ollama-2026-10-21/full-rag-input-capture-c/capture/requests.jsonl",
+            "sha256": "5127bb696dfaf32299365d7dd23f7a3cb475e8ee4eb730c439e100d839a69587",
+            "bytes": 16066,
+            "chat_requests": 3,
+            "skipped_generate_requests": 0,
+            "synthetic_metadata_sha256": "b6597f314866c824dd71f624197c84b78a02e2ffb04674793f1b3e163a187c94"
+          },
+          "requests": [
+            {
+              "source_body_sha256": "a79ff599fb06716dc10b8aadbeff634ffaf33e48f5ff023dc9dce947e54253cb",
+              "success": true,
+              "first_raw_content_s": 8.257483582943678,
+              "terminal": {
+                "done_reason": "stop",
+                "model": "medgemma:27b",
+                "prompt_eval_count": 704,
+                "eval_count": 174
+              },
+              "full_s": 32.95351912494516
+            },
+            {
+              "source_body_sha256": "4342b0651dc2c39847382b1eabdda341b904160a7051625219146838a967a92e",
+              "success": true,
+              "first_raw_content_s": 2.889593292027712,
+              "terminal": {
+                "done_reason": "stop",
+                "model": "medgemma:27b",
+                "prompt_eval_count": 809,
+                "eval_count": 295
+              },
+              "full_s": 43.644637375022285
+            },
+            {
+              "source_body_sha256": "86d0d6a261388e2891b7192ae42d284f9d3cc31f1e9effb4648b025e1cf96057",
+              "success": true,
+              "first_raw_content_s": 30.781684916000813,
+              "terminal": {
+                "done_reason": "stop",
+                "model": "medgemma:27b",
+                "prompt_eval_count": 2742,
+                "eval_count": 73
+              },
+              "full_s": 40.44789800001308
+            }
+          ]
+        }
+      ]
+    },
+    "final_mlx_engine200": {
+      "artifact": {
+        "path": "mixed-bounded-recheck-a/mlx-p8-200/report.json",
+        "sha256": "0afa3fbb981e1ec498110295d8dae0e184913449e6acb981eb4ed812d4d83b63"
+      },
+      "status": "complete",
+      "abort_reason": null,
+      "quality": {
+        "status": "complete",
+        "planned": 8,
+        "attempted": 8,
+        "completed": 8,
+        "passed": 8,
+        "failed_cases": [],
+        "scope": "Synthetic fact/type extraction; markdown fences tolerated; not clinical noninferiority"
+      },
+      "pressure": {
+        "scope": "system_wide_not_daemon_rss_or_gpu_peak",
+        "samples": 76,
+        "minimum_os_free_percentage": 42,
+        "maximum_compressed_bytes": 10389225472,
+        "maximum_compression_growth_bytes": 0,
+        "swapout_growth_bytes": 0
+      },
+      "model_configuration": {
+        "model": "medgemma:27b",
+        "kind": "same_source_separately_requantised_mlx_candidate",
+        "weights_bytes": 19478730384,
+        "kv_budget_bytes": 8858370048,
+        "kv_element_bytes": 2,
+        "activation_policy": "mixed_f32_residual_f16_projection",
+        "quantised_kv": false,
+        "clinical_equivalence": "not_qualified",
+        "loading_mode": "mixed-staged",
+        "checksum_io": {
+          "large_safetensors_uncached_fd_count": 435
+        },
+        "batching_enabled": true,
+        "prefix_cache_entry_limit": 10,
+        "prefix_cache_byte_limit": 8589934592,
+        "http_listen_backlog": 256,
+        "prefill_step_size": 256,
+        "mlx_allocator_cache_byte_limit": 1073741824,
+        "source_gguf_sha256": "4b97da6b21a8fb1405a0d1efee462bfd6c4d3c46307bac8b34373835f07ca758",
+        "conversion_manifest_sha256": "2a6d9e1cd41375e54c614c0de05b2bd1715a2395ee0482b5ec979b22d7ae0206"
+      },
+      "retrieval_integrity_verified": false,
+      "strict_200_latency_targets_demonstrated": false,
+      "phases": [
+        {
+          "name": "replay200",
+          "status": "complete",
+          "scope": "engine_only_200_exact_captured_bodies_without_live_retrieval_not_combined_Orb_capacity",
+          "summary": {
+            "requests": 200,
+            "successful": 0,
+            "failed": 200,
+            "failures": {
+              "timeout": 200
+            },
+            "wall_s": 20.039447124989238,
+            "lanes": {
+              "general": {
+                "requests": 67,
+                "successful": 0,
+                "full_meeting_target": 0,
+                "target_s": 3.0,
+                "successful_full_http": {
+                  "samples": 0,
+                  "p50_s": null,
+                  "p95_s": null,
+                  "p99_s": null,
+                  "max_s": null
+                }
+              },
+              "patient": {
+                "requests": 67,
+                "successful": 0,
+                "full_meeting_target": 0,
+                "target_s": 5.0,
+                "successful_full_http": {
+                  "samples": 0,
+                  "p50_s": null,
+                  "p95_s": null,
+                  "p99_s": null,
+                  "max_s": null
+                }
+              },
+              "department": {
+                "requests": 66,
+                "successful": 0,
+                "full_meeting_target": 0,
+                "target_s": 15.0,
+                "successful_full_http": {
+                  "samples": 0,
+                  "p50_s": null,
+                  "p95_s": null,
+                  "p99_s": null,
+                  "max_s": null
+                }
+              }
+            },
+            "quantiles_scope": "Successful complete HTTP responses only; all failures remain in target denominators"
+          },
+          "capture_provenance": {
+            "path": "/Users/samuelmorningstar/Documents/Projects/Orb/docs/perf/mlx-vs-ollama-2026-10-21/full-rag-input-capture-200-a/capture/requests.jsonl",
+            "sha256": "7478095ea809d77f4968c811313748c3f6633e8a5a0c4b9464e20b1b8def233e",
+            "bytes": 1097279,
+            "chat_requests": 200,
+            "skipped_generate_requests": 0,
+            "synthetic_metadata_sha256": "e9608aee28c41b5dd8ea2bd338df0bf400366f2b0860e8dc897d05ba8f5617d0"
+          },
+          "planned_requests": 200,
+          "concurrency": 200,
+          "hard_request_timeout_s": 20.0,
+          "observed_http_results": 200,
+          "unobserved_http_results": 0
+        }
+      ]
+    },
+    "final_native_engine200": {
+      "artifact": {
+        "path": "mixed-bounded-recheck-a/ollama-p2-200-after-reclaim/report.json",
+        "sha256": "3e5e4782a1fcfe2344502b74b8194bf1398ade72076d265b5d56f01cffe240c7"
+      },
+      "status": "complete",
+      "abort_reason": null,
+      "quality": {
+        "status": "complete",
+        "planned": 8,
+        "attempted": 8,
+        "completed": 7,
+        "passed": 7,
+        "failed_cases": [
+          {
+            "case_id": "long_context_allergy_and_corrected_chronology",
+            "completed": false,
+            "error": {
+              "type": "TimeoutError",
+              "message": ""
+            },
+            "failed_fact_checks": []
+          }
+        ],
+        "scope": "Synthetic fact/type extraction; markdown fences tolerated; not clinical noninferiority"
+      },
+      "pressure": {
+        "scope": "system_wide_not_daemon_rss_or_gpu_peak",
+        "samples": 78,
+        "minimum_os_free_percentage": 33,
+        "maximum_compressed_bytes": 12897075200,
+        "maximum_compression_growth_bytes": 2662039552,
+        "swapout_growth_bytes": 0
+      },
+      "model_configuration": {
+        "model": "medgemma:27b",
+        "model_digest": "sha256:4b97da6b21a8fb1405a0d1efee462bfd6c4d3c46307bac8b34373835f07ca758",
+        "weight_bytes": 17397211520,
+        "manifest_sha256": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+        "quantization": "Q4_K_M"
+      },
+      "retrieval_integrity_verified": false,
+      "strict_200_latency_targets_demonstrated": false,
+      "phases": [
+        {
+          "name": "replay200",
+          "status": "complete",
+          "scope": "engine_only_200_exact_captured_bodies_without_live_retrieval_not_combined_Orb_capacity",
+          "summary": {
+            "requests": 200,
+            "successful": 0,
+            "failed": 200,
+            "failures": {
+              "timeout": 200
+            },
+            "wall_s": 20.02984287502477,
+            "lanes": {
+              "general": {
+                "requests": 67,
+                "successful": 0,
+                "full_meeting_target": 0,
+                "target_s": 3.0,
+                "successful_full_http": {
+                  "samples": 0,
+                  "p50_s": null,
+                  "p95_s": null,
+                  "p99_s": null,
+                  "max_s": null
+                }
+              },
+              "patient": {
+                "requests": 67,
+                "successful": 0,
+                "full_meeting_target": 0,
+                "target_s": 5.0,
+                "successful_full_http": {
+                  "samples": 0,
+                  "p50_s": null,
+                  "p95_s": null,
+                  "p99_s": null,
+                  "max_s": null
+                }
+              },
+              "department": {
+                "requests": 66,
+                "successful": 0,
+                "full_meeting_target": 0,
+                "target_s": 15.0,
+                "successful_full_http": {
+                  "samples": 0,
+                  "p50_s": null,
+                  "p95_s": null,
+                  "p99_s": null,
+                  "max_s": null
+                }
+              }
+            },
+            "quantiles_scope": "Successful complete HTTP responses only; all failures remain in target denominators"
+          },
+          "capture_provenance": {
+            "path": "/Users/samuelmorningstar/Documents/Projects/Orb/docs/perf/mlx-vs-ollama-2026-10-21/full-rag-input-capture-200-a/capture/requests.jsonl",
+            "sha256": "7478095ea809d77f4968c811313748c3f6633e8a5a0c4b9464e20b1b8def233e",
+            "bytes": 1097279,
+            "chat_requests": 200,
+            "skipped_generate_requests": 0,
+            "synthetic_metadata_sha256": "e9608aee28c41b5dd8ea2bd338df0bf400366f2b0860e8dc897d05ba8f5617d0"
+          },
+          "planned_requests": 200,
+          "concurrency": 200,
+          "hard_request_timeout_s": 20.0,
+          "observed_http_results": 200,
+          "unobserved_http_results": 0
+        }
+      ]
+    },
+    "native_initial_headroom_skip": {
+      "artifact": {
+        "path": "mixed-bounded-recheck-a/ollama-p2-200/report.json",
+        "sha256": "164e2fca411b1e5619a897332347981452f3240fc30a5e8bc1a7353fdf4420f0"
+      },
+      "status": "not_run_memory_preflight",
+      "abort_reason": null,
+      "quality": null,
+      "pressure": {
+        "scope": "system_wide_not_daemon_rss_or_gpu_peak",
+        "samples": 2,
+        "minimum_os_free_percentage": 42,
+        "maximum_compressed_bytes": 10235281408,
+        "maximum_compression_growth_bytes": 0,
+        "swapout_growth_bytes": 0
+      },
+      "model_configuration": {
+        "model": "medgemma:27b",
+        "model_digest": "sha256:4b97da6b21a8fb1405a0d1efee462bfd6c4d3c46307bac8b34373835f07ca758",
+        "weight_bytes": 17397211520,
+        "manifest_sha256": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+        "quantization": "Q4_K_M"
+      },
+      "retrieval_integrity_verified": false,
+      "strict_200_latency_targets_demonstrated": false,
+      "phases": []
+    },
+    "full_rag_initial": {
+      "artifact": {
+        "path": "mixed-comparison-a/mlx-p8-full-rag/report.json",
+        "sha256": "66665092d105f2ec73303014c004ee8699f5a2f4ad573d6b63f8b7746e7d9d2f"
+      },
+      "status": "aborted",
+      "abort_reason": "compression_growth_over_4_gib",
+      "quality": null,
+      "pressure": {
+        "scope": "system_wide_not_daemon_rss_or_gpu_peak",
+        "samples": 15,
+        "minimum_os_free_percentage": 48,
+        "maximum_compressed_bytes": 19615498240,
+        "maximum_compression_growth_bytes": 10105569280,
+        "swapout_growth_bytes": 0
+      },
+      "model_configuration": {
+        "model": "medgemma:27b",
+        "kind": "same_source_separately_requantised_mlx_candidate",
+        "weights_bytes": 19478730384,
+        "kv_budget_bytes": 8858370048,
+        "kv_element_bytes": 2,
+        "activation_policy": "mixed_f32_residual_f16_projection",
+        "quantised_kv": false,
+        "clinical_equivalence": "not_qualified",
+        "loading_mode": "mixed-staged",
+        "checksum_io": {
+          "large_safetensors_uncached_fd_count": 435
+        },
+        "batching_enabled": true,
+        "prefix_cache_entry_limit": 10,
+        "prefix_cache_byte_limit": 8589934592,
+        "source_gguf_sha256": "4b97da6b21a8fb1405a0d1efee462bfd6c4d3c46307bac8b34373835f07ca758",
+        "conversion_manifest_sha256": "2a6d9e1cd41375e54c614c0de05b2bd1715a2395ee0482b5ec979b22d7ae0206"
+      },
+      "retrieval_integrity_verified": false,
+      "strict_200_latency_targets_demonstrated": false,
+      "phases": []
+    },
+    "full_rag_reordered": {
+      "artifact": {
+        "path": "mixed-serving-recheck-a/mlx-p8-full-rag/report.json",
+        "sha256": "18a954238fc5bf19926a7dc665caac704f569f5c1ce0199a60e4709bf7df2dc3"
+      },
+      "status": "aborted",
+      "abort_reason": "compression_growth_over_4_gib",
+      "quality": {
+        "status": "aborted_incomplete",
+        "planned": 8,
+        "attempted": 7,
+        "completed": 6,
+        "passed": 6,
+        "failed_cases": [
+          {
+            "case_id": "long_context_allergy_and_corrected_chronology",
+            "completed": false,
+            "error": {
+              "type": "FidelityFailure",
+              "message": "Invalid or error NDJSON event."
+            },
+            "failed_fact_checks": []
+          }
+        ],
+        "scope": "Synthetic fact/type extraction; markdown fences tolerated; not clinical noninferiority"
+      },
+      "pressure": {
+        "scope": "system_wide_not_daemon_rss_or_gpu_peak",
+        "samples": 44,
+        "minimum_os_free_percentage": 37,
+        "maximum_compressed_bytes": 14506967040,
+        "maximum_compression_growth_bytes": 4445175808,
+        "swapout_growth_bytes": 0
+      },
+      "model_configuration": {
+        "model": "medgemma:27b",
+        "kind": "same_source_separately_requantised_mlx_candidate",
+        "weights_bytes": 19478730384,
+        "kv_budget_bytes": 8858370048,
+        "kv_element_bytes": 2,
+        "activation_policy": "mixed_f32_residual_f16_projection",
+        "quantised_kv": false,
+        "clinical_equivalence": "not_qualified",
+        "loading_mode": "mixed-staged",
+        "checksum_io": {
+          "large_safetensors_uncached_fd_count": 435
+        },
+        "batching_enabled": true,
+        "prefix_cache_entry_limit": 10,
+        "prefix_cache_byte_limit": 8589934592,
+        "http_listen_backlog": 256,
+        "source_gguf_sha256": "4b97da6b21a8fb1405a0d1efee462bfd6c4d3c46307bac8b34373835f07ca758",
+        "conversion_manifest_sha256": "2a6d9e1cd41375e54c614c0de05b2bd1715a2395ee0482b5ec979b22d7ae0206"
+      },
+      "retrieval_integrity_verified": false,
+      "strict_200_latency_targets_demonstrated": false,
+      "phases": []
+    },
+    "full_rag_bounded": {
+      "artifact": {
+        "path": "mixed-bounded-recheck-a/mlx-p8-full-rag/report.json",
+        "sha256": "15b937b76860a33c3871ac477a82a328a7278d1ddbe33c724a2f0688eef542aa"
+      },
+      "status": "aborted",
+      "abort_reason": "compression_growth_over_4_gib",
+      "quality": {
+        "status": "complete",
+        "planned": 8,
+        "attempted": 8,
+        "completed": 8,
+        "passed": 8,
+        "failed_cases": [],
+        "scope": "Synthetic fact/type extraction; markdown fences tolerated; not clinical noninferiority"
+      },
+      "pressure": {
+        "scope": "system_wide_not_daemon_rss_or_gpu_peak",
+        "samples": 72,
+        "minimum_os_free_percentage": 28,
+        "maximum_compressed_bytes": 17505107968,
+        "maximum_compression_growth_bytes": 5199314944,
+        "swapout_growth_bytes": 0
+      },
+      "model_configuration": {
+        "model": "medgemma:27b",
+        "kind": "same_source_separately_requantised_mlx_candidate",
+        "weights_bytes": 19478730384,
+        "kv_budget_bytes": 8858370048,
+        "kv_element_bytes": 2,
+        "activation_policy": "mixed_f32_residual_f16_projection",
+        "quantised_kv": false,
+        "clinical_equivalence": "not_qualified",
+        "loading_mode": "mixed-staged",
+        "checksum_io": {
+          "large_safetensors_uncached_fd_count": 435
+        },
+        "batching_enabled": true,
+        "prefix_cache_entry_limit": 10,
+        "prefix_cache_byte_limit": 8589934592,
+        "http_listen_backlog": 256,
+        "prefill_step_size": 256,
+        "mlx_allocator_cache_byte_limit": 1073741824,
+        "source_gguf_sha256": "4b97da6b21a8fb1405a0d1efee462bfd6c4d3c46307bac8b34373835f07ca758",
+        "conversion_manifest_sha256": "2a6d9e1cd41375e54c614c0de05b2bd1715a2395ee0482b5ec979b22d7ae0206"
+      },
+      "retrieval_integrity_verified": false,
+      "strict_200_latency_targets_demonstrated": false,
+      "phases": [
+        {
+          "name": "sequential",
+          "status": "complete",
+          "summary": {
+            "requests": 3,
+            "successful": 2,
+            "failed": 1,
+            "http_status_counts": {
+              "200": 3
+            },
+            "wall_s": 58.78381625004113,
+            "completed_successfully_per_second": 0.034022969714876256,
+            "all_ai_requests_meet_completed_answer_targets": false,
+            "lanes": {
+              "department": {
+                "requests": 1,
+                "successful": 0,
+                "failures": {
+                  "stream_error": 1
+                },
+                "full": {
+                  "samples": 0,
+                  "p50_s": null,
+                  "p95_s": null,
+                  "p99_s": null,
+                  "max_s": null
+                },
+                "terminal_completed_answer": {
+                  "samples": 0,
+                  "p50_s": null,
+                  "p95_s": null,
+                  "p99_s": null,
+                  "max_s": null
+                },
+                "post_terminal_stream_close": {
+                  "samples": 0,
+                  "p50_s": null,
+                  "p95_s": null,
+                  "p99_s": null,
+                  "max_s": null
+                },
+                "first_readable": {
+                  "samples": 0,
+                  "p50_s": null,
+                  "p95_s": null,
+                  "p99_s": null,
+                  "max_s": null
+                },
+                "queue_wait": {
+                  "samples": 0,
+                  "p50_s": null,
+                  "p95_s": null,
+                  "p99_s": null,
+                  "max_s": null
+                },
+                "retrieval": {
+                  "samples": 1,
+                  "p50_s": 0.004,
+                  "p95_s": 0.004,
+                  "p99_s": 0.004,
+                  "max_s": 0.004
+                },
+                "target_s": 15.0,
+                "first_readable_meeting_target": 0,
+                "full_meeting_target": 0,
+                "all_requests_meet_target": false
+              },
+              "general": {
+                "requests": 1,
+                "successful": 1,
+                "failures": {},
+                "full": {
+                  "samples": 1,
+                  "p50_s": 24.58098924998194,
+                  "p95_s": 24.58098924998194,
+                  "p99_s": 24.58098924998194,
+                  "max_s": 24.58098924998194
+                },
+                "terminal_completed_answer": {
+                  "samples": 1,
+                  "p50_s": 24.57514429197181,
+                  "p95_s": 24.57514429197181,
+                  "p99_s": 24.57514429197181,
+                  "max_s": 24.57514429197181
+                },
+                "post_terminal_stream_close": {
+                  "samples": 1,
+                  "p50_s": 0.0058449580101296306,
+                  "p95_s": 0.0058449580101296306,
+                  "p99_s": 0.0058449580101296306,
+                  "max_s": 0.0058449580101296306
+                },
+                "first_readable": {
+                  "samples": 1,
+                  "p50_s": 6.704215458012186,
+                  "p95_s": 6.704215458012186,
+                  "p99_s": 6.704215458012186,
+                  "max_s": 6.704215458012186
+                },
+                "queue_wait": {
+                  "samples": 1,
+                  "p50_s": 0.000184,
+                  "p95_s": 0.000184,
+                  "p99_s": 0.000184,
+                  "max_s": 0.000184
+                },
+                "retrieval": {
+                  "samples": 1,
+                  "p50_s": 1.384,
+                  "p95_s": 1.384,
+                  "p99_s": 1.384,
+                  "max_s": 1.384
+                },
+                "target_s": 3.0,
+                "first_readable_meeting_target": 0,
+                "full_meeting_target": 0,
+                "all_requests_meet_target": false
+              },
+              "patient": {
+                "requests": 1,
+                "successful": 1,
+                "failures": {},
+                "full": {
+                  "samples": 1,
+                  "p50_s": 19.746494708990213,
+                  "p95_s": 19.746494708990213,
+                  "p99_s": 19.746494708990213,
+                  "max_s": 19.746494708990213
+                },
+                "terminal_completed_answer": {
+                  "samples": 1,
+                  "p50_s": 19.743473167007323,
+                  "p95_s": 19.743473167007323,
+                  "p99_s": 19.743473167007323,
+                  "max_s": 19.743473167007323
+                },
+                "post_terminal_stream_close": {
+                  "samples": 1,
+                  "p50_s": 0.0030215419828891754,
+                  "p95_s": 0.0030215419828891754,
+                  "p99_s": 0.0030215419828891754,
+                  "max_s": 0.0030215419828891754
+                },
+                "first_readable": {
+                  "samples": 1,
+                  "p50_s": 2.544608500029426,
+                  "p95_s": 2.544608500029426,
+                  "p99_s": 2.544608500029426,
+                  "max_s": 2.544608500029426
+                },
+                "queue_wait": {
+                  "samples": 1,
+                  "p50_s": 5.6e-05,
+                  "p95_s": 5.6e-05,
+                  "p99_s": 5.6e-05,
+                  "max_s": 5.6e-05
+                },
+                "retrieval": {
+                  "samples": 1,
+                  "p50_s": 0.623,
+                  "p95_s": 0.623,
+                  "p99_s": 0.623,
+                  "max_s": 0.623
+                },
+                "target_s": 5.0,
+                "first_readable_meeting_target": 1,
+                "full_meeting_target": 0,
+                "all_requests_meet_target": false
+              }
+            }
+          },
+          "planned_requests": 3,
+          "concurrency": 1,
+          "hard_request_timeout_s": 60.0,
+          "observed_http_results": 3,
+          "unobserved_http_results": 0,
+          "requests": [
+            {
+              "lane": "general",
+              "success": true,
+              "error": null,
+              "full_s": 24.58098924998194,
+              "first_readable_s": 6.704215458012186,
+              "completion_s": 24.57514429197181,
+              "terminal": true,
+              "retrieval_ms": 1384,
+              "cache_hit": false,
+              "completed_within_target": false
+            },
+            {
+              "lane": "patient",
+              "success": true,
+              "error": null,
+              "full_s": 19.746494708990213,
+              "first_readable_s": 2.544608500029426,
+              "completion_s": 19.743473167007323,
+              "terminal": true,
+              "retrieval_ms": 623,
+              "cache_hit": false,
+              "completed_within_target": false
+            },
+            {
+              "lane": "department",
+              "success": false,
+              "error": "stream_error",
+              "full_s": 14.455953166994732,
+              "first_readable_s": null,
+              "completion_s": null,
+              "terminal": false,
+              "retrieval_ms": 4,
+              "cache_hit": false,
+              "completed_within_target": false
+            }
+          ]
+        },
+        {
+          "name": "burst",
+          "status": "aborted_incomplete_not_acceptance_evidence",
+          "planned_requests": 200,
+          "concurrency": 200,
+          "hard_request_timeout_s": 20.0,
+          "observed_http_results": 0,
+          "unobserved_http_results": 200
+        }
+      ]
+    },
+    "full_rag_cache_disabled": {
+      "artifact": {
+        "path": "mixed-bounded-cache0-rag-a/mlx-p8-full-rag/report.json",
+        "sha256": "67f6680e6f84350c685a7ba4c26a9498db3bef36a7ea26256b456a4cfc85204a"
+      },
+      "status": "complete",
+      "abort_reason": null,
+      "quality": {
+        "status": "complete",
+        "planned": 8,
+        "attempted": 8,
+        "completed": 8,
+        "passed": 8,
+        "failed_cases": [],
+        "scope": "Synthetic fact/type extraction; markdown fences tolerated; not clinical noninferiority"
+      },
+      "pressure": {
+        "scope": "system_wide_not_daemon_rss_or_gpu_peak",
+        "samples": 103,
+        "minimum_os_free_percentage": 35,
+        "maximum_compressed_bytes": 13037387776,
+        "maximum_compression_growth_bytes": 723566592,
+        "swapout_growth_bytes": 0
+      },
+      "model_configuration": {
+        "model": "medgemma:27b",
+        "kind": "same_source_separately_requantised_mlx_candidate",
+        "weights_bytes": 19478730384,
+        "kv_budget_bytes": 8858370048,
+        "kv_element_bytes": 2,
+        "activation_policy": "mixed_f32_residual_f16_projection",
+        "quantised_kv": false,
+        "clinical_equivalence": "not_qualified",
+        "loading_mode": "mixed-staged",
+        "checksum_io": {
+          "large_safetensors_uncached_fd_count": 435
+        },
+        "batching_enabled": true,
+        "prefix_cache_entry_limit": 0,
+        "prefix_cache_byte_limit": 8589934592,
+        "http_listen_backlog": 256,
+        "prefill_step_size": 256,
+        "mlx_allocator_cache_byte_limit": 1073741824,
+        "source_gguf_sha256": "4b97da6b21a8fb1405a0d1efee462bfd6c4d3c46307bac8b34373835f07ca758",
+        "conversion_manifest_sha256": "2a6d9e1cd41375e54c614c0de05b2bd1715a2395ee0482b5ec979b22d7ae0206"
+      },
+      "retrieval_integrity_verified": false,
+      "strict_200_latency_targets_demonstrated": false,
+      "phases": [
+        {
+          "name": "sequential",
+          "status": "complete",
+          "summary": {
+            "requests": 3,
+            "successful": 2,
+            "failed": 1,
+            "http_status_counts": {
+              "200": 3
+            },
+            "wall_s": 102.65806179097854,
+            "completed_successfully_per_second": 0.019482152352264238,
+            "all_ai_requests_meet_completed_answer_targets": false,
+            "lanes": {
+              "department": {
+                "requests": 1,
+                "successful": 0,
+                "failures": {
+                  "timeout": 1
+                },
+                "full": {
+                  "samples": 0,
+                  "p50_s": null,
+                  "p95_s": null,
+                  "p99_s": null,
+                  "max_s": null
+                },
+                "terminal_completed_answer": {
+                  "samples": 0,
+                  "p50_s": null,
+                  "p95_s": null,
+                  "p99_s": null,
+                  "max_s": null
+                },
+                "post_terminal_stream_close": {
+                  "samples": 0,
+                  "p50_s": null,
+                  "p95_s": null,
+                  "p99_s": null,
+                  "max_s": null
+                },
+                "first_readable": {
+                  "samples": 0,
+                  "p50_s": null,
+                  "p95_s": null,
+                  "p99_s": null,
+                  "max_s": null
+                },
+                "queue_wait": {
+                  "samples": 0,
+                  "p50_s": null,
+                  "p95_s": null,
+                  "p99_s": null,
+                  "max_s": null
+                },
+                "retrieval": {
+                  "samples": 1,
+                  "p50_s": 0.004,
+                  "p95_s": 0.004,
+                  "p99_s": 0.004,
+                  "max_s": 0.004
+                },
+                "target_s": 15.0,
+                "first_readable_meeting_target": 0,
+                "full_meeting_target": 0,
+                "all_requests_meet_target": false
+              },
+              "general": {
+                "requests": 1,
+                "successful": 1,
+                "failures": {},
+                "full": {
+                  "samples": 1,
+                  "p50_s": 14.94315683300374,
+                  "p95_s": 14.94315683300374,
+                  "p99_s": 14.94315683300374,
+                  "max_s": 14.94315683300374
+                },
+                "terminal_completed_answer": {
+                  "samples": 1,
+                  "p50_s": 14.935451166995335,
+                  "p95_s": 14.935451166995335,
+                  "p99_s": 14.935451166995335,
+                  "max_s": 14.935451166995335
+                },
+                "post_terminal_stream_close": {
+                  "samples": 1,
+                  "p50_s": 0.007705666008405387,
+                  "p95_s": 0.007705666008405387,
+                  "p99_s": 0.007705666008405387,
+                  "max_s": 0.007705666008405387
+                },
+                "first_readable": {
+                  "samples": 1,
+                  "p50_s": 5.687718792003579,
+                  "p95_s": 5.687718792003579,
+                  "p99_s": 5.687718792003579,
+                  "max_s": 5.687718792003579
+                },
+                "queue_wait": {
+                  "samples": 1,
+                  "p50_s": 9.6e-05,
+                  "p95_s": 9.6e-05,
+                  "p99_s": 9.6e-05,
+                  "max_s": 9.6e-05
+                },
+                "retrieval": {
+                  "samples": 1,
+                  "p50_s": 0.407,
+                  "p95_s": 0.407,
+                  "p99_s": 0.407,
+                  "max_s": 0.407
+                },
+                "target_s": 3.0,
+                "first_readable_meeting_target": 0,
+                "full_meeting_target": 0,
+                "all_requests_meet_target": false
+              },
+              "patient": {
+                "requests": 1,
+                "successful": 1,
+                "failures": {},
+                "full": {
+                  "samples": 1,
+                  "p50_s": 27.712458249996416,
+                  "p95_s": 27.712458249996416,
+                  "p99_s": 27.712458249996416,
+                  "max_s": 27.712458249996416
+                },
+                "terminal_completed_answer": {
+                  "samples": 1,
+                  "p50_s": 27.709533417015336,
+                  "p95_s": 27.709533417015336,
+                  "p99_s": 27.709533417015336,
+                  "max_s": 27.709533417015336
+                },
+                "post_terminal_stream_close": {
+                  "samples": 1,
+                  "p50_s": 0.002924832981079817,
+                  "p95_s": 0.002924832981079817,
+                  "p99_s": 0.002924832981079817,
+                  "max_s": 0.002924832981079817
+                },
+                "first_readable": {
+                  "samples": 1,
+                  "p50_s": 27.70915808400605,
+                  "p95_s": 27.70915808400605,
+                  "p99_s": 27.70915808400605,
+                  "max_s": 27.70915808400605
+                },
+                "queue_wait": {
+                  "samples": 1,
+                  "p50_s": 6.4e-05,
+                  "p95_s": 6.4e-05,
+                  "p99_s": 6.4e-05,
+                  "max_s": 6.4e-05
+                },
+                "retrieval": {
+                  "samples": 1,
+                  "p50_s": 0.292,
+                  "p95_s": 0.292,
+                  "p99_s": 0.292,
+                  "max_s": 0.292
+                },
+                "target_s": 5.0,
+                "first_readable_meeting_target": 0,
+                "full_meeting_target": 0,
+                "all_requests_meet_target": false
+              }
+            }
+          },
+          "planned_requests": 3,
+          "concurrency": 1,
+          "hard_request_timeout_s": 60.0,
+          "observed_http_results": 3,
+          "unobserved_http_results": 0,
+          "requests": [
+            {
+              "lane": "general",
+              "success": true,
+              "error": null,
+              "full_s": 14.94315683300374,
+              "first_readable_s": 5.687718792003579,
+              "completion_s": 14.935451166995335,
+              "terminal": true,
+              "retrieval_ms": 407,
+              "cache_hit": false,
+              "completed_within_target": false
+            },
+            {
+              "lane": "patient",
+              "success": true,
+              "error": null,
+              "full_s": 27.712458249996416,
+              "first_readable_s": 27.70915808400605,
+              "completion_s": 27.709533417015336,
+              "terminal": true,
+              "retrieval_ms": 292,
+              "cache_hit": false,
+              "completed_within_target": false
+            },
+            {
+              "lane": "department",
+              "success": false,
+              "error": "timeout",
+              "full_s": 60.00216016697232,
+              "first_readable_s": 16.196292374981567,
+              "completion_s": null,
+              "terminal": false,
+              "retrieval_ms": 4,
+              "cache_hit": false,
+              "completed_within_target": false
+            }
+          ]
+        },
+        {
+          "name": "burst",
+          "status": "complete",
+          "summary": {
+            "requests": 200,
+            "successful": 0,
+            "failed": 200,
+            "http_status_counts": {
+              "200": 200
+            },
+            "wall_s": 20.098890000022948,
+            "completed_successfully_per_second": 0.0,
+            "all_ai_requests_meet_completed_answer_targets": false,
+            "lanes": {
+              "department": {
+                "requests": 66,
+                "successful": 0,
+                "failures": {
+                  "timeout": 50,
+                  "capacity_rejected": 16
+                },
+                "full": {
+                  "samples": 0,
+                  "p50_s": null,
+                  "p95_s": null,
+                  "p99_s": null,
+                  "max_s": null
+                },
+                "terminal_completed_answer": {
+                  "samples": 0,
+                  "p50_s": null,
+                  "p95_s": null,
+                  "p99_s": null,
+                  "max_s": null
+                },
+                "post_terminal_stream_close": {
+                  "samples": 0,
+                  "p50_s": null,
+                  "p95_s": null,
+                  "p99_s": null,
+                  "max_s": null
+                },
+                "first_readable": {
+                  "samples": 0,
+                  "p50_s": null,
+                  "p95_s": null,
+                  "p99_s": null,
+                  "max_s": null
+                },
+                "queue_wait": {
+                  "samples": 16,
+                  "p50_s": 2.000306,
+                  "p95_s": 2.001229,
+                  "p99_s": 2.001229,
+                  "max_s": 2.001229
+                },
+                "retrieval": {
+                  "samples": 21,
+                  "p50_s": 9.088,
+                  "p95_s": 16.214,
+                  "p99_s": 18.503,
+                  "max_s": 18.503
+                },
+                "target_s": 15.0,
+                "first_readable_meeting_target": 0,
+                "full_meeting_target": 0,
+                "all_requests_meet_target": false
+              },
+              "general": {
+                "requests": 67,
+                "successful": 0,
+                "failures": {
+                  "timeout": 50,
+                  "capacity_rejected": 17
+                },
+                "full": {
+                  "samples": 0,
+                  "p50_s": null,
+                  "p95_s": null,
+                  "p99_s": null,
+                  "max_s": null
+                },
+                "terminal_completed_answer": {
+                  "samples": 0,
+                  "p50_s": null,
+                  "p95_s": null,
+                  "p99_s": null,
+                  "max_s": null
+                },
+                "post_terminal_stream_close": {
+                  "samples": 0,
+                  "p50_s": null,
+                  "p95_s": null,
+                  "p99_s": null,
+                  "max_s": null
+                },
+                "first_readable": {
+                  "samples": 0,
+                  "p50_s": null,
+                  "p95_s": null,
+                  "p99_s": null,
+                  "max_s": null
+                },
+                "queue_wait": {
+                  "samples": 17,
+                  "p50_s": 2.00102,
+                  "p95_s": 2.001884,
+                  "p99_s": 2.001884,
+                  "max_s": 2.001884
+                },
+                "retrieval": {
+                  "samples": 21,
+                  "p50_s": 10.236,
+                  "p95_s": 18.499,
+                  "p99_s": 19.642,
+                  "max_s": 19.642
+                },
+                "target_s": 3.0,
+                "first_readable_meeting_target": 0,
+                "full_meeting_target": 0,
+                "all_requests_meet_target": false
+              },
+              "patient": {
+                "requests": 67,
+                "successful": 0,
+                "failures": {
+                  "capacity_rejected": 15,
+                  "timeout": 52
+                },
+                "full": {
+                  "samples": 0,
+                  "p50_s": null,
+                  "p95_s": null,
+                  "p99_s": null,
+                  "max_s": null
+                },
+                "terminal_completed_answer": {
+                  "samples": 0,
+                  "p50_s": null,
+                  "p95_s": null,
+                  "p99_s": null,
+                  "max_s": null
+                },
+                "post_terminal_stream_close": {
+                  "samples": 0,
+                  "p50_s": null,
+                  "p95_s": null,
+                  "p99_s": null,
+                  "max_s": null
+                },
+                "first_readable": {
+                  "samples": 0,
+                  "p50_s": null,
+                  "p95_s": null,
+                  "p99_s": null,
+                  "max_s": null
+                },
+                "queue_wait": {
+                  "samples": 15,
+                  "p50_s": 2.00109,
+                  "p95_s": 2.001697,
+                  "p99_s": 2.001697,
+                  "max_s": 2.001697
+                },
+                "retrieval": {
+                  "samples": 20,
+                  "p50_s": 9.08,
+                  "p95_s": 17.744,
+                  "p99_s": 19.276,
+                  "max_s": 19.276
+                },
+                "target_s": 5.0,
+                "first_readable_meeting_target": 0,
+                "full_meeting_target": 0,
+                "all_requests_meet_target": false
+              }
+            }
+          },
+          "planned_requests": 200,
+          "concurrency": 200,
+          "hard_request_timeout_s": 20.0,
+          "observed_http_results": 200,
+          "unobserved_http_results": 0
+        }
+      ]
+    }
+  },
+  "restoration": {
+    "artifact": {
+      "path": "mixed-bounded-cache0-rag-a/lease-report.json",
+      "sha256": "db4e7dc887bf7acb0d51aa280eb6c531504518fc067c86e17fb41a53d2544737"
+    },
+    "status": "restored_and_verified",
+    "models": [
+      {
+        "name": "medgemma:4b",
+        "digest": "9fe4e9a6c9bda2d007bb595515550eafbc8e226622adff9257f3241eba334c4d",
+        "size": 2887841218,
+        "size_vram": 2887841218,
+        "context_length": 4096,
+        "expires_at": "2319-02-01T16:16:11.862742807+05:30"
+      },
+      {
+        "name": "medgemma:27b",
+        "digest": "58238ae38f99827496301de22016b2f94157552971f5a38db226f13802c2437e",
+        "size": 17919744408,
+        "size_vram": 17919744408,
+        "context_length": 8192,
+        "expires_at": "2319-02-01T16:16:09.970338807+05:30"
+      }
+    ],
+    "identity_and_context_verified": true,
+    "other_original_residents_unchanged": true,
+    "all_original_residents_identity_and_context_verified": true,
+    "auto_reloaded_original_residents": [
+      {
+        "name": "medgemma:4b",
+        "digest": "9fe4e9a6c9bda2d007bb595515550eafbc8e226622adff9257f3241eba334c4d",
+        "context_length": 4096,
+        "indefinite_residency_verified": true
+      }
+    ]
+  },
+  "clinical_equivalence_qualified": false,
+  "production_purchase_gate_passed": false,
+  "limitations": [
+    "Eight narrow synthetic extraction cases do not establish clinical noninferiority.",
+    "Single replay observations and different output lengths do not establish engine speedup.",
+    "MLX8 and native2 decode widths differ; these are serving configurations, not equal-width isolation.",
+    "Free-form output remains clinically unqualified; failed/incomplete results are retained.",
+    "Separate fullRAG cache policies are not controlled speed comparisons.",
+    "No summary-refresh,ASR,imaging or continuous monitoring workload was measured."
+  ],
+  "free_form_workflow_review": {
+    "source": "mixed-bounded-cache0-rag-a/mlx-p8-full-rag/report.json",
+    "patient_transport_completed_but_summary_intent_misread": true,
+    "patient_answer_sha256": "c39d884849341df1acfc18343f6beac9e4d6eab3de0fbcca12f9b9a2d6db85ea",
+    "patient_observation": "The actual request asked for observations,medication changes and unresolved tasks; the rendered answer refused chart modifications instead of summarising.",
+    "department_partial_unsupported_stable_heading": true,
+    "clinical_accuracy_qualified": false
+  }
+}

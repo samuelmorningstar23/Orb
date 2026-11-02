@@ -1,0 +1,6 @@
+;; Inherited by this benchmark's children only. This is not a complete hospital
+;; security policy. All benchmark services also bind exclusively to127.0.0.1.
+(version 1)
+(allow default)
+(deny network-outbound)
+(allow network-outbound (remote ip "localhost:*"))

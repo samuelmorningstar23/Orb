@@ -1,0 +1,47 @@
+{
+  "schema": "orb.security.authorization-regressions/1",
+  "isolation": "Owned source/DB/synthetic data only. In-process ASGI HTTP and actual auth helper. No network/model calls or live data/config reads.",
+  "scribe_cross_department_edit": {
+    "scoped_read_status": 404,
+    "edit_status": 200,
+    "foreign_draft_changed": true,
+    "note_id": 1,
+    "author_remains": "REVIEW-DOC-B"
+  },
+  "scribe_unfiled_revision_disclosure": {
+    "original_read_status": 404,
+    "revise_status": 200,
+    "copied_read_status": 200,
+    "other_author_transcript_disclosed": true,
+    "fixture": "Other clinician signed unfiled note, a state currently permitted by signing route."
+  },
+  "downtime_shared_ward_disclosure": {
+    "foreign_patient_direct_read_status": 404,
+    "own_patient_ward_pack_status": 200,
+    "foreign_department_name_present": true,
+    "shared_physical_ward": "Review Shared Ward",
+    "caller_department": "Review Cardiology",
+    "other_patient_department": "Review Oncology"
+  },
+  "revoked_tablet_handshake_parity": {
+    "http_me_status": 401,
+    "socket_auth_helper_accepted": true,
+    "verification_level": "Actual socket authentication helper; complete wire handshake verified separately if available."
+  },
+  "discharge_qr_permissions": {
+    "synthetic_url_only": true,
+    "umask": "022",
+    "png_plaintext": true,
+    "file_mode": "0o644",
+    "configured_upload_encryption": true
+  },
+  "source_sha256": {
+    "server/routes/scribe_routes.py": "922acf0366e1cc28cb8d7de354c5ac4c4ea2ad06a8b67a2401417eb399332f59",
+    "server/services/scribe_service.py": "ff85b4c3baaf70515e5cd386092076949b1fe9a0859e8460e0e883a43274809b",
+    "server/ws/realtime.py": "16f85cf28a97266262d219bef0388e358cf79d29ad4e1dc97f43ec16007c510f",
+    "server/auth.py": "6dac23105b16a070d81fd6e0c397bed525a2db3638c9415d34b0e9a54d6045d5",
+    "server/routes/downtime_routes.py": "dcdc98d68a263ceeca81725e9b658f1897ebd74785947792231a53e4058098c6",
+    "server/services/downtime_service.py": "9cefb6fd0663d7ff1aa7ef93bd53ecd926bb028f86db4d7f1600005a96e31156",
+    "server/services/discharge_service.py": "3d3406f2c43c57701f7802342c035b3b9bc8b70919983d636212fb73dd687b97"
+  }
+}
